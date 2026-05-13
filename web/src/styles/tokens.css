@@ -1,0 +1,23 @@
+:root {
+  --color-background-top: #231713;
+  --color-background-bottom: #121314;
+  --color-background-accent: rgba(190, 66, 66, 0.28);
+  --color-surface: rgba(18, 20, 22, 0.72);
+  --color-surface-strong: rgba(255, 255, 255, 0.12);
+  --color-border: rgba(255, 255, 255, 0.12);
+  --color-border-soft: rgba(255, 255, 255, 0.2);
+  --color-text: #f7f7f2;
+  --color-text-muted: rgba(247, 247, 242, 0.78);
+  --color-text-soft: rgba(247, 247, 242, 0.86);
+  --color-accent: #ffb992;
+  --color-accent-strong: #ff8a5b;
+  --color-hero-glow: rgba(255, 138, 91, 0.16);
+  --shadow-surface: 0 24px 80px rgba(0, 0, 0, 0.24);
+  --shadow-surface-strong: 0 32px 100px rgba(0, 0, 0, 0.34);
+  --radius-round: 999px;
+  --radius-card: 1.25rem;
+  --space-shell-inline: min(1120px, calc(100% - 2rem));
+  --space-header-inline: min(1220px, calc(100% - 1.5rem));
+  --font-body: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  --font-display: Georgia, "Times New Roman", Times, serif;
+}

@@ -1,0 +1,11 @@
+.shell-width {
+  width: var(--space-shell-inline);
+  margin: 0 auto;
+}
+
+.surface-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-surface);
+}
