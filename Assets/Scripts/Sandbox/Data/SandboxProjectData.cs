@@ -236,6 +236,7 @@ namespace EvacLogix.Sandbox.Data
     public sealed class StairPortalData
     {
         public string stairPortalId = string.Empty;
+        public string sourceFloorId = string.Empty;
         public string name = string.Empty;
         public Vector2 localPosition;
         public float rotationDegrees;

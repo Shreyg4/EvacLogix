@@ -1,5 +1,7 @@
+using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Authoring.Commands;
 using EvacLogix.Sandbox.Authoring.Selection;
+using EvacLogix.Sandbox.Authoring.Snapping;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Infrastructure;
 using EvacLogix.Sandbox.Rendering;
@@ -24,6 +26,12 @@ namespace EvacLogix.Sandbox.Core
         private const string ValidationPanelRootName = "ValidationPanelRoot";
         private const string ModalRootName = "ModalRoot";
         private const string BlueprintRootName = "BlueprintRoot";
+        private const string GridRootName = "GridRoot";
+        private const string WallRootName = "WallRoot";
+        private const string HandleRootName = "HandleRoot";
+        private const string ColliderRootName = "ColliderRoot";
+        private const string ValidationHighlightRootName = "ValidationHighlightRoot";
+        private const string DiagnosticsOverlayRootName = "DiagnosticsOverlayRoot";
 
         [SerializeField] private string editorCameraName = "Main Camera";
 
@@ -41,32 +49,62 @@ namespace EvacLogix.Sandbox.Core
             EnsureComponent<SandboxSelectionService>(gameObject);
             EnsureComponent<SandboxInputRouter>(gameObject);
             EnsureComponent<SandboxWorkspaceStateService>(gameObject);
-            EnsureComponent<SandboxKeyboardShortcutService>(gameObject);
             EnsureComponent<SandboxSaveLoadService>(gameObject);
+            EnsureComponent<SandboxProjectTransferService>(gameObject);
+            EnsureComponent<SandboxProjectMetadataService>(gameObject);
             EnsureComponent<SandboxValidationService>(gameObject);
             EnsureComponent<SandboxColliderRebuildService>(gameObject);
             EnsureComponent<SandboxProjectWorkspaceService>(gameObject);
+            EnsureComponent<SandboxFloorManagementService>(gameObject);
+            EnsureComponent<SandboxVisualOrganizationService>(gameObject);
+            EnsureComponent<SandboxClipboardService>(gameObject);
+            EnsureComponent<SandboxMeasurementService>(gameObject);
+            EnsureComponent<SandboxEditorQoLService>(gameObject);
+            EnsureComponent<SandboxKeyboardShortcutService>(gameObject);
+            EnsureComponent<SandboxPreviewService>(gameObject);
             EnsureComponent<SandboxBlueprintImportService>(gameObject);
             EnsureComponent<SandboxScaleCalibrationService>(gameObject);
             EnsureComponent<SandboxCalibrationWorkflowService>(gameObject);
             EnsureComponent<SandboxPreviewImageExportService>(gameObject);
+            EnsureComponent<SandboxWallSnappingService>(gameObject);
+            EnsureComponent<SandboxWallAuthoringService>(gameObject);
+            EnsureComponent<SandboxSemanticObjectAuthoringService>(gameObject);
+            EnsureComponent<SandboxPreviewAuthoringService>(gameObject);
+            EnsureComponent<SandboxScenarioManagementService>(gameObject);
 
             var overlayRoot = FindRequiredRoot(OverlayRootName);
+            var wallRoot = FindOrCreateNestedRoot(WorldRootName, WallRootName);
+            var semanticRoot = FindOrCreateNestedRoot(WorldRootName, "SemanticRoot");
+            FindOrCreateNestedRoot(WorldRootName, HandleRootName);
+            FindOrCreateNestedRoot(WorldRootName, ColliderRootName);
             EnsureComponent<SandboxOverviewNavigator>(overlayRoot);
             EnsureComponent<SandboxOnboardingOverlayShell>(overlayRoot);
             EnsureComponent<SandboxCalibrationCaptureOverlay>(overlayRoot);
+            EnsureComponent<SandboxWallAuthoringOverlay>(overlayRoot);
+            EnsureComponent<SandboxSemanticObjectAuthoringOverlay>(overlayRoot);
+            EnsureComponent<SandboxMeasurementOverlay>(overlayRoot);
+            EnsureComponent<SandboxPreviewInteractionOverlay>(overlayRoot);
             EnsureComponent<SandboxBlueprintOverlayRenderer>(FindRequiredNestedRoot(WorldRootName, BlueprintRootName));
+            EnsureComponent<SandboxGridOverlayRenderer>(FindRequiredNestedRoot(WorldRootName, GridRootName));
+            EnsureComponent<SandboxWallOverlayRenderer>(wallRoot);
+            EnsureComponent<SandboxSemanticObjectRenderer>(semanticRoot);
+            EnsureComponent<SandboxValidationHighlightRenderer>(FindOrCreateNestedRoot(DebugRootName, ValidationHighlightRootName));
+            EnsureComponent<SandboxDiagnosticsOverlayRenderer>(FindOrCreateNestedRoot(DebugRootName, DiagnosticsOverlayRootName));
+            EnsureComponent<SandboxPreviewDiagnosticsRenderer>(FindOrCreateNestedRoot(DebugRootName, "PreviewDiagnosticsRoot"));
         }
 
         private void InstallUiShells()
         {
+            var uiRoot = FindRequiredRoot(UiRootName);
             EnsureComponent<SandboxTopBarShell>(FindRequiredNestedRoot(UiRootName, TopBarName));
             EnsureComponent<SandboxToolPaletteShell>(FindRequiredNestedRoot(UiRootName, LeftToolPanelName));
             EnsureComponent<SandboxInspectorPanelShell>(FindRequiredNestedRoot(UiRootName, RightInspectorPanelName));
+            EnsureComponent<SandboxVisualLegendShell>(FindRequiredNestedRoot(UiRootName, RightInspectorPanelName));
             EnsureComponent<SandboxStatusBarShell>(FindRequiredNestedRoot(UiRootName, BottomStatusBarName));
             EnsureComponent<SandboxFloorTabsBarShell>(FindRequiredNestedRoot(UiRootName, FloorTabsBarName));
             EnsureComponent<SandboxValidationPanelShell>(FindRequiredNestedRoot(UiRootName, ValidationPanelRootName));
             EnsureComponent<SandboxNewProjectDialogShell>(FindRequiredNestedRoot(UiRootName, ModalRootName));
+            EnsureComponent<SandboxEditorHud>(uiRoot);
             FindRequiredRoot(WorldRootName);
             FindRequiredRoot(DebugRootName);
         }
@@ -121,6 +159,20 @@ namespace EvacLogix.Sandbox.Core
             }
 
             return child.gameObject;
+        }
+
+        private static GameObject FindOrCreateNestedRoot(string parentName, string childName)
+        {
+            var parent = FindRequiredRoot(parentName);
+            var child = parent.transform.Find(childName);
+            if (child != null)
+            {
+                return child.gameObject;
+            }
+
+            var childObject = new GameObject(childName);
+            childObject.transform.SetParent(parent.transform, false);
+            return childObject;
         }
     }
 }

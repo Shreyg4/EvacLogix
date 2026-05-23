@@ -1,0 +1,260 @@
+using System.Linq;
+using EvacLogix.Sandbox.Authoring;
+using EvacLogix.Sandbox.Authoring.Commands;
+using EvacLogix.Sandbox.Authoring.Selection;
+using EvacLogix.Sandbox.Authoring.Snapping;
+using EvacLogix.Sandbox.Authoring.Tools;
+using EvacLogix.Sandbox.Data;
+using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Rendering;
+using EvacLogix.Sandbox.UI.Overlays;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace EvacLogix.Tests.EditMode
+{
+    public sealed class SandboxPhase8QualityOfLifeTests
+    {
+        [Test]
+        public void FloorManagement_UsesUndoRedoForMetadataEdits()
+        {
+            var host = CreatePhase8Host(
+                out var workspaceService,
+                out var commandHistory,
+                out var floorManagementService,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _);
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            var floorId = workspaceService.ActiveFloor.floorId;
+
+            Assert.That(floorManagementService.UpdateFloorMetadata(floorId, "Ground Floor", 0, 2.5f), Is.True);
+            Assert.That(workspaceService.ActiveFloor.name, Is.EqualTo("Ground Floor"));
+            Assert.That(workspaceService.ActiveFloor.elevation, Is.EqualTo(2.5f).Within(0.001f));
+
+            commandHistory.Undo();
+            Assert.That(workspaceService.ActiveFloor.name, Is.EqualTo("Floor 1"));
+            Assert.That(workspaceService.ActiveFloor.elevation, Is.EqualTo(0f).Within(0.001f));
+
+            commandHistory.Redo();
+            Assert.That(workspaceService.ActiveFloor.name, Is.EqualTo("Ground Floor"));
+            Assert.That(workspaceService.ActiveFloor.elevation, Is.EqualTo(2.5f).Within(0.001f));
+
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void ClipboardService_LimitsBatchEditsToSafeObjectTypes()
+        {
+            var host = CreatePhase8Host(
+                out var workspaceService,
+                out _,
+                out _,
+                out var wallAuthoringService,
+                out var semanticObjectAuthoringService,
+                out var clipboardService,
+                out _,
+                out _,
+                out _,
+                out _,
+                out var selectionService);
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(6f, 0f), 0.25f), Is.True);
+            var wallId = workspaceService.ActiveFloor.wallSegments[0].wallSegmentId;
+            Assert.That(semanticObjectAuthoringService.PlaceExit(new Vector2(2f, 2f), out var exitId, new Vector2(2f, 1f), 0f, 1.5f, 25f, 1f, "North Exit"), Is.True);
+
+            selectionService.ReplaceSelection(new[] { wallId, exitId });
+            Assert.That(clipboardService.CopySelection(), Is.True);
+            Assert.That(clipboardService.PasteSelection(new Vector2(3f, 0f)), Is.True);
+            Assert.That(workspaceService.ActiveFloor.wallSegments.Count, Is.EqualTo(1));
+            Assert.That(workspaceService.ActiveFloor.exits.Count, Is.EqualTo(2));
+
+            selectionService.ReplaceSelection(new[] { wallId, exitId });
+            Assert.That(clipboardService.DeleteSelection(), Is.True);
+            Assert.That(workspaceService.ActiveFloor.wallSegments.Count, Is.EqualTo(1));
+            Assert.That(workspaceService.ActiveFloor.exits.Count, Is.EqualTo(1));
+
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void MeasurementAndSnapSettings_EnablePreciseEditing()
+        {
+            var host = CreatePhase8Host(
+                out var workspaceService,
+                out _,
+                out _,
+                out var wallAuthoringService,
+                out _,
+                out _,
+                out var measurementService,
+                out var workspaceStateService,
+                out _,
+                out _,
+                out var selectionService);
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(5f, 0f), 0.25f), Is.True);
+
+            workspaceStateService.SetGridSize(1f);
+            workspaceStateService.SetAngleSnapIncrementDegrees(90f);
+            var wallSnappingService = host.GetComponent<SandboxWallSnappingService>();
+
+            var gridSnap = wallSnappingService.SnapPoint(workspaceService.ActiveFloorId, new Vector2(0.92f, 0.12f), null);
+            Assert.That(gridSnap.position.x, Is.EqualTo(1f).Within(0.001f));
+            Assert.That(gridSnap.position.y, Is.EqualTo(0f).Within(0.001f));
+
+            var angleSnap = wallSnappingService.SnapPoint(workspaceService.ActiveFloorId, new Vector2(2f, 0.18f), Vector2.zero);
+            Assert.That(angleSnap.position.y, Is.EqualTo(0f).Within(0.001f));
+
+            var wallId = workspaceService.ActiveFloor.wallSegments[0].wallSegmentId;
+            selectionService.ReplaceSelection(new[] { wallId });
+            var selectionReadout = measurementService.RefreshSelectionReadout();
+            Assert.That(selectionReadout, Does.Contain("wall length 5"));
+
+            Assert.That(measurementService.RegisterMeasurementPoint(Vector2.zero), Does.Contain("point A"));
+            Assert.That(measurementService.RegisterMeasurementPoint(new Vector2(3f, 4f)), Does.Contain("Measured 5"));
+
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void OverviewOnboardingDiagnosticsAndScenarioNaming_AreWiredIntoQoLFlow()
+        {
+            var host = CreatePhase8Host(
+                out var workspaceService,
+                out var commandHistory,
+                out _,
+                out var wallAuthoringService,
+                out var semanticObjectAuthoringService,
+                out _,
+                out _,
+                out var workspaceStateService,
+                out var editorQoLService,
+                out var scenarioManagementService,
+                out var selectionService);
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(8f, 0f), 0.25f), Is.True);
+            Assert.That(semanticObjectAuthoringService.PlaceExit(new Vector2(7f, 1.5f), out var exitId, new Vector2(2f, 1f), 0f, 1.5f, 50f, 1f, "South Exit"), Is.True);
+            Assert.That(semanticObjectAuthoringService.PlaceObstacle(new Vector2(2f, 2f), out var obstacleId, new Vector2(1f, 1f), 0f, ObstacleSemanticType.HardBlocking, 1f, "Display Kiosk"), Is.True);
+
+            workspaceService.ActiveProject.scenarioPresets.Add(new ScenarioPresetData
+            {
+                scenarioPresetId = "scenario-1",
+                name = "Initial Drill"
+            });
+            workspaceService.SetActiveProject(workspaceService.ActiveProject);
+
+            var cameraObject = new GameObject("Camera");
+            cameraObject.tag = "MainCamera";
+            cameraObject.transform.position = new Vector3(0f, 0f, -10f);
+            cameraObject.AddComponent<Camera>().orthographic = true;
+            var cameraController = cameraObject.AddComponent<SandboxCameraController>();
+            cameraController.SendMessage("Awake");
+
+            workspaceStateService.SetGridSize(1f);
+            var gridRoot = new GameObject("GridRoot");
+            var gridRenderer = gridRoot.AddComponent<SandboxGridOverlayRenderer>();
+            gridRenderer.SendMessage("Awake");
+
+            var overlayRoot = new GameObject("OverlayRoot");
+            var overviewNavigator = overlayRoot.AddComponent<SandboxOverviewNavigator>();
+            overviewNavigator.SendMessage("Awake");
+            var onboardingOverlay = overlayRoot.AddComponent<SandboxOnboardingOverlayShell>();
+            onboardingOverlay.SendMessage("Awake");
+
+            var debugRoot = new GameObject("DiagnosticsOverlayRoot");
+            var diagnosticsRenderer = debugRoot.AddComponent<SandboxDiagnosticsOverlayRenderer>();
+            diagnosticsRenderer.SendMessage("Awake");
+
+            selectionService.ReplaceSelection(new[] { exitId });
+            Assert.That(overviewNavigator.FocusOnSelection(), Is.True);
+            Assert.That(overviewNavigator.WorldBounds.width, Is.GreaterThan(0f));
+            Assert.That(cameraObject.transform.position.x, Is.EqualTo(7f).Within(0.5f));
+            Assert.That(gridRoot.transform.childCount, Is.GreaterThan(0));
+
+            workspaceStateService.SetGridVisibility(false);
+            Assert.That(gridRoot.transform.childCount, Is.EqualTo(0));
+
+            editorQoLService.SetDebugOverlayState(true, false, true, true);
+            diagnosticsRenderer.Refresh();
+            Assert.That(debugRoot.transform.childCount, Is.GreaterThan(0));
+
+            editorQoLService.SetIsolateSelectedObjects(true);
+            Assert.That(editorQoLService.IsObjectVisibleForIsolation(exitId, SandboxVisualObjectType.Exit), Is.True);
+            Assert.That(editorQoLService.IsObjectVisibleForIsolation(obstacleId, SandboxVisualObjectType.Obstacle), Is.False);
+
+            var toolStateService = host.GetComponent<SandboxToolStateService>();
+            toolStateService.RequestToolModeChange(SandboxToolMode.WallLine, commandHistory);
+            Assert.That(onboardingOverlay.ToolHelpText, Does.Contain("wall centerlines"));
+            Assert.That(onboardingOverlay.ValidationHelpText, Is.Not.Empty);
+
+            Assert.That(scenarioManagementService.RenameScenarioPreset("scenario-1", "Evening Drill"), Is.True);
+            Assert.That(workspaceService.ActiveProject.scenarioPresets.Single().name, Is.EqualTo("Evening Drill"));
+            commandHistory.Undo();
+            Assert.That(workspaceService.ActiveProject.scenarioPresets.Single().name, Is.EqualTo("Initial Drill"));
+
+            Object.DestroyImmediate(gridRoot);
+            Object.DestroyImmediate(debugRoot);
+            Object.DestroyImmediate(overlayRoot);
+            Object.DestroyImmediate(cameraObject);
+            Object.DestroyImmediate(host);
+        }
+
+        private static GameObject CreatePhase8Host(
+            out SandboxProjectWorkspaceService workspaceService,
+            out SandboxCommandHistory commandHistory,
+            out SandboxFloorManagementService floorManagementService,
+            out SandboxWallAuthoringService wallAuthoringService,
+            out SandboxSemanticObjectAuthoringService semanticObjectAuthoringService,
+            out SandboxClipboardService clipboardService,
+            out SandboxMeasurementService measurementService,
+            out SandboxWorkspaceStateService workspaceStateService,
+            out SandboxEditorQoLService editorQoLService,
+            out SandboxScenarioManagementService scenarioManagementService,
+            out SandboxSelectionService selectionService)
+        {
+            var host = new GameObject("Phase8Host");
+            host.AddComponent<SandboxSaveLoadService>();
+            commandHistory = host.AddComponent<SandboxCommandHistory>();
+            selectionService = host.AddComponent<SandboxSelectionService>();
+            host.AddComponent<SandboxInputRouter>();
+            host.AddComponent<SandboxToolStateService>();
+            workspaceStateService = host.AddComponent<SandboxWorkspaceStateService>();
+            workspaceService = host.AddComponent<SandboxProjectWorkspaceService>();
+            var colliderRebuildService = host.AddComponent<SandboxColliderRebuildService>();
+            var validationService = host.AddComponent<SandboxValidationService>();
+            floorManagementService = host.AddComponent<SandboxFloorManagementService>();
+            host.AddComponent<SandboxVisualOrganizationService>();
+            clipboardService = host.AddComponent<SandboxClipboardService>();
+            measurementService = host.AddComponent<SandboxMeasurementService>();
+            editorQoLService = host.AddComponent<SandboxEditorQoLService>();
+            scenarioManagementService = host.AddComponent<SandboxScenarioManagementService>();
+            var wallSnappingService = host.AddComponent<SandboxWallSnappingService>();
+            wallAuthoringService = host.AddComponent<SandboxWallAuthoringService>();
+            semanticObjectAuthoringService = host.AddComponent<SandboxSemanticObjectAuthoringService>();
+
+            workspaceService.SendMessage("Awake");
+            colliderRebuildService.SendMessage("Awake");
+            validationService.SendMessage("Awake");
+            floorManagementService.SendMessage("Awake");
+            host.GetComponent<SandboxVisualOrganizationService>().SendMessage("Awake");
+            clipboardService.SendMessage("Awake");
+            measurementService.SendMessage("Awake");
+            editorQoLService.SendMessage("Awake");
+            scenarioManagementService.SendMessage("Awake");
+            wallSnappingService.SendMessage("Awake");
+            wallAuthoringService.SendMessage("Awake");
+            semanticObjectAuthoringService.SendMessage("Awake");
+            return host;
+        }
+    }
+}

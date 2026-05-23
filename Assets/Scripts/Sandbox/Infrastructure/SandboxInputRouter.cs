@@ -29,7 +29,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         private void Update()
         {
-            UpdatePointerTarget(Input.mousePosition);
+            UpdatePointerTarget(SandboxInputAdapter.PointerScreenPosition);
         }
 
         public void SetManualOverride(SandboxInputTarget inputTarget)

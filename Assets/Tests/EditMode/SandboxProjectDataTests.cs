@@ -356,6 +356,7 @@ namespace EvacLogix.Tests.EditMode
                     new StairPortalData
                     {
                         stairPortalId = "stair-1-down",
+                        sourceFloorId = "floor-1",
                         name = "Stair A Lower",
                         localPosition = new Vector2(9f, 6f),
                         targetFloorId = "floor-2",
@@ -457,6 +458,7 @@ namespace EvacLogix.Tests.EditMode
                     new StairPortalData
                     {
                         stairPortalId = "stair-2-up",
+                        sourceFloorId = "floor-2",
                         name = "Stair A Upper",
                         localPosition = new Vector2(1f, 6f),
                         targetFloorId = "floor-1",

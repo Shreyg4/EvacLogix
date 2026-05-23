@@ -363,7 +363,7 @@ Exit criteria:
 - a user can start a project, import a floor blueprint, set opacity, calibrate it, save, reload, and see the same calibrated overlay
 - imported blueprint data remains portable inside the Unity project
 
-### [PLANNED] Phase 4: Build Wall Authoring and Cleanup Tools
+### [DONE] Phase 4: Build Wall Authoring and Cleanup Tools
 
 Objective:
 Implement the editable wall-authoring backbone as semantic centerline geometry.
@@ -389,7 +389,7 @@ Exit criteria:
 - generated wall data stays editable after creation
 - cleanup actions do not destroy neighboring topology unexpectedly
 
-### [PLANNED] Phase 5: Rebuild Colliders and Enforce Structural Validation
+### [DONE] Phase 5: Rebuild Colliders and Enforce Structural Validation
 
 Objective:
 Turn wall geometry into reliable simulation structure and surface errors clearly.
@@ -414,7 +414,7 @@ Exit criteria:
 - invalid data is visible in both panel and scene
 - preview/export readiness is enforced by blocking validation results
 
-### [PLANNED] Phase 6: Add Semantic Objects and Inspector Editing
+### [DONE] Phase 6: Add Semantic Objects and Inspector Editing
 
 Objective:
 Add the authoring objects that give the building behavioral meaning.
@@ -441,7 +441,7 @@ Exit criteria:
 - exits, obstacles, and stairs save/load correctly with metadata
 - inspector edits persist and are undoable
 
-### [PLANNED] Phase 7: Implement Floor Management and Visual Organization
+### [DONE] Phase 7: Implement Floor Management and Visual Organization
 
 Objective:
 Make multi-floor projects manageable without losing alignment or data integrity.
@@ -465,7 +465,7 @@ Exit criteria:
 - users can isolate active floors and object types
 - duplicated floors do not retain duplicated entity IDs
 
-### [PLANNED] Phase 8: Add Editing QoL, Precision, and Onboarding
+### [DONE] Phase 8: Add Editing QoL, Precision, and Onboarding
 
 Objective:
 Make the sandbox trustworthy and efficient enough for real users.
@@ -493,7 +493,7 @@ Exit criteria:
 - precision editing is possible without handle dragging alone
 - a new user can reach first successful tracing flow with in-product guidance
 
-### [PLANNED] Phase 9: Add Save, Recovery, JSON Round-Trip, and Lifecycle States
+### [DONE] Phase 9: Add Save, Recovery, JSON Round-Trip, and Lifecycle States
 
 Objective:
 Protect work, preserve portability, and make project readiness explicit.
@@ -520,7 +520,7 @@ Exit criteria:
 - lifecycle states reflect actual project validity and readiness
 - partial import fails safely when conflicts are detected
 
-### [PLANNED] Phase 10: Build Preview Mode, Spawns, Scenarios, and Diagnostics
+### [DONE] Phase 10: Build Preview Mode, Spawns, Scenarios, and Diagnostics
 
 Objective:
 Give users bounded but meaningful evacuation feedback directly from the sandbox.
@@ -550,7 +550,7 @@ Exit criteria:
 - users can set fire and spawns intentionally
 - preview results point to actionable map fixes rather than opaque internal metrics
 
-### [PLANNED] Phase 11: Polish, Hardening, and Release Readiness
+### [DONE] Phase 11: Polish, Hardening, and Release Readiness
 
 Objective:
 Turn the feature-complete sandbox into a stable demonstration and early-release candidate.

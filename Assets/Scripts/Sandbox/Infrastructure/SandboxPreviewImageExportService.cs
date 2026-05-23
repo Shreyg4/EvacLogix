@@ -11,15 +11,22 @@ namespace EvacLogix.Sandbox.Infrastructure
     public sealed class SandboxPreviewImageExportService : MonoBehaviour
     {
         private SandboxProjectWorkspaceService workspaceService;
+        private SandboxValidationService validationService;
 
         private void Awake()
         {
             workspaceService = GetComponent<SandboxProjectWorkspaceService>();
+            validationService = GetComponent<SandboxValidationService>();
         }
 
         public bool TryExportActiveBlueprintPreview(string destinationPath)
         {
             if (workspaceService?.ActiveFloor == null || string.IsNullOrWhiteSpace(destinationPath))
+            {
+                return false;
+            }
+
+            if (validationService != null && !validationService.CanPreviewOrExport())
             {
                 return false;
             }

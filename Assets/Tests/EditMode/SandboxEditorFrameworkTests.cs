@@ -1,8 +1,11 @@
 using System.Linq;
+using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Authoring.Commands;
 using EvacLogix.Sandbox.Authoring.Selection;
+using EvacLogix.Sandbox.Authoring.Snapping;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Core;
+using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
 using EvacLogix.Sandbox.Rendering;
 using EvacLogix.Sandbox.UI.Overlays;
@@ -177,25 +180,86 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(systems.GetComponent<SandboxWorkspaceStateService>(), Is.Not.Null);
             Assert.That(systems.GetComponent<SandboxKeyboardShortcutService>(), Is.Not.Null);
             Assert.That(systems.GetComponent<SandboxSaveLoadService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxProjectTransferService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxProjectMetadataService>(), Is.Not.Null);
             Assert.That(systems.GetComponent<SandboxValidationService>(), Is.Not.Null);
             Assert.That(systems.GetComponent<SandboxColliderRebuildService>(), Is.Not.Null);
             Assert.That(systems.GetComponent<SandboxProjectWorkspaceService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxFloorManagementService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxVisualOrganizationService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxClipboardService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxMeasurementService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxEditorQoLService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxPreviewService>(), Is.Not.Null);
             Assert.That(systems.GetComponent<SandboxBlueprintImportService>(), Is.Not.Null);
             Assert.That(systems.GetComponent<SandboxScaleCalibrationService>(), Is.Not.Null);
             Assert.That(systems.GetComponent<SandboxCalibrationWorkflowService>(), Is.Not.Null);
             Assert.That(systems.GetComponent<SandboxPreviewImageExportService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxWallSnappingService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxWallAuthoringService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxSemanticObjectAuthoringService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxPreviewAuthoringService>(), Is.Not.Null);
+            Assert.That(systems.GetComponent<SandboxScenarioManagementService>(), Is.Not.Null);
             Assert.That(overlayRoot.GetComponent<SandboxOverviewNavigator>(), Is.Not.Null);
             Assert.That(overlayRoot.GetComponent<SandboxOnboardingOverlayShell>(), Is.Not.Null);
             Assert.That(overlayRoot.GetComponent<SandboxCalibrationCaptureOverlay>(), Is.Not.Null);
+            Assert.That(overlayRoot.GetComponent<SandboxWallAuthoringOverlay>(), Is.Not.Null);
+            Assert.That(overlayRoot.GetComponent<SandboxSemanticObjectAuthoringOverlay>(), Is.Not.Null);
+            Assert.That(overlayRoot.GetComponent<SandboxMeasurementOverlay>(), Is.Not.Null);
+            Assert.That(overlayRoot.GetComponent<SandboxPreviewInteractionOverlay>(), Is.Not.Null);
             Assert.That(topBar.GetComponent<SandboxTopBarShell>(), Is.Not.Null);
             Assert.That(leftToolPanel.GetComponent<SandboxToolPaletteShell>(), Is.Not.Null);
             Assert.That(rightInspectorPanel.GetComponent<SandboxInspectorPanelShell>(), Is.Not.Null);
+            Assert.That(rightInspectorPanel.GetComponent<SandboxVisualLegendShell>(), Is.Not.Null);
             Assert.That(bottomStatusBar.GetComponent<SandboxStatusBarShell>(), Is.Not.Null);
             Assert.That(floorTabsBar.GetComponent<SandboxFloorTabsBarShell>(), Is.Not.Null);
             Assert.That(validationPanelRoot.GetComponent<SandboxValidationPanelShell>(), Is.Not.Null);
+            Assert.That(ui.GetComponent<SandboxEditorHud>(), Is.Not.Null);
             Assert.That(world.transform.Find("BlueprintRoot").GetComponent<SandboxBlueprintOverlayRenderer>(), Is.Not.Null);
+            Assert.That(world.transform.Find("GridRoot").GetComponent<SandboxGridOverlayRenderer>(), Is.Not.Null);
+            Assert.That(world.transform.Find("WallRoot"), Is.Not.Null);
+            Assert.That(world.transform.Find("HandleRoot"), Is.Not.Null);
+            Assert.That(world.transform.Find("ColliderRoot"), Is.Not.Null);
+            Assert.That(world.transform.Find("SemanticRoot"), Is.Not.Null);
+            Assert.That(world.transform.Find("WallRoot").GetComponent<SandboxWallOverlayRenderer>(), Is.Not.Null);
+            Assert.That(world.transform.Find("SemanticRoot").GetComponent<SandboxSemanticObjectRenderer>(), Is.Not.Null);
+            Assert.That(debugRoot.transform.Find("ValidationHighlightRoot"), Is.Not.Null);
+            Assert.That(debugRoot.transform.Find("ValidationHighlightRoot").GetComponent<SandboxValidationHighlightRenderer>(), Is.Not.Null);
+            Assert.That(debugRoot.transform.Find("DiagnosticsOverlayRoot"), Is.Not.Null);
+            Assert.That(debugRoot.transform.Find("DiagnosticsOverlayRoot").GetComponent<SandboxDiagnosticsOverlayRenderer>(), Is.Not.Null);
+            Assert.That(debugRoot.transform.Find("PreviewDiagnosticsRoot"), Is.Not.Null);
+            Assert.That(debugRoot.transform.Find("PreviewDiagnosticsRoot").GetComponent<SandboxPreviewDiagnosticsRenderer>(), Is.Not.Null);
             Assert.That(ui.transform.Find("ModalRoot").GetComponent<SandboxNewProjectDialogShell>(), Is.Not.Null);
             Assert.That(Object.FindAnyObjectByType<Camera>(), Is.Not.Null);
+
+            var inspectorShell = rightInspectorPanel.GetComponent<SandboxInspectorPanelShell>();
+            var topBarShell = topBar.GetComponent<SandboxTopBarShell>();
+            var statusBarShell = bottomStatusBar.GetComponent<SandboxStatusBarShell>();
+            var editorHud = ui.GetComponent<SandboxEditorHud>();
+            var previewService = systems.GetComponent<SandboxPreviewService>();
+            var workspaceService = systems.GetComponent<SandboxProjectWorkspaceService>();
+
+            Assert.That(inspectorShell.IsFullyWired, Is.True);
+            Assert.That(inspectorShell.GetMissingDependencies(), Is.Empty);
+            Assert.That(editorHud.IsFullyWired, Is.True);
+            Assert.That(topBarShell.ModeLabel, Is.EqualTo("Edit Mode"));
+            Assert.That(statusBarShell.ModeLabel, Is.EqualTo("Edit Mode"));
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            Assert.That(inspectorShell.UpdateProjectMetadata(
+                "Bootstrap Tower",
+                "Installer wiring smoke test",
+                "Codex",
+                new[] { new MetadataFieldData { key = "phase", value = "11" } }), Is.True);
+            Assert.That(workspaceService.ActiveProject.metadata.buildingName, Is.EqualTo("Bootstrap Tower"));
+
+            Assert.That(previewService.EnterPreviewMode(), Is.True);
+            Assert.That(topBarShell.ModeLabel, Is.EqualTo("Preview Mode"));
+            Assert.That(statusBarShell.ModeLabel, Is.EqualTo("Preview Mode"));
+
+            previewService.ExitPreviewMode();
+            Assert.That(topBarShell.ModeLabel, Is.EqualTo("Edit Mode"));
+            Assert.That(statusBarShell.ModeLabel, Is.EqualTo("Edit Mode"));
 
             Object.DestroyImmediate(systems);
             Object.DestroyImmediate(world);

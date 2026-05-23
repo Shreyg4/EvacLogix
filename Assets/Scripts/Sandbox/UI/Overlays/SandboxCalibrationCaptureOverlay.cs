@@ -22,7 +22,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
             inputRouter?.SetPreviewOverlayCapturingInput(shouldCaptureInput);
 
-            if (!shouldCaptureInput || !Input.GetMouseButtonDown(0))
+            if (!shouldCaptureInput || !SandboxInputAdapter.GetMouseButtonDown(0))
             {
                 return;
             }
@@ -34,7 +34,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
 
             var inputTarget = inputRouter != null
-                ? inputRouter.ResolvePointerTarget(Input.mousePosition)
+                ? inputRouter.ResolvePointerTarget(SandboxInputAdapter.PointerScreenPosition)
                 : SandboxInputTarget.World;
 
             if (inputTarget != SandboxInputTarget.World && inputTarget != SandboxInputTarget.PreviewOverlay)
@@ -42,7 +42,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return;
             }
 
-            var screenPoint = Input.mousePosition;
+            var screenPoint = (Vector3)SandboxInputAdapter.PointerScreenPosition;
             screenPoint.z = Mathf.Abs(cameraComponent.transform.position.z);
             var worldPoint = cameraComponent.ScreenToWorldPoint(screenPoint);
             calibrationWorkflowService.RegisterCalibrationPoint(new Vector2(worldPoint.x, worldPoint.y));

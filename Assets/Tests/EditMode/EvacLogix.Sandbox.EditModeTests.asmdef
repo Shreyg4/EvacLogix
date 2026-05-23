@@ -1,7 +1,7 @@
 {
     "name": "EvacLogix.Sandbox.EditModeTests",
     "references": [
-        "Assembly-CSharp"
+        "EvacLogix.Sandbox"
     ],
     "optionalUnityReferences": [
         "TestAssemblies"

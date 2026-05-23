@@ -8,12 +8,18 @@ namespace EvacLogix.Sandbox.Infrastructure
     {
         [SerializeField] private bool gridVisible = true;
         [SerializeField] private bool snappingEnabled = true;
+        [SerializeField] private float gridSize = 0.5f;
+        [SerializeField] private float angleSnapIncrementDegrees = 45f;
 
         public event Action<bool> GridVisibilityChanged;
         public event Action<bool> SnappingChanged;
+        public event Action<float> GridSizeChanged;
+        public event Action<float> AngleSnapIncrementChanged;
 
         public bool GridVisible => gridVisible;
         public bool SnappingEnabled => snappingEnabled;
+        public float GridSize => gridSize;
+        public float AngleSnapIncrementDegrees => angleSnapIncrementDegrees;
 
         public void ToggleGridVisibility(SandboxCommandHistory commandHistory = null)
         {
@@ -65,6 +71,48 @@ namespace EvacLogix.Sandbox.Infrastructure
                 () => ApplySnappingEnabled(previous)));
         }
 
+        public void SetGridSize(float nextGridSize, SandboxCommandHistory commandHistory = null)
+        {
+            nextGridSize = Mathf.Max(0.05f, nextGridSize);
+            if (Mathf.Approximately(gridSize, nextGridSize))
+            {
+                return;
+            }
+
+            var previous = gridSize;
+            if (commandHistory == null)
+            {
+                ApplyGridSize(nextGridSize);
+                return;
+            }
+
+            commandHistory.Execute(new DelegateSandboxEditorCommand(
+                "Set Grid Size",
+                () => ApplyGridSize(nextGridSize),
+                () => ApplyGridSize(previous)));
+        }
+
+        public void SetAngleSnapIncrementDegrees(float nextAngleSnapIncrementDegrees, SandboxCommandHistory commandHistory = null)
+        {
+            nextAngleSnapIncrementDegrees = Mathf.Clamp(nextAngleSnapIncrementDegrees, 1f, 180f);
+            if (Mathf.Approximately(angleSnapIncrementDegrees, nextAngleSnapIncrementDegrees))
+            {
+                return;
+            }
+
+            var previous = angleSnapIncrementDegrees;
+            if (commandHistory == null)
+            {
+                ApplyAngleSnapIncrementDegrees(nextAngleSnapIncrementDegrees);
+                return;
+            }
+
+            commandHistory.Execute(new DelegateSandboxEditorCommand(
+                "Set Angle Snap Increment",
+                () => ApplyAngleSnapIncrementDegrees(nextAngleSnapIncrementDegrees),
+                () => ApplyAngleSnapIncrementDegrees(previous)));
+        }
+
         private void ApplyGridVisibility(bool visible)
         {
             gridVisible = visible;
@@ -75,6 +123,18 @@ namespace EvacLogix.Sandbox.Infrastructure
         {
             snappingEnabled = enabled;
             SnappingChanged?.Invoke(snappingEnabled);
+        }
+
+        private void ApplyGridSize(float nextGridSize)
+        {
+            gridSize = nextGridSize;
+            GridSizeChanged?.Invoke(gridSize);
+        }
+
+        private void ApplyAngleSnapIncrementDegrees(float nextAngleSnapIncrementDegrees)
+        {
+            angleSnapIncrementDegrees = nextAngleSnapIncrementDegrees;
+            AngleSnapIncrementChanged?.Invoke(angleSnapIncrementDegrees);
         }
     }
 }

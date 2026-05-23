@@ -89,6 +89,7 @@ namespace EvacLogix.Sandbox.Data
                 foreach (var stair in floor.stairPortals)
                 {
                     stair.stairPortalId = EnsureId(stair.stairPortalId);
+                    stair.sourceFloorId = string.IsNullOrWhiteSpace(stair.sourceFloorId) ? floor.floorId : stair.sourceFloorId;
                     stair.tags ??= new List<string>();
                     stair.metadataFields ??= new List<MetadataFieldData>();
                 }

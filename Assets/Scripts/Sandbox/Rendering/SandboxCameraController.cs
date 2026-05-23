@@ -24,21 +24,21 @@ namespace EvacLogix.Sandbox.Rendering
             inputRouter = FindAnyObjectByType<SandboxInputRouter>();
             defaultPosition = transform.position;
             defaultOrthographicSize = controlledCamera.orthographic ? controlledCamera.orthographicSize : 5f;
-            previousMousePosition = Input.mousePosition;
+            previousMousePosition = SandboxInputAdapter.PointerScreenPosition;
         }
 
         private void Update()
         {
             if (inputRouter != null && inputRouter.CurrentTarget == SandboxInputTarget.UI)
             {
-                previousMousePosition = Input.mousePosition;
+                previousMousePosition = SandboxInputAdapter.PointerScreenPosition;
                 return;
             }
 
             HandlePan();
             HandleZoom();
             HandleReset();
-            previousMousePosition = Input.mousePosition;
+            previousMousePosition = SandboxInputAdapter.PointerScreenPosition;
         }
 
         public void ResetView()
@@ -50,21 +50,46 @@ namespace EvacLogix.Sandbox.Rendering
             }
         }
 
+        public void FocusOnPoint(Vector2 point)
+        {
+            transform.position = new Vector3(point.x, point.y, transform.position.z);
+        }
+
+        public void FrameBounds(Rect bounds, float padding = 1f)
+        {
+            if (!controlledCamera.orthographic)
+            {
+                FocusOnPoint(bounds.center);
+                return;
+            }
+
+            var safeWidth = Mathf.Max(0.1f, bounds.width);
+            var safeHeight = Mathf.Max(0.1f, bounds.height);
+            var halfHeight = safeHeight * 0.5f + padding;
+            var halfWidth = (safeWidth * 0.5f + padding) / Mathf.Max(0.01f, controlledCamera.aspect);
+
+            FocusOnPoint(bounds.center);
+            controlledCamera.orthographicSize = Mathf.Clamp(
+                Mathf.Max(halfHeight, halfWidth),
+                minOrthographicSize,
+                maxOrthographicSize);
+        }
+
         private void HandlePan()
         {
-            if (!Input.GetMouseButton(2))
+            if (!SandboxInputAdapter.GetMouseButton(2))
             {
                 return;
             }
 
-            var mouseDelta = Input.mousePosition - previousMousePosition;
+            var mouseDelta = (Vector3)SandboxInputAdapter.PointerScreenPosition - previousMousePosition;
             var delta = new Vector3(-mouseDelta.x, -mouseDelta.y, 0f);
             transform.position += delta * panSpeed * Mathf.Max(controlledCamera.orthographicSize, 1f);
         }
 
         private void HandleZoom()
         {
-            var scroll = Input.mouseScrollDelta.y;
+            var scroll = SandboxInputAdapter.MouseScrollDelta.y;
             if (Mathf.Approximately(scroll, 0f) || !controlledCamera.orthographic)
             {
                 return;
@@ -78,7 +103,7 @@ namespace EvacLogix.Sandbox.Rendering
 
         private void HandleReset()
         {
-            if (Input.GetKeyDown(resetViewKey))
+            if (SandboxInputAdapter.GetKeyDown(resetViewKey))
             {
                 ResetView();
             }
