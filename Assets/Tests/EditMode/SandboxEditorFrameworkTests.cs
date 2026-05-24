@@ -141,6 +141,105 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
+        public void ObjectInteractionOverlay_SelectsAndErasesWallsAndOpenings()
+        {
+            var host = new GameObject("InteractionHost");
+            host.AddComponent<SandboxCommandHistory>();
+            host.AddComponent<SandboxToolStateService>();
+            var selectionService = host.AddComponent<SandboxSelectionService>();
+            host.AddComponent<SandboxProjectWorkspaceService>();
+            host.AddComponent<SandboxColliderRebuildService>();
+            host.AddComponent<SandboxValidationService>();
+            host.AddComponent<SandboxVisualOrganizationService>();
+            host.AddComponent<SandboxClipboardService>();
+            host.AddComponent<SandboxWallSnappingService>();
+            var wallAuthoringService = host.AddComponent<SandboxWallAuthoringService>();
+            var semanticObjectAuthoringService = host.AddComponent<SandboxSemanticObjectAuthoringService>();
+            host.AddComponent<SandboxMeasurementService>();
+
+            host.GetComponent<SandboxProjectWorkspaceService>().SendMessage("Awake");
+            host.GetComponent<SandboxColliderRebuildService>().SendMessage("Awake");
+            host.GetComponent<SandboxValidationService>().SendMessage("Awake");
+            host.GetComponent<SandboxVisualOrganizationService>().SendMessage("Awake");
+            host.GetComponent<SandboxClipboardService>().SendMessage("Awake");
+            host.GetComponent<SandboxWallSnappingService>().SendMessage("Awake");
+            wallAuthoringService.SendMessage("Awake");
+            semanticObjectAuthoringService.SendMessage("Awake");
+            host.GetComponent<SandboxMeasurementService>().SendMessage("Awake");
+
+            var workspaceService = host.GetComponent<SandboxProjectWorkspaceService>();
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(6f, 0f)), Is.True);
+            Assert.That(semanticObjectAuthoringService.PlaceDoor(new Vector2(2f, 0f), out var doorId), Is.True);
+
+            var overlayObject = new GameObject("InteractionOverlay");
+            var overlay = overlayObject.AddComponent<SandboxObjectInteractionOverlay>();
+            overlay.SendMessage("Awake");
+
+            Assert.That(overlay.SelectAtWorldPoint(new Vector2(2f, 0f)), Is.True);
+            Assert.That(selectionService.SelectedObjectIds.Single(), Is.EqualTo(doorId));
+
+            Assert.That(overlay.EraseAtWorldPoint(new Vector2(2f, 0f)), Is.True);
+            Assert.That(workspaceService.ActiveFloor.doors.Count, Is.EqualTo(0));
+
+            Assert.That(overlay.SelectAtWorldPoint(new Vector2(4.5f, 0f)), Is.True);
+            Assert.That(selectionService.SelectedObjectIds.Single(), Is.EqualTo(workspaceService.ActiveFloor.wallSegments[0].wallSegmentId));
+
+            Assert.That(overlay.EraseAtWorldPoint(new Vector2(4.5f, 0f)), Is.True);
+            Assert.That(workspaceService.ActiveFloor.wallSegments.Count, Is.EqualTo(0));
+
+            Object.DestroyImmediate(overlayObject);
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void ObjectInteractionOverlay_CanDragMoveSelectedStairPortal()
+        {
+            var host = new GameObject("StairMoveHost");
+            host.AddComponent<SandboxCommandHistory>();
+            host.AddComponent<SandboxToolStateService>();
+            var selectionService = host.AddComponent<SandboxSelectionService>();
+            host.AddComponent<SandboxProjectWorkspaceService>();
+            host.AddComponent<SandboxColliderRebuildService>();
+            host.AddComponent<SandboxValidationService>();
+            host.AddComponent<SandboxVisualOrganizationService>();
+            host.AddComponent<SandboxClipboardService>();
+            host.AddComponent<SandboxWallSnappingService>();
+            host.AddComponent<SandboxWallAuthoringService>();
+            var semanticObjectAuthoringService = host.AddComponent<SandboxSemanticObjectAuthoringService>();
+            host.AddComponent<SandboxMeasurementService>();
+
+            host.GetComponent<SandboxProjectWorkspaceService>().SendMessage("Awake");
+            host.GetComponent<SandboxColliderRebuildService>().SendMessage("Awake");
+            host.GetComponent<SandboxValidationService>().SendMessage("Awake");
+            host.GetComponent<SandboxVisualOrganizationService>().SendMessage("Awake");
+            host.GetComponent<SandboxClipboardService>().SendMessage("Awake");
+            host.GetComponent<SandboxWallSnappingService>().SendMessage("Awake");
+            host.GetComponent<SandboxWallAuthoringService>().SendMessage("Awake");
+            semanticObjectAuthoringService.SendMessage("Awake");
+            host.GetComponent<SandboxMeasurementService>().SendMessage("Awake");
+
+            var workspaceService = host.GetComponent<SandboxProjectWorkspaceService>();
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            Assert.That(semanticObjectAuthoringService.PlaceStairPortal(new Vector2(2f, 2f), out var stairId), Is.True);
+            selectionService.ReplaceSelection(new[] { stairId });
+
+            var overlayObject = new GameObject("InteractionOverlay");
+            var overlay = overlayObject.AddComponent<SandboxObjectInteractionOverlay>();
+            overlay.SendMessage("Awake");
+
+            Assert.That(overlay.BeginSelectionDrag(stairId, new Vector2(2f, 2f)), Is.True);
+            overlay.UpdateSelectionDragPreview(new Vector2(4f, 3f));
+            Assert.That(overlay.CommitSelectionDrag(), Is.True);
+
+            var stairPortal = workspaceService.ActiveFloor.stairPortals.Single(portal => portal.stairPortalId == stairId);
+            Assert.That(stairPortal.localPosition, Is.EqualTo(new Vector2(4f, 3f)));
+
+            Object.DestroyImmediate(overlayObject);
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
         public void SandboxApp_BootstrapsEditorInstallerAndSharedServices()
         {
             var systems = new GameObject("Systems");
@@ -204,6 +303,7 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(overlayRoot.GetComponent<SandboxOnboardingOverlayShell>(), Is.Not.Null);
             Assert.That(overlayRoot.GetComponent<SandboxCalibrationCaptureOverlay>(), Is.Not.Null);
             Assert.That(overlayRoot.GetComponent<SandboxWallAuthoringOverlay>(), Is.Not.Null);
+            Assert.That(overlayRoot.GetComponent<SandboxObjectInteractionOverlay>(), Is.Not.Null);
             Assert.That(overlayRoot.GetComponent<SandboxSemanticObjectAuthoringOverlay>(), Is.Not.Null);
             Assert.That(overlayRoot.GetComponent<SandboxMeasurementOverlay>(), Is.Not.Null);
             Assert.That(overlayRoot.GetComponent<SandboxPreviewInteractionOverlay>(), Is.Not.Null);

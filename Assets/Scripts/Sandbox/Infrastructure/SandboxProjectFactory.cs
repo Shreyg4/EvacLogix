@@ -13,6 +13,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                 projectId = SandboxId.NewId(),
                 metadata = new ProjectMetadataData
                 {
+                    distanceUnit = DistanceUnit.Feet,
                     createdUtc = timestamp,
                     updatedUtc = timestamp,
                 }

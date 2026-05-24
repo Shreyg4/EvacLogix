@@ -38,6 +38,8 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public bool ShowSelectionSummary => showSelectionSummary;
         public string LatestCalibrationFeedback => latestCalibrationFeedback;
+        public DistanceUnit CurrentDistanceUnit => workspaceService?.ActiveProject?.metadata?.distanceUnit ?? DistanceUnit.Feet;
+        public string CurrentDistanceUnitLabel => SandboxDistanceUnitUtility.GetLabel(CurrentDistanceUnit);
         public string CurrentMeasurementReadout => measurementService?.LastDistanceReadout ?? string.Empty;
         public string CurrentSelectionMeasurementReadout => measurementService?.LastSelectionReadout ?? string.Empty;
         public string CurrentToolHelpText => editorQoLService?.CurrentToolHelpText ?? string.Empty;
@@ -141,11 +143,19 @@ namespace EvacLogix.Sandbox.UI.Panels
             string buildingName,
             string description,
             string authorName,
-            IEnumerable<MetadataFieldData> customFields)
+            IEnumerable<MetadataFieldData> customFields,
+            DistanceUnit? distanceUnit = null)
         {
             return UpdateVisualActionStatus(
-                projectMetadataService != null && projectMetadataService.UpdateProjectMetadata(buildingName, description, authorName, customFields),
+                projectMetadataService != null && projectMetadataService.UpdateProjectMetadata(buildingName, description, authorName, customFields, distanceUnit),
                 "Updated project metadata.");
+        }
+
+        public bool SetProjectDistanceUnit(DistanceUnit distanceUnit)
+        {
+            return UpdateVisualActionStatus(
+                projectMetadataService != null && projectMetadataService.SetDistanceUnit(distanceUnit),
+                $"Set project distance unit to {SandboxDistanceUnitUtility.GetLabel(distanceUnit)}.");
         }
 
         public BlueprintReferenceData ImportBlueprintToActiveFloor(string sourceFilePath)

@@ -14,6 +14,7 @@ namespace EvacLogix.Sandbox.Data
             project.projectId = EnsureId(project.projectId);
             project.schemaVersion = project.schemaVersion <= 0 ? SandboxSchemaVersions.Initial : project.schemaVersion;
             project.metadata ??= new ProjectMetadataData();
+            project.metadata.distanceUnit = SandboxDistanceUnitUtility.Normalize(project.metadata.distanceUnit);
             project.metadata.customFields ??= new List<MetadataFieldData>();
             project.blueprintReferences ??= new List<BlueprintReferenceData>();
             project.floors ??= new List<FloorData>();

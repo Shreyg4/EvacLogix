@@ -65,6 +65,14 @@ namespace EvacLogix.Sandbox.Data
         Annotation = 2,
     }
 
+    public enum DistanceUnit
+    {
+        Feet = 0,
+        Meters = 1,
+        Inches = 2,
+        Centimeters = 3,
+    }
+
     [Serializable]
     public sealed class BuildingProjectData
     {
@@ -88,6 +96,7 @@ namespace EvacLogix.Sandbox.Data
         public string buildingName = string.Empty;
         public string description = string.Empty;
         public string authorName = string.Empty;
+        public DistanceUnit distanceUnit = DistanceUnit.Feet;
         public string createdUtc = string.Empty;
         public string updatedUtc = string.Empty;
         public string lastManualSaveUtc = string.Empty;

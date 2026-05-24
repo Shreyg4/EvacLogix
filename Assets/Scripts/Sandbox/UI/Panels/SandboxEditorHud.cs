@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Data;
@@ -33,6 +34,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         private SandboxSelectionService selectionService;
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxInputRouter inputRouter;
+        private SandboxWallAuthoringService wallAuthoringService;
 
         private GUIStyle headerStyle;
         private GUIStyle subheaderStyle;
@@ -88,6 +90,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             selectionService = FindAnyObjectByType<SandboxSelectionService>();
             visualOrganizationService = FindAnyObjectByType<SandboxVisualOrganizationService>();
             inputRouter = FindAnyObjectByType<SandboxInputRouter>();
+            wallAuthoringService = FindAnyObjectByType<SandboxWallAuthoringService>();
         }
 
         private void OnDisable()
@@ -258,12 +261,20 @@ namespace EvacLogix.Sandbox.UI.Panels
             var activeProject = workspaceService?.ActiveProject;
             GUILayout.Label($"Project: {(string.IsNullOrWhiteSpace(activeProject?.metadata.buildingName) ? "Untitled Project" : activeProject.metadata.buildingName)}", bodyStyle);
             GUILayout.Label($"Active Floor: {activeFloor?.name ?? "None"}", bodyStyle);
+            GUILayout.Label($"Distance Unit: {inspectorPanelShell?.CurrentDistanceUnitLabel ?? SandboxDistanceUnitUtility.GetLabel(DistanceUnit.Feet)}", bodyStyle);
             GUILayout.Label($"Selection Count: {selectionService?.SelectedObjectIds.Count ?? 0}", bodyStyle);
             GUILayout.Label(inspectorPanelShell != null && inspectorPanelShell.IsFullyWired ? "Inspector Wiring: OK" : "Inspector Wiring: Missing Dependencies", bodyStyle);
             if (inspectorPanelShell != null && !inspectorPanelShell.IsFullyWired)
             {
                 GUILayout.Label(string.Join(", ", inspectorPanelShell.GetMissingDependencies()), bodyStyle);
             }
+
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Use Feet", () => inspectorPanelShell?.SetProjectDistanceUnit(DistanceUnit.Feet), activeProject != null);
+            DrawActionButton("Use Meters", () => inspectorPanelShell?.SetProjectDistanceUnit(DistanceUnit.Meters), activeProject != null);
+            DrawActionButton("Use Inches", () => inspectorPanelShell?.SetProjectDistanceUnit(DistanceUnit.Inches), activeProject != null);
+            DrawActionButton("Use Centimeters", () => inspectorPanelShell?.SetProjectDistanceUnit(DistanceUnit.Centimeters), activeProject != null);
+            GUILayout.EndHorizontal();
 
             DrawInspectorSection("Blueprint");
             blueprintImportPath = GUILayout.TextField(blueprintImportPath, GUILayout.Height(24f));
@@ -289,6 +300,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                     inspectorPanelShell?.SetActiveFloorBlueprintOpacity(nextOpacity);
                 }
 
+                GUILayout.Label($"Calibration Distance ({inspectorPanelShell?.CurrentDistanceUnitLabel ?? SandboxDistanceUnitUtility.GetLabel(DistanceUnit.Feet)})", bodyStyle);
                 GUILayout.BeginHorizontal();
                 DrawActionButton("Start Calibration", () => { inspectorPanelShell?.BeginActiveFloorCalibrationCapture(); }, true);
                 calibrationDistanceText = GUILayout.TextField(calibrationDistanceText, GUILayout.Width(60f));
@@ -336,6 +348,28 @@ namespace EvacLogix.Sandbox.UI.Panels
                 }
             }
 
+            DrawInspectorSection("Wall Brush");
+            if (wallAuthoringService != null)
+            {
+                if (wallAuthoringService.IsBrushCaptureActive)
+                {
+                    GUILayout.Label($"Recording stroke: {wallAuthoringService.ActiveBrushStrokePoints.Count} points captured.", bodyStyle);
+                    DrawActionButton("Cancel Brush Capture", () => inspectorPanelShell?.CancelBrushWallStroke());
+                }
+                else if (wallAuthoringService.LastCleanedBrushStrokePoints.Count >= 2 && wallAuthoringService.ActiveBrushStrokePoints.Count >= 2)
+                {
+                    GUILayout.Label($"Brush stroke ready: {wallAuthoringService.LastCleanedBrushStrokePoints.Count} cleaned points.", bodyStyle);
+                    GUILayout.BeginHorizontal();
+                    DrawActionButton("Accept Brush Walls", () => { inspectorPanelShell?.AcceptBrushWallStroke(); });
+                    DrawActionButton("Discard Brush", () => inspectorPanelShell?.CancelBrushWallStroke());
+                    GUILayout.EndHorizontal();
+                }
+                else
+                {
+                    GUILayout.Label("Use Wall Brush to sketch a stroke, then accept or discard it here after capture.", bodyStyle);
+                }
+            }
+
             DrawInspectorSection("Legend");
             showLegend = GUILayout.Toggle(showLegend, "Show Visual Legend");
             if (showLegend && visualLegendShell != null && visualOrganizationService != null)
@@ -355,10 +389,11 @@ namespace EvacLogix.Sandbox.UI.Panels
                         visualOrganizationService.SetTypeLocked(entry.objectType, nextLocked);
                     }
 
-                    var previousColor = GUI.contentColor;
-                    GUI.contentColor = entry.color;
-                    GUILayout.Label("■", GUILayout.Width(18f));
-                    GUI.contentColor = previousColor;
+                    var swatchRect = GUILayoutUtility.GetRect(18f, 18f, GUILayout.Width(18f));
+                    var previousColor = GUI.color;
+                    GUI.color = entry.color;
+                    GUI.Box(swatchRect, GUIContent.none);
+                    GUI.color = previousColor;
                     GUILayout.EndHorizontal();
                 }
             }

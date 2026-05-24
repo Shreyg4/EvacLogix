@@ -26,7 +26,8 @@ namespace EvacLogix.Sandbox.Infrastructure
             string buildingName,
             string description,
             string authorName,
-            IEnumerable<MetadataFieldData> customFields)
+            IEnumerable<MetadataFieldData> customFields,
+            DistanceUnit? distanceUnit = null)
         {
             if (workspaceService?.ActiveProject == null)
             {
@@ -39,6 +40,8 @@ namespace EvacLogix.Sandbox.Infrastructure
             afterProject.metadata.buildingName = Sanitize(buildingName);
             afterProject.metadata.description = Sanitize(description);
             afterProject.metadata.authorName = Sanitize(authorName);
+            afterProject.metadata.distanceUnit = SandboxDistanceUnitUtility.Normalize(
+                distanceUnit ?? afterProject.metadata.distanceUnit);
             afterProject.metadata.customFields = CloneMetadataFields(customFields);
             SandboxProjectDataUtility.EnsureIds(afterProject);
 
@@ -60,6 +63,21 @@ namespace EvacLogix.Sandbox.Infrastructure
                 () => Apply(SandboxProjectSerializer.Clone(afterProject)),
                 () => Apply(SandboxProjectSerializer.Clone(beforeProject))));
             return true;
+        }
+
+        public bool SetDistanceUnit(DistanceUnit distanceUnit)
+        {
+            if (workspaceService?.ActiveProject?.metadata == null)
+            {
+                return false;
+            }
+
+            return UpdateProjectMetadata(
+                workspaceService.ActiveProject.metadata.buildingName,
+                workspaceService.ActiveProject.metadata.description,
+                workspaceService.ActiveProject.metadata.authorName,
+                workspaceService.ActiveProject.metadata.customFields,
+                distanceUnit);
         }
 
         private static string Sanitize(string value)

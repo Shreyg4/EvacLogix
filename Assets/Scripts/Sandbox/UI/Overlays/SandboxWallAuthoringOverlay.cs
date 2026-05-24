@@ -62,6 +62,18 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return;
             }
 
+            var currentToolMode = toolStateService.CurrentToolMode;
+            if (!SupportsWallHandleEditing(currentToolMode))
+            {
+                if (isHandleDragActive)
+                {
+                    CancelHandleDrag();
+                }
+
+                inputRouter?.SetPointerOverHandle(false);
+                return;
+            }
+
             var worldPoint = ScreenToWorldPoint(SandboxInputAdapter.PointerScreenPosition);
             var isHoveringHandle = TryGetNearestHandle(worldPoint, out var hoveredWallId, out var hoveredIsStartHandle);
             if (!isHandleDragActive)
@@ -125,6 +137,11 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     HandleBrushTool();
                     break;
             }
+        }
+
+        private static bool SupportsWallHandleEditing(SandboxToolMode toolMode)
+        {
+            return toolMode == SandboxToolMode.WallLine || toolMode == SandboxToolMode.WallBrush;
         }
 
         public bool TryBeginHandleDrag(Vector2 worldPoint)

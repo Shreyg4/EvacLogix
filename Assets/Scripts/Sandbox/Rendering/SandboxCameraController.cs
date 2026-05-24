@@ -1,4 +1,5 @@
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Authoring.Tools;
 using UnityEngine;
 
 namespace EvacLogix.Sandbox.Rendering
@@ -14,6 +15,7 @@ namespace EvacLogix.Sandbox.Rendering
 
         private Camera controlledCamera;
         private SandboxInputRouter inputRouter;
+        private SandboxToolStateService toolStateService;
         private Vector3 defaultPosition;
         private float defaultOrthographicSize;
         private Vector3 previousMousePosition;
@@ -22,6 +24,7 @@ namespace EvacLogix.Sandbox.Rendering
         {
             controlledCamera = GetComponent<Camera>();
             inputRouter = FindAnyObjectByType<SandboxInputRouter>();
+            toolStateService = FindAnyObjectByType<SandboxToolStateService>();
             defaultPosition = transform.position;
             defaultOrthographicSize = controlledCamera.orthographic ? controlledCamera.orthographicSize : 5f;
             previousMousePosition = SandboxInputAdapter.PointerScreenPosition;
@@ -77,7 +80,13 @@ namespace EvacLogix.Sandbox.Rendering
 
         private void HandlePan()
         {
-            if (!SandboxInputAdapter.GetMouseButton(2))
+            var usingMiddleMousePan = SandboxInputAdapter.GetMouseButton(2);
+            var usingPanToolPrimaryDrag =
+                toolStateService != null &&
+                toolStateService.CurrentToolMode == SandboxToolMode.Pan &&
+                SandboxInputAdapter.GetMouseButton(0);
+
+            if (!usingMiddleMousePan && !usingPanToolPrimaryDrag)
             {
                 return;
             }

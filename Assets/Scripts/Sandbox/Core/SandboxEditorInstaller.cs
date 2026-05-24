@@ -81,6 +81,7 @@ namespace EvacLogix.Sandbox.Core
             EnsureComponent<SandboxOnboardingOverlayShell>(overlayRoot);
             EnsureComponent<SandboxCalibrationCaptureOverlay>(overlayRoot);
             EnsureComponent<SandboxWallAuthoringOverlay>(overlayRoot);
+            EnsureComponent<SandboxObjectInteractionOverlay>(overlayRoot);
             EnsureComponent<SandboxSemanticObjectAuthoringOverlay>(overlayRoot);
             EnsureComponent<SandboxMeasurementOverlay>(overlayRoot);
             EnsureComponent<SandboxPreviewInteractionOverlay>(overlayRoot);

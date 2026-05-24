@@ -6,7 +6,7 @@ namespace EvacLogix.Sandbox.Rendering
 {
     public sealed class SandboxGridOverlayRenderer : MonoBehaviour
     {
-        [SerializeField] private Color lineColor = new(1f, 1f, 1f, 0.18f);
+        [SerializeField] private Color lineColor = new(0.6f, 0.6f, 0.6f, 0.18f);
         [SerializeField] private float lineWidth = 0.025f;
         [SerializeField] private float paddingMultiplier = 2f;
         [SerializeField] private int maxLinesPerAxis = 48;

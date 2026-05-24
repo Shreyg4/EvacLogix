@@ -75,7 +75,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
             pointB = worldPoint;
             hasPointB = true;
-            lastDistanceReadout = BuildDistanceReadout(pointA, pointB);
+            lastDistanceReadout = BuildDistanceReadoutWithUnit(pointA, pointB);
             RaiseChanged();
             return lastDistanceReadout;
         }
@@ -94,6 +94,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         {
             var floor = workspaceService?.ActiveFloor;
             var selectedIds = selectionService?.SelectedObjectIds ?? Array.Empty<string>();
+            var distanceUnit = workspaceService?.ActiveProject?.metadata?.distanceUnit ?? DistanceUnit.Feet;
             if (floor == null || selectedIds.Count == 0)
             {
                 lastSelectionReadout = "No selection geometry to measure.";
@@ -185,8 +186,10 @@ namespace EvacLogix.Sandbox.Infrastructure
             var minY = points.Min(point => point.y);
             var maxX = points.Max(point => point.x);
             var maxY = points.Max(point => point.y);
+            var boundsWidth = maxX - minX;
+            var boundsHeight = maxY - minY;
             lastSelectionReadout =
-                $"Selection bounds {maxX - minX:0.##} x {maxY - minY:0.##}, wall length {totalWallLength:0.##}, door width {totalDoorWidth:0.##}, window width {totalWindowWidth:0.##}, obstacle area {totalObstacleArea:0.##}.";
+                $"Selection bounds {SandboxDistanceUnitUtility.FormatDistance(boundsWidth, distanceUnit)} x {SandboxDistanceUnitUtility.FormatDistance(boundsHeight, distanceUnit)}, wall length {SandboxDistanceUnitUtility.FormatDistance(totalWallLength, distanceUnit)}, door width {SandboxDistanceUnitUtility.FormatDistance(totalDoorWidth, distanceUnit)}, window width {SandboxDistanceUnitUtility.FormatDistance(totalWindowWidth, distanceUnit)}, obstacle area {SandboxDistanceUnitUtility.FormatArea(totalObstacleArea, distanceUnit)}.";
             RaiseChanged();
             return lastSelectionReadout;
         }
@@ -209,7 +212,17 @@ namespace EvacLogix.Sandbox.Infrastructure
         private static string BuildDistanceReadout(Vector2 from, Vector2 to)
         {
             var delta = to - from;
-            return $"Measured {delta.magnitude:0.###} units ({delta.x:0.###}, {delta.y:0.###}).";
+            return $"Measured {delta.magnitude:0.###}.";
+        }
+
+        private string BuildDistanceReadoutWithUnit(Vector2 from, Vector2 to)
+        {
+            var delta = to - from;
+            var distanceUnit = workspaceService?.ActiveProject?.metadata?.distanceUnit ?? DistanceUnit.Feet;
+            var formattedDistance = SandboxDistanceUnitUtility.FormatDistance(delta.magnitude, distanceUnit, "0.###");
+            var formattedX = delta.x.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            var formattedY = delta.y.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            return $"Measured {formattedDistance} ({formattedX}, {formattedY}).";
         }
 
         private void RaiseChanged()

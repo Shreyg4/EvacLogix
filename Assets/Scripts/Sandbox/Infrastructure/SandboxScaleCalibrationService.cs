@@ -51,8 +51,10 @@ namespace EvacLogix.Sandbox.Infrastructure
             blueprintReference.worldUnitsPerPixel = realWorldDistance / pixelDistance;
             blueprintReference.isCalibrated = true;
 
+            var distanceUnit = workspaceService.ActiveProject?.metadata?.distanceUnit ?? DistanceUnit.Feet;
+
             latestMeasurementFeedback =
-                $"Scale set to {blueprintReference.worldUnitsPerPixel:0.####} world units per pixel using {realWorldDistance:0.##} units.";
+                $"Scale set to {blueprintReference.worldUnitsPerPixel:0.####} {SandboxDistanceUnitUtility.GetAbbreviation(distanceUnit)} per pixel using {SandboxDistanceUnitUtility.FormatDistance(realWorldDistance, distanceUnit)}.";
 
             workspaceService.SetActiveProject(workspaceService.ActiveProject);
             return true;

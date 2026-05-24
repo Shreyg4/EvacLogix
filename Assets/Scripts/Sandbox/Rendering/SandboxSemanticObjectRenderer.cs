@@ -11,7 +11,7 @@ namespace EvacLogix.Sandbox.Rendering
 {
     public sealed class SandboxSemanticObjectRenderer : MonoBehaviour
     {
-        [SerializeField] private Color selectedColor = new(1f, 1f, 1f, 1f);
+        [SerializeField] private Color selectedColor = new(0.6f, 0.6f, 0.6f, 1f);
         [SerializeField] private float lineWidth = 0.05f;
         [SerializeField] private float markerRadius = 0.25f;
 

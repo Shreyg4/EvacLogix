@@ -66,6 +66,7 @@ namespace EvacLogix.Tests.EditMode
             SandboxProjectDataUtility.EnsureIds(project);
 
             Assert.That(project.projectId, Is.Not.Empty);
+            Assert.That(project.metadata.distanceUnit, Is.EqualTo(DistanceUnit.Feet));
             Assert.That(project.floors[0].floorId, Is.Not.Empty);
             Assert.That(project.floors[0].regions[0].regionId, Is.Not.Empty);
             Assert.That(project.floors[0].regions[0].floorId, Is.EqualTo(project.floors[0].floorId));
