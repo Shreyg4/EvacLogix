@@ -42,6 +42,7 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
         [SerializeField] private bool endpointSnappingEnabled = true;
         [SerializeField] private bool segmentSnappingEnabled = true;
         [SerializeField] private bool angleSnappingEnabled = true;
+        [SerializeField] private bool temporarySnappingBypass;
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxWorkspaceStateService workspaceStateService;
@@ -51,6 +52,7 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
         public bool EndpointSnappingEnabled => endpointSnappingEnabled;
         public bool SegmentSnappingEnabled => segmentSnappingEnabled;
         public bool AngleSnappingEnabled => angleSnappingEnabled;
+        public bool TemporarySnappingBypass => temporarySnappingBypass;
 
         private void Awake()
         {
@@ -66,9 +68,14 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
             angleSnappingEnabled = useAngles;
         }
 
+        public void SetTemporarySnappingBypass(bool enabled)
+        {
+            temporarySnappingBypass = enabled;
+        }
+
         public SandboxWallSnapResult SnapPoint(string floorId, Vector2 rawPoint, Vector2? anchorPoint)
         {
-            if (workspaceStateService != null && !workspaceStateService.SnappingEnabled)
+            if ((workspaceStateService != null && !workspaceStateService.SnappingEnabled) || temporarySnappingBypass)
             {
                 return new SandboxWallSnapResult(rawPoint, SandboxWallSnapTargetKind.None, string.Empty);
             }

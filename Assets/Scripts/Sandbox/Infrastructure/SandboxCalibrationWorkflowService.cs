@@ -17,6 +17,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         private SandboxScaleCalibrationService calibrationService;
 
         public bool IsCalibrationCaptureActive => isCalibrationCaptureActive;
+        public bool HasPendingCalibration => !string.IsNullOrWhiteSpace(targetFloorId) && (isCalibrationCaptureActive || hasPointA || hasPointB);
         public string TargetFloorId => targetFloorId;
         public bool HasPointA => hasPointA;
         public bool HasPointB => hasPointB;

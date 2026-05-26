@@ -40,17 +40,27 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(overhangingDoorId, Is.EqualTo(string.Empty));
             Assert.That(semanticObjectAuthoringService.PlaceWindow(new Vector2(4.7f, 0.05f), out var overhangingWindowId, 1f), Is.False);
             Assert.That(overhangingWindowId, Is.EqualTo(string.Empty));
+            Assert.That(semanticObjectAuthoringService.PlaceDoor(new Vector2(4.49f, 0.05f), out var edgeDoorId, 1f), Is.True);
+            Assert.That(edgeDoorId, Is.Not.EqualTo(string.Empty));
+            Assert.That(semanticObjectAuthoringService.PlaceWindow(new Vector2(0.51f, 0.05f), out var edgeWindowId, 1f), Is.True);
+            Assert.That(edgeWindowId, Is.Not.EqualTo(string.Empty));
             Assert.That(semanticObjectAuthoringService.PlaceDoor(new Vector2(1.5f, 0.15f), out var doorId, 1.2f, DoorState.OneWay), Is.True);
             Assert.That(semanticObjectAuthoringService.PlaceWindow(new Vector2(3.5f, 0.1f), out var windowId, 1f, true, 2.5f, 1.4f), Is.True);
 
             var floor = workspaceService.ActiveFloor;
             var wallId = floor.wallSegments[0].wallSegmentId;
+            var edgeDoor = floor.doors.Single(candidate => candidate.doorId == edgeDoorId);
             var door = floor.doors.Single(candidate => candidate.doorId == doorId);
+            var edgeWindow = floor.windows.Single(candidate => candidate.windowId == edgeWindowId);
             var window = floor.windows.Single(candidate => candidate.windowId == windowId);
 
+            Assert.That(edgeDoor.wallSegmentId, Is.EqualTo(wallId));
+            Assert.That(edgeDoor.offsetAlongWall, Is.EqualTo(4.49f).Within(0.1f));
             Assert.That(door.wallSegmentId, Is.EqualTo(wallId));
             Assert.That(door.state, Is.EqualTo(DoorState.OneWay));
             Assert.That(door.offsetAlongWall, Is.GreaterThan(0f));
+            Assert.That(edgeWindow.wallSegmentId, Is.EqualTo(wallId));
+            Assert.That(edgeWindow.offsetAlongWall, Is.EqualTo(0.51f).Within(0.1f));
             Assert.That(window.wallSegmentId, Is.EqualTo(wallId));
             Assert.That(window.canBeUsedForEscape, Is.True);
             Assert.That(window.escapeCost, Is.EqualTo(2.5f).Within(0.001f));

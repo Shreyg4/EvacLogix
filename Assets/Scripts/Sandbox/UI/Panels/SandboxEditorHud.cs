@@ -409,9 +409,13 @@ namespace EvacLogix.Sandbox.UI.Panels
                 GUILayout.Label(inspectorPanelShell.CurrentValidationHelpText, bodyStyle);
             }
 
-            if (!string.IsNullOrWhiteSpace(inspectorPanelShell?.CurrentMeasurementReadout))
+            if (inspectorPanelShell?.HasActiveMeasurement == true || !string.IsNullOrWhiteSpace(inspectorPanelShell?.CurrentMeasurementReadout))
             {
-                GUILayout.Label(inspectorPanelShell.CurrentMeasurementReadout, bodyStyle);
+                if (!string.IsNullOrWhiteSpace(inspectorPanelShell?.CurrentMeasurementReadout))
+                {
+                    GUILayout.Label(inspectorPanelShell.CurrentMeasurementReadout, bodyStyle);
+                }
+                DrawActionButton("Clear Measure", () => inspectorPanelShell?.ClearMeasurement());
             }
 
             if (!string.IsNullOrWhiteSpace(inspectorPanelShell?.CurrentSelectionMeasurementReadout))

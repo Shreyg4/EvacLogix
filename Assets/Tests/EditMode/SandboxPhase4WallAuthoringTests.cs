@@ -201,6 +201,39 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
+        public void OverlayRenderer_ScalesWallLineWidthWhenZoomedOut()
+        {
+            var host = CreateWallAuthoringHost(out var workspace, out _, out var authoringService, out _);
+            workspace.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            Assert.That(authoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(6f, 0f), 0.25f), Is.True);
+
+            var cameraObject = new GameObject("Main Camera");
+            cameraObject.tag = "MainCamera";
+            var cameraComponent = cameraObject.AddComponent<Camera>();
+            cameraComponent.orthographic = true;
+            cameraComponent.orthographicSize = 5f;
+
+            var world = new GameObject("World");
+            var wallRoot = new GameObject("WallRoot");
+            wallRoot.transform.SetParent(world.transform);
+            new GameObject("HandleRoot").transform.SetParent(world.transform);
+            var renderer = wallRoot.AddComponent<SandboxWallOverlayRenderer>();
+            renderer.SendMessage("Awake");
+
+            var initialWidth = wallRoot.GetComponentInChildren<LineRenderer>().widthMultiplier;
+
+            cameraComponent.orthographicSize = 20f;
+            renderer.Refresh();
+            var zoomedOutWidth = wallRoot.GetComponentInChildren<LineRenderer>().widthMultiplier;
+
+            Assert.That(zoomedOutWidth, Is.GreaterThan(initialWidth));
+
+            Object.DestroyImmediate(world);
+            Object.DestroyImmediate(cameraObject);
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
         public void Bootstrap_InstallsWallAuthoringServicesAndRenderers()
         {
             var systems = new GameObject("Systems");

@@ -40,6 +40,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         public string LatestCalibrationFeedback => latestCalibrationFeedback;
         public DistanceUnit CurrentDistanceUnit => workspaceService?.ActiveProject?.metadata?.distanceUnit ?? DistanceUnit.Feet;
         public string CurrentDistanceUnitLabel => SandboxDistanceUnitUtility.GetLabel(CurrentDistanceUnit);
+        public bool HasActiveMeasurement => measurementService != null && (measurementService.HasPointA || measurementService.HasPointB);
         public string CurrentMeasurementReadout => measurementService?.LastDistanceReadout ?? string.Empty;
         public string CurrentSelectionMeasurementReadout => measurementService?.LastSelectionReadout ?? string.Empty;
         public string CurrentToolHelpText => editorQoLService?.CurrentToolHelpText ?? string.Empty;

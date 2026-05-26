@@ -1,5 +1,6 @@
 using System;
 using EvacLogix.Sandbox.Authoring;
+using EvacLogix.Sandbox.Authoring.Snapping;
 using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Infrastructure;
@@ -21,6 +22,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private SandboxInputRouter inputRouter;
         private SandboxStatusBarShell statusBar;
         private SandboxWallOverlayRenderer wallOverlayRenderer;
+        private SandboxWallSnappingService wallSnappingService;
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxEditorQoLService editorQoLService;
         private SandboxPreviewService previewService;
@@ -44,6 +46,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             inputRouter = FindAnyObjectByType<SandboxInputRouter>();
             statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
             wallOverlayRenderer = FindAnyObjectByType<SandboxWallOverlayRenderer>();
+            wallSnappingService = FindAnyObjectByType<SandboxWallSnappingService>();
             visualOrganizationService = FindAnyObjectByType<SandboxVisualOrganizationService>();
             editorQoLService = FindAnyObjectByType<SandboxEditorQoLService>();
             previewService = FindAnyObjectByType<SandboxPreviewService>();
@@ -58,6 +61,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
             if (previewService != null && previewService.IsPreviewModeActive)
             {
+                wallSnappingService?.SetTemporarySnappingBypass(false);
                 inputRouter?.SetPointerOverHandle(false);
                 return;
             }
@@ -70,9 +74,13 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     CancelHandleDrag();
                 }
 
+                wallSnappingService?.SetTemporarySnappingBypass(false);
                 inputRouter?.SetPointerOverHandle(false);
                 return;
             }
+
+            var isFineAdjustmentActive = SandboxInputAdapter.GetKey(KeyCode.LeftAlt) || SandboxInputAdapter.GetKey(KeyCode.RightAlt);
+            wallSnappingService?.SetTemporarySnappingBypass(isFineAdjustmentActive);
 
             var worldPoint = ScreenToWorldPoint(SandboxInputAdapter.PointerScreenPosition);
             var isHoveringHandle = TryGetNearestHandle(worldPoint, out var hoveredWallId, out var hoveredIsStartHandle);
@@ -319,6 +327,16 @@ namespace EvacLogix.Sandbox.UI.Overlays
             inputRouter?.SetPointerOverHandle(false);
             wallOverlayRenderer ??= FindAnyObjectByType<SandboxWallOverlayRenderer>();
             wallOverlayRenderer?.Refresh();
+        }
+
+        private void OnDisable()
+        {
+            wallSnappingService?.SetTemporarySnappingBypass(false);
+        }
+
+        private void OnDestroy()
+        {
+            wallSnappingService?.SetTemporarySnappingBypass(false);
         }
 
         private static Vector2 ScreenToWorldPoint(Vector3 screenPoint)

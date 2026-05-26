@@ -8,6 +8,7 @@ using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
 using EvacLogix.Sandbox.Rendering;
 using EvacLogix.Sandbox.UI.Overlays;
+using EvacLogix.Sandbox.UI.Panels;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -122,6 +123,94 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(measurementService.RegisterMeasurementPoint(Vector2.zero), Does.Contain("point A"));
             Assert.That(measurementService.RegisterMeasurementPoint(new Vector2(3f, 4f)), Does.Contain("Measured 5"));
 
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void WallSnappingService_CanTemporarilyBypassSnappingForFineAdjustments()
+        {
+            var host = CreatePhase8Host(
+                out var workspaceService,
+                out _,
+                out _,
+                out var wallAuthoringService,
+                out _,
+                out _,
+                out _,
+                out var workspaceStateService,
+                out _,
+                out _,
+                out _);
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(5f, 0f), 0.25f), Is.True);
+
+            workspaceStateService.SetGridSize(1f);
+            var wallSnappingService = host.GetComponent<SandboxWallSnappingService>();
+            var rawPoint = new Vector2(0.92f, 0.12f);
+
+            var snappedPoint = wallSnappingService.SnapPoint(workspaceService.ActiveFloorId, rawPoint, null);
+            Assert.That(snappedPoint.position.x, Is.EqualTo(1f).Within(0.001f));
+
+            wallSnappingService.SetTemporarySnappingBypass(true);
+            var unsnappedPoint = wallSnappingService.SnapPoint(workspaceService.ActiveFloorId, rawPoint, null);
+            Assert.That(unsnappedPoint.targetKind, Is.EqualTo(SandboxWallSnapTargetKind.None));
+            Assert.That(unsnappedPoint.position, Is.EqualTo(rawPoint));
+
+            wallSnappingService.SetTemporarySnappingBypass(false);
+
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void MeasurementOverlay_ShowsVisualAidAcrossMeasureWorkflow()
+        {
+            var host = CreatePhase8Host(
+                out var workspaceService,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out var measurementService,
+                out _,
+                out _,
+                out _,
+                out _);
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            var toolStateService = host.GetComponent<SandboxToolStateService>();
+
+            var overlayObject = new GameObject("MeasurementOverlay");
+            var overlay = overlayObject.AddComponent<SandboxMeasurementOverlay>();
+            overlay.SendMessage("Awake");
+            var inspectorObject = new GameObject("Inspector");
+            var inspector = inspectorObject.AddComponent<SandboxInspectorPanelShell>();
+            inspector.SendMessage("Awake");
+
+            Assert.That(overlay.IsVisualAidVisible, Is.False);
+            Assert.That(inspector.HasActiveMeasurement, Is.False);
+
+            toolStateService.RequestToolModeChange(SandboxToolMode.Measure);
+            Assert.That(overlay.IsVisualAidVisible, Is.True);
+            Assert.That(overlay.VisualAidInstruction, Is.EqualTo("Click measurement point A."));
+
+            Assert.That(measurementService.RegisterMeasurementPoint(Vector2.zero), Does.Contain("point A"));
+            Assert.That(overlay.VisualAidInstruction, Is.EqualTo("Click measurement point B."));
+            Assert.That(inspector.HasActiveMeasurement, Is.True);
+
+            Assert.That(measurementService.RegisterMeasurementPoint(new Vector2(3f, 4f)), Does.Contain("Measured 5"));
+            Assert.That(overlay.VisualAidInstruction, Is.EqualTo("Measurement captured. Click again to update point B, or use Clear Measure to restart."));
+
+            measurementService.ClearMeasurement();
+            Assert.That(overlay.VisualAidInstruction, Is.EqualTo("Click measurement point A."));
+            Assert.That(inspector.HasActiveMeasurement, Is.False);
+
+            toolStateService.RequestToolModeChange(SandboxToolMode.Select);
+            Assert.That(overlay.IsVisualAidVisible, Is.False);
+
+            Object.DestroyImmediate(inspectorObject);
+            Object.DestroyImmediate(overlayObject);
             Object.DestroyImmediate(host);
         }
 

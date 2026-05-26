@@ -17,6 +17,8 @@ namespace EvacLogix.Sandbox.Rendering
         [SerializeField] private Color previewColor = new(0.9f, 0.9f, 0.9f, 0.9f);
         [SerializeField] private float minimumLineWidth = 0.035f;
         [SerializeField] private float handleSize = 0.18f;
+        [SerializeField] private float referenceOrthographicSize = 5f;
+        [SerializeField] private float maxZoomWidthScale = 4f;
 
         private readonly List<GameObject> renderedObjects = new();
         private SandboxProjectWorkspaceService workspaceService;
@@ -26,6 +28,8 @@ namespace EvacLogix.Sandbox.Rendering
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxEditorQoLService editorQoLService;
         private Transform handleRoot;
+        private Camera targetCamera;
+        private float lastOrthographicSize = -1f;
 
         private void Awake()
         {
@@ -36,6 +40,7 @@ namespace EvacLogix.Sandbox.Rendering
             visualOrganizationService = FindAnyObjectByType<SandboxVisualOrganizationService>();
             editorQoLService = FindAnyObjectByType<SandboxEditorQoLService>();
             handleRoot = transform.parent != null ? transform.parent.Find("HandleRoot") : null;
+            targetCamera = Camera.main;
 
             if (workspaceService != null)
             {
@@ -65,6 +70,17 @@ namespace EvacLogix.Sandbox.Rendering
             }
 
             Refresh();
+        }
+
+        private void LateUpdate()
+        {
+            targetCamera ??= Camera.main;
+            if (targetCamera != null &&
+                targetCamera.orthographic &&
+                !Mathf.Approximately(lastOrthographicSize, targetCamera.orthographicSize))
+            {
+                Refresh();
+            }
         }
 
         private void OnDestroy()
@@ -101,10 +117,12 @@ namespace EvacLogix.Sandbox.Rendering
         {
             Clear();
             wallAuthoringOverlay ??= FindAnyObjectByType<SandboxWallAuthoringOverlay>();
+            targetCamera ??= Camera.main;
 
             var floor = workspaceService?.ActiveFloor;
             if (floor == null)
             {
+                RecordCameraState();
                 return;
             }
 
@@ -122,6 +140,7 @@ namespace EvacLogix.Sandbox.Rendering
             }
 
             RenderPreviewState();
+            RecordCameraState();
         }
 
         private void HandleProjectChanged(BuildingProjectData project)
@@ -165,7 +184,7 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.SetPosition(0, new Vector3(wall.startPoint.x, wall.startPoint.y, 0f));
             lineRenderer.SetPosition(1, new Vector3(wall.endPoint.x, wall.endPoint.y, 0f));
             lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-            lineRenderer.widthMultiplier = Mathf.Max(minimumLineWidth, wall.thickness * 0.18f);
+            lineRenderer.widthMultiplier = ResolveLineWidth(Mathf.Max(minimumLineWidth, wall.thickness * 0.18f));
             var baseColor = visualOrganizationService == null
                 ? wallColor
                 : visualOrganizationService.GetColor(SandboxVisualObjectType.Wall);
@@ -189,7 +208,7 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.positionCount = 4;
             lineRenderer.loop = false;
             lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-            lineRenderer.widthMultiplier = minimumLineWidth;
+            lineRenderer.widthMultiplier = ResolveLineWidth(minimumLineWidth);
             lineRenderer.startColor = handleColor;
             lineRenderer.endColor = handleColor;
 
@@ -263,7 +282,7 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.useWorldSpace = false;
             lineRenderer.positionCount = points.Count;
             lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-            lineRenderer.widthMultiplier = width;
+            lineRenderer.widthMultiplier = ResolveLineWidth(width);
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
             for (var i = 0; i < points.Count; i += 1)
@@ -292,10 +311,29 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.SetPosition(0, new Vector3(start.x, start.y, 0f));
             lineRenderer.SetPosition(1, new Vector3(end.x, end.y, 0f));
             lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-            lineRenderer.widthMultiplier = minimumLineWidth;
+            lineRenderer.widthMultiplier = ResolveLineWidth(minimumLineWidth);
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
             renderedObjects.Add(lineObject);
+        }
+
+        private float ResolveLineWidth(float baseWidth)
+        {
+            if (targetCamera == null || !targetCamera.orthographic)
+            {
+                return baseWidth;
+            }
+
+            var safeReferenceSize = Mathf.Max(0.01f, referenceOrthographicSize);
+            var zoomScale = Mathf.Clamp(targetCamera.orthographicSize / safeReferenceSize, 1f, Mathf.Max(1f, maxZoomWidthScale));
+            return baseWidth * zoomScale;
+        }
+
+        private void RecordCameraState()
+        {
+            lastOrthographicSize = targetCamera != null && targetCamera.orthographic
+                ? targetCamera.orthographicSize
+                : -1f;
         }
 
         private bool IsSelected(string wallSegmentId)

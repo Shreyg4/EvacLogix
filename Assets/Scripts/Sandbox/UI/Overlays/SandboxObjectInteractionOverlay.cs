@@ -648,8 +648,9 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
 
             var wallDirection = wallVector / wallLength;
+            var halfWidth = openingWidth * 0.5f;
             var projectionDistance = Vector2.Dot(worldPoint - wall.startPoint, wallDirection);
-            if (projectionDistance < openingOffset - OpeningHitRadius || projectionDistance > openingOffset + openingWidth + OpeningHitRadius)
+            if (projectionDistance < openingOffset - halfWidth - OpeningHitRadius || projectionDistance > openingOffset + halfWidth + OpeningHitRadius)
             {
                 return false;
             }

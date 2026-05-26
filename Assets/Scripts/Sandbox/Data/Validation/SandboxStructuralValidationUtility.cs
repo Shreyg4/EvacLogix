@@ -311,7 +311,8 @@ namespace EvacLogix.Sandbox.Data.Validation
             }
 
             var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-            if (offsetAlongWall < 0f || offsetAlongWall > wallLength || offsetAlongWall + width > wallLength + 0.01f)
+            var halfWidth = width * 0.5f;
+            if (offsetAlongWall - halfWidth < -0.01f || offsetAlongWall + halfWidth > wallLength + 0.01f)
             {
                 issues.Add(CreateIssue(
                     ValidationIssueSeverity.BlockingError,

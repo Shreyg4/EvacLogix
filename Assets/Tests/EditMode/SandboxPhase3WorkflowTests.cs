@@ -124,6 +124,55 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
+        public void CalibrationOverlay_KeepsVisualAidVisibleUntilCalibrationFinishes()
+        {
+            var host = new GameObject("CalibrationOverlayHost");
+            host.AddComponent<SandboxSaveLoadService>();
+            var workspace = host.AddComponent<SandboxProjectWorkspaceService>();
+            var calibrationService = host.AddComponent<SandboxScaleCalibrationService>();
+            var workflowService = host.AddComponent<SandboxCalibrationWorkflowService>();
+            host.AddComponent<SandboxInputRouter>();
+
+            workspace.SendMessage("Awake");
+            calibrationService.SendMessage("Awake");
+            workflowService.SendMessage("Awake");
+
+            var project = workspace.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            var blueprintReference = new BlueprintReferenceData
+            {
+                blueprintReferenceId = SandboxId.NewId(),
+                assetPath = "Assets/Art/Blueprints/Sandbox/example.png",
+                sourceFileName = "example.png",
+            };
+
+            workspace.AddBlueprintReference(blueprintReference);
+            workspace.AssignBlueprintToFloor(project.floors[0].floorId, blueprintReference.blueprintReferenceId);
+
+            var overlayObject = new GameObject("CalibrationOverlay");
+            var overlay = overlayObject.AddComponent<SandboxCalibrationCaptureOverlay>();
+            overlay.SendMessage("Awake");
+
+            Assert.That(workflowService.BeginCalibrationForActiveFloor(), Is.True);
+            Assert.That(overlay.IsVisualAidVisible, Is.True);
+            Assert.That(overlay.VisualAidInstruction, Is.EqualTo("Click calibration point A."));
+
+            Assert.That(workflowService.RegisterCalibrationPoint(new Vector2(5f, 10f)), Is.True);
+            Assert.That(overlay.IsVisualAidVisible, Is.True);
+            Assert.That(overlay.VisualAidInstruction, Is.EqualTo("Click calibration point B."));
+
+            Assert.That(workflowService.RegisterCalibrationPoint(new Vector2(25f, 10f)), Is.True);
+            Assert.That(workflowService.IsCalibrationCaptureActive, Is.False);
+            Assert.That(overlay.IsVisualAidVisible, Is.True);
+            Assert.That(overlay.VisualAidInstruction, Is.EqualTo("Enter the real-world distance to finish calibration."));
+
+            Assert.That(workflowService.TryCompleteCalibration(10f), Is.True);
+            Assert.That(overlay.IsVisualAidVisible, Is.False);
+
+            Object.DestroyImmediate(overlayObject);
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
         public void SaveLoadService_SavesAndReloadsBlueprintAssignment()
         {
             var host = new GameObject("SaveHost");

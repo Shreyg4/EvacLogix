@@ -60,7 +60,8 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-            if (wallLength <= Mathf.Epsilon || offsetAlongWall < 0f || offsetAlongWall + width > wallLength + 0.01f)
+            var halfWidth = width * 0.5f;
+            if (wallLength <= Mathf.Epsilon || offsetAlongWall - halfWidth < -0.01f || offsetAlongWall + halfWidth > wallLength + 0.01f)
             {
                 return false;
             }
@@ -126,7 +127,8 @@ namespace EvacLogix.Sandbox.Authoring
 
                     var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
                     var clampedOffset = Mathf.Clamp(offsetAlongWall, 0f, wallLength);
-                    if (clampedOffset + width > wallLength + 0.01f)
+                    var halfWidth = width * 0.5f;
+                    if (clampedOffset - halfWidth < -0.01f || clampedOffset + halfWidth > wallLength + 0.01f)
                     {
                         return false;
                     }
@@ -167,7 +169,8 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-            if (wallLength <= Mathf.Epsilon || offsetAlongWall < 0f || offsetAlongWall + width > wallLength + 0.01f)
+            var halfWidth = width * 0.5f;
+            if (wallLength <= Mathf.Epsilon || offsetAlongWall - halfWidth < -0.01f || offsetAlongWall + halfWidth > wallLength + 0.01f)
             {
                 return false;
             }
@@ -237,7 +240,8 @@ namespace EvacLogix.Sandbox.Authoring
 
                     var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
                     var clampedOffset = Mathf.Clamp(offsetAlongWall, 0f, wallLength);
-                    if (clampedOffset + width > wallLength + 0.01f)
+                    var halfWidth = width * 0.5f;
+                    if (clampedOffset - halfWidth < -0.01f || clampedOffset + halfWidth > wallLength + 0.01f)
                     {
                         return false;
                     }

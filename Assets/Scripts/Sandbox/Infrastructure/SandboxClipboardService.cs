@@ -590,7 +590,8 @@ namespace EvacLogix.Sandbox.Infrastructure
             var wallDirection = (wall.endPoint - wall.startPoint).normalized;
             var nextOffset = offsetAlongWall + Vector2.Dot(delta, wallDirection);
             var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-            if (nextOffset < 0f || nextOffset + width > wallLength + 0.01f)
+            var halfWidth = width * 0.5f;
+            if (nextOffset - halfWidth < -0.01f || nextOffset + halfWidth > wallLength + 0.01f)
             {
                 return false;
             }
