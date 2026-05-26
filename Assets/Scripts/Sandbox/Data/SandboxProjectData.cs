@@ -248,6 +248,7 @@ namespace EvacLogix.Sandbox.Data
         public string sourceFloorId = string.Empty;
         public string name = string.Empty;
         public Vector2 localPosition;
+        public Vector2 size = Vector2.one;
         public float rotationDegrees;
         public string targetFloorId = string.Empty;
         public string targetStairPortalId = string.Empty;

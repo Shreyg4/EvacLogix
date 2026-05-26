@@ -100,7 +100,7 @@ namespace EvacLogix.Sandbox.Rendering
             var stair = floor.stairPortals.FirstOrDefault(candidate => string.Equals(candidate.stairPortalId, issue.objectId, StringComparison.Ordinal));
             if (stair != null)
             {
-                RenderCrossHighlight($"IssueStair_{issue.issueId}", stair.localPosition, color);
+                RenderRectHighlight($"IssueStair_{issue.issueId}", stair.localPosition, stair.size, color);
                 return;
             }
 

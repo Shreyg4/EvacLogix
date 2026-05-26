@@ -233,7 +233,7 @@ namespace EvacLogix.Tests.EditMode
             }
 
             Assert.That(harness.semanticObjectAuthoringService.PlaceExit(new Vector2(xOffset + 11f, 8f), out _, new Vector2(1.5f, 3f), 0f, 2f, 75f, 1f, $"Exit {floorId}"), Is.True);
-            Assert.That(harness.semanticObjectAuthoringService.PlaceStairPortal(new Vector2(xOffset + 9f, 1f), out _, 0f, $"Stair {floorId}"), Is.True);
+            Assert.That(harness.semanticObjectAuthoringService.PlaceStairPortal(new Vector2(xOffset + 9f, 1f), out _, null, 0f, $"Stair {floorId}"), Is.True);
 
             if (harness.workspaceService.ActiveProject.floors.Select(floor => floor.floorId).ToList().IndexOf(floorId) > 0)
             {

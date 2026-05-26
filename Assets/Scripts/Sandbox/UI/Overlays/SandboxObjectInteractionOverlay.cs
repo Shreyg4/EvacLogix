@@ -13,11 +13,25 @@ namespace EvacLogix.Sandbox.UI.Overlays
 {
     public sealed class SandboxObjectInteractionOverlay : MonoBehaviour
     {
+        public enum EraseMode
+        {
+            Point = 0,
+            Brush = 1,
+        }
+
         private const float WallHitPadding = 0.3f;
         private const float OpeningHitRadius = 0.5f;
         private const float StairHitRadius = 0.55f;
         private const float RegionEdgeHitRadius = 0.35f;
         private const float SelectionDragThreshold = 0.2f;
+        private const float MinEraseBrushRadius = 0.35f;
+        private const float MaxEraseBrushRadius = 3.5f;
+        private const float DefaultEraseBrushRadius = 0.9f;
+        private static readonly Color ErasePanelBackdropColor = new(0.14f, 0.07f, 0.07f, 0.88f);
+        private static readonly Color EraseAccentColor = new(0.97f, 0.37f, 0.31f, 0.96f);
+        private static readonly Color EraseSecondaryColor = new(1f, 0.79f, 0.31f, 0.94f);
+        private static readonly Color EraseTextColor = new(1f, 0.96f, 0.94f, 1f);
+        private static readonly Color EraseMutedTextColor = new(0.92f, 0.82f, 0.79f, 1f);
 
         private enum SandboxHitKind
         {
@@ -49,6 +63,20 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private SandboxMeasurementService measurementService;
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxPreviewService previewService;
+        private Texture2D solidTexture;
+        private Font overlayFont;
+        private GUIStyle erasePanelStyle;
+        private GUIStyle eraseTitleStyle;
+        private GUIStyle eraseBodyStyle;
+        private GUIStyle eraseBadgeStyle;
+        private GUIStyle eraseButtonStyle;
+        private GUIStyle eraseActiveButtonStyle;
+        private Rect erasePanelRect;
+        private EraseMode eraseMode;
+        private float eraseBrushRadius = DefaultEraseBrushRadius;
+        private bool eraseBrushStrokeActive;
+        private int eraseBrushStrokeEraseCount;
+        private readonly HashSet<string> erasedObjectIdsThisBrushStroke = new();
         private bool hasPendingSelectPress;
         private bool pendingAdditiveSelect;
         private SandboxHitResult pendingPressedHit;
@@ -61,16 +89,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void Awake()
         {
-            toolStateService = FindAnyObjectByType<SandboxToolStateService>();
-            workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
-            selectionService = FindAnyObjectByType<SandboxSelectionService>();
-            inputRouter = FindAnyObjectByType<SandboxInputRouter>();
-            statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
-            clipboardService = FindAnyObjectByType<SandboxClipboardService>();
-            wallAuthoringService = FindAnyObjectByType<SandboxWallAuthoringService>();
-            measurementService = FindAnyObjectByType<SandboxMeasurementService>();
-            visualOrganizationService = FindAnyObjectByType<SandboxVisualOrganizationService>();
-            previewService = FindAnyObjectByType<SandboxPreviewService>();
+            EnsureDependencies();
         }
 
         private void Update()
@@ -88,29 +107,100 @@ namespace EvacLogix.Sandbox.UI.Overlays
             var currentTarget = inputRouter != null
                 ? inputRouter.ResolvePointerTarget(SandboxInputAdapter.PointerScreenPosition)
                 : SandboxInputTarget.World;
-            if (currentTarget != SandboxInputTarget.World)
-            {
-                return;
-            }
-
             switch (toolStateService.CurrentToolMode)
             {
                 case SandboxToolMode.Select:
-                    HandleSelectTool();
+                    if (currentTarget == SandboxInputTarget.World)
+                    {
+                        HandleSelectTool();
+                    }
+
                     break;
                 case SandboxToolMode.Erase:
-                    if (SandboxInputAdapter.GetMouseButtonDown(0))
-                    {
-                        EraseAtWorldPoint(ScreenToWorldPoint(SandboxInputAdapter.PointerScreenPosition));
-                    }
+                    HandleEraseTool(currentTarget);
                     break;
             }
+        }
+
+        private void OnGUI()
+        {
+            EnsureDependencies();
+            EnsureGuiResources();
+            if (!IsEraseVisualAidVisible)
+            {
+                if (eraseBrushStrokeActive)
+                {
+                    ResetBrushEraseStroke();
+                }
+
+                return;
+            }
+
+            DrawErasePanel();
+            DrawEraseVisualAid();
         }
 
         public bool IsSelectionDragActive => isSelectionDragActive;
         public string DraggedObjectId => draggedObjectId;
         public Vector2 SelectionDragStartWorldPoint => selectionDragStartWorldPoint;
         public Vector2 SelectionDragCurrentWorldPoint => selectionDragCurrentWorldPoint;
+        public bool IsEraseVisualAidVisible => toolStateService != null && toolStateService.CurrentToolMode == SandboxToolMode.Erase;
+        public EraseMode CurrentEraseMode => eraseMode;
+        public bool BrushEraseEnabled => eraseMode == EraseMode.Brush;
+        public float EraseBrushRadius => eraseBrushRadius;
+
+        private void EnsureDependencies()
+        {
+            if (toolStateService == null)
+            {
+                toolStateService = FindAnyObjectByType<SandboxToolStateService>();
+            }
+
+            if (workspaceService == null)
+            {
+                workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
+            }
+
+            if (selectionService == null)
+            {
+                selectionService = FindAnyObjectByType<SandboxSelectionService>();
+            }
+
+            if (inputRouter == null)
+            {
+                inputRouter = FindAnyObjectByType<SandboxInputRouter>();
+            }
+
+            if (statusBar == null)
+            {
+                statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
+            }
+
+            if (clipboardService == null)
+            {
+                clipboardService = FindAnyObjectByType<SandboxClipboardService>();
+            }
+
+            if (wallAuthoringService == null)
+            {
+                wallAuthoringService = FindAnyObjectByType<SandboxWallAuthoringService>();
+            }
+
+            if (measurementService == null)
+            {
+                measurementService = FindAnyObjectByType<SandboxMeasurementService>();
+            }
+
+            if (visualOrganizationService == null)
+            {
+                visualOrganizationService = FindAnyObjectByType<SandboxVisualOrganizationService>();
+            }
+
+            if (previewService == null)
+            {
+                previewService = FindAnyObjectByType<SandboxPreviewService>();
+            }
+        }
 
         public bool SelectAtWorldPoint(Vector2 worldPoint, bool additive = false)
         {
@@ -175,6 +265,26 @@ namespace EvacLogix.Sandbox.UI.Overlays
             measurementService?.RefreshSelectionReadout();
             UpdateStatus($"Erased {hit.label}.");
             return true;
+        }
+
+        public void SetBrushEraseEnabled(bool enabled)
+        {
+            eraseMode = enabled ? EraseMode.Brush : EraseMode.Point;
+            if (!enabled)
+            {
+                ResetBrushEraseStroke();
+            }
+        }
+
+        public void SetEraseBrushRadius(float radius)
+        {
+            eraseBrushRadius = Mathf.Clamp(radius, MinEraseBrushRadius, MaxEraseBrushRadius);
+        }
+
+        public int EraseWithinBrush(Vector2 worldPoint, float? overrideBrushRadius = null)
+        {
+            var hits = CollectHitsWithinBrush(worldPoint, overrideBrushRadius ?? eraseBrushRadius);
+            return EraseHits(hits, suppressEmptyMessage: false);
         }
 
         public bool BeginSelectionDrag(string objectId, Vector2 worldPoint)
@@ -274,6 +384,81 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
         }
 
+        private void HandleEraseTool(SandboxInputTarget currentTarget)
+        {
+            var screenPosition = SandboxInputAdapter.PointerScreenPosition;
+            var guiPoint = ScreenToGuiPoint(screenPosition);
+            var pointerOverErasePanel = erasePanelRect.Contains(guiPoint);
+            var pointerCanEditWorld = currentTarget == SandboxInputTarget.World && !pointerOverErasePanel;
+            if (eraseMode == EraseMode.Point)
+            {
+                if (SandboxInputAdapter.GetMouseButtonDown(0) && pointerCanEditWorld)
+                {
+                    EraseAtWorldPoint(ScreenToWorldPoint(screenPosition));
+                }
+
+                return;
+            }
+
+            var worldPoint = ScreenToWorldPoint(screenPosition);
+            if (SandboxInputAdapter.GetMouseButtonDown(0))
+            {
+                StartBrushEraseStroke(worldPoint, pointerCanEditWorld);
+            }
+            else if (eraseBrushStrokeActive && SandboxInputAdapter.GetMouseButton(0))
+            {
+                ContinueBrushEraseStroke(worldPoint, pointerCanEditWorld);
+            }
+
+            if (eraseBrushStrokeActive && SandboxInputAdapter.GetMouseButtonUp(0))
+            {
+                FinishBrushEraseStroke();
+            }
+        }
+
+        private void StartBrushEraseStroke(Vector2 worldPoint, bool pointerCanEditWorld)
+        {
+            eraseBrushStrokeActive = true;
+            eraseBrushStrokeEraseCount = 0;
+            erasedObjectIdsThisBrushStroke.Clear();
+            if (pointerCanEditWorld)
+            {
+                eraseBrushStrokeEraseCount += EraseWithinBrushStroke(worldPoint);
+            }
+        }
+
+        private void ContinueBrushEraseStroke(Vector2 worldPoint, bool pointerCanEditWorld)
+        {
+            if (!pointerCanEditWorld)
+            {
+                return;
+            }
+
+            eraseBrushStrokeEraseCount += EraseWithinBrushStroke(worldPoint);
+        }
+
+        private void FinishBrushEraseStroke()
+        {
+            if (eraseBrushStrokeEraseCount <= 0)
+            {
+                UpdateStatus("Nothing to erase inside the brush.");
+            }
+            else
+            {
+                var objectLabel = eraseBrushStrokeEraseCount == 1 ? "object" : "objects";
+                UpdateStatus($"Erased {eraseBrushStrokeEraseCount} {objectLabel} with the brush.");
+            }
+
+            ResetBrushEraseStroke();
+        }
+
+        private void ResetBrushEraseStroke()
+        {
+            eraseBrushStrokeActive = false;
+            eraseBrushStrokeEraseCount = 0;
+            erasedObjectIdsThisBrushStroke.Clear();
+        }
+
         private void BeginSelectionPress(Vector2 worldPoint)
         {
             pendingPressedHit = default;
@@ -343,6 +528,507 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
             measurementService?.RefreshSelectionReadout();
             UpdateStatus($"Selected {pendingPressedHit.label}.");
+        }
+
+        private void EnsureGuiResources()
+        {
+            if (solidTexture == null)
+            {
+                solidTexture = Texture2D.whiteTexture;
+            }
+
+            if (overlayFont == null)
+            {
+                overlayFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            }
+
+            if (erasePanelStyle == null)
+            {
+                erasePanelStyle = new GUIStyle(GUI.skin.box)
+                {
+                    padding = new RectOffset(16, 16, 14, 14),
+                    alignment = TextAnchor.UpperLeft
+                };
+            }
+
+            if (eraseTitleStyle == null)
+            {
+                eraseTitleStyle = new GUIStyle(GUI.skin.label)
+                {
+                    font = overlayFont,
+                    fontSize = 14,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = EraseTextColor }
+                };
+            }
+
+            if (eraseBodyStyle == null)
+            {
+                eraseBodyStyle = new GUIStyle(GUI.skin.label)
+                {
+                    font = overlayFont,
+                    fontSize = 12,
+                    wordWrap = true,
+                    normal = { textColor = EraseMutedTextColor }
+                };
+            }
+
+            if (eraseBadgeStyle == null)
+            {
+                eraseBadgeStyle = new GUIStyle(GUI.skin.label)
+                {
+                    font = overlayFont,
+                    fontSize = 12,
+                    fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.MiddleCenter,
+                    normal = { textColor = new Color(0.2f, 0.08f, 0.08f, 1f) }
+                };
+            }
+
+            if (eraseButtonStyle == null)
+            {
+                eraseButtonStyle = new GUIStyle(GUI.skin.button)
+                {
+                    font = overlayFont,
+                    fontSize = 12
+                };
+            }
+
+            if (eraseActiveButtonStyle == null)
+            {
+                eraseActiveButtonStyle = new GUIStyle(eraseButtonStyle)
+                {
+                    fontStyle = FontStyle.Bold
+                };
+            }
+        }
+
+        private void DrawErasePanel()
+        {
+            var panelWidth = Mathf.Min(Screen.width - 32f, 360f);
+            erasePanelRect = new Rect(
+                Mathf.Max(16f, (Screen.width - panelWidth) * 0.5f),
+                Mathf.Max(96f, Screen.height - 206f),
+                panelWidth,
+                136f);
+            DrawFilledRect(erasePanelRect, ErasePanelBackdropColor);
+            GUI.Box(erasePanelRect, GUIContent.none, erasePanelStyle);
+
+            var contentRect = new Rect(erasePanelRect.x + 16f, erasePanelRect.y + 14f, erasePanelRect.width - 32f, erasePanelRect.height - 28f);
+            GUI.Label(new Rect(contentRect.x, contentRect.y, contentRect.width, 22f), "Erase Guide", eraseTitleStyle);
+            GUI.Label(new Rect(contentRect.x, contentRect.y + 22f, contentRect.width, 34f), GetEraseInstructionText(), eraseBodyStyle);
+
+            var pointButtonRect = new Rect(contentRect.x, contentRect.y + 58f, 92f, 28f);
+            var brushButtonRect = new Rect(contentRect.x + 100f, contentRect.y + 58f, 92f, 28f);
+            if (GUI.Button(pointButtonRect, "Point", eraseMode == EraseMode.Point ? eraseActiveButtonStyle : eraseButtonStyle))
+            {
+                SetBrushEraseEnabled(false);
+            }
+
+            if (GUI.Button(brushButtonRect, "Brush", eraseMode == EraseMode.Brush ? eraseActiveButtonStyle : eraseButtonStyle))
+            {
+                SetBrushEraseEnabled(true);
+            }
+
+            DrawModeBadge(pointButtonRect, eraseMode == EraseMode.Point ? EraseSecondaryColor : new Color(0.48f, 0.32f, 0.28f, 0.9f));
+            DrawModeBadge(brushButtonRect, eraseMode == EraseMode.Brush ? EraseAccentColor : new Color(0.48f, 0.32f, 0.28f, 0.9f));
+
+            var sliderLabelRect = new Rect(contentRect.x, contentRect.y + 92f, contentRect.width, 18f);
+            var sliderRect = new Rect(contentRect.x, contentRect.y + 112f, contentRect.width - 96f, 18f);
+            var valueRect = new Rect(contentRect.x + contentRect.width - 88f, contentRect.y + 108f, 88f, 22f);
+            GUI.Label(sliderLabelRect, $"Brush Size ({(eraseBrushRadius * 2f):0.0} diameter)", eraseBodyStyle);
+            var previousEnabled = GUI.enabled;
+            GUI.enabled = eraseMode == EraseMode.Brush;
+            var nextRadius = GUI.HorizontalSlider(sliderRect, eraseBrushRadius, MinEraseBrushRadius, MaxEraseBrushRadius);
+            if (!Mathf.Approximately(nextRadius, eraseBrushRadius))
+            {
+                SetEraseBrushRadius(nextRadius);
+            }
+
+            GUI.Label(valueRect, $"R {eraseBrushRadius:0.00}", eraseBodyStyle);
+            GUI.enabled = previousEnabled;
+        }
+
+        private void DrawEraseVisualAid()
+        {
+            var screenPosition = SandboxInputAdapter.PointerScreenPosition;
+            var guiPoint = ScreenToGuiPoint(screenPosition);
+            var target = inputRouter != null
+                ? inputRouter.ResolvePointerTarget(screenPosition)
+                : SandboxInputTarget.World;
+            if (target != SandboxInputTarget.World || erasePanelRect.Contains(guiPoint))
+            {
+                return;
+            }
+
+            if (eraseMode == EraseMode.Point)
+            {
+                DrawMarker(guiPoint, "X", EraseAccentColor);
+                return;
+            }
+
+            var cameraComponent = Camera.main;
+            if (cameraComponent == null)
+            {
+                return;
+            }
+
+            var worldPoint = ScreenToWorldPoint(screenPosition);
+            var center = WorldToGuiPoint(cameraComponent, worldPoint);
+            var edge = WorldToGuiPoint(cameraComponent, worldPoint + Vector2.right * eraseBrushRadius);
+            var radiusPixels = Mathf.Max(12f, Mathf.Abs(edge.x - center.x));
+            DrawCircleOutline(center, radiusPixels, eraseBrushStrokeActive ? EraseAccentColor : EraseSecondaryColor, 40, 2.5f);
+            DrawMarker(center, "X", eraseBrushStrokeActive ? EraseAccentColor : EraseSecondaryColor, 20f);
+        }
+
+        private string GetEraseInstructionText()
+        {
+            return eraseMode == EraseMode.Point
+                ? "Click a single object to remove it."
+                : "Drag the brush over nearby geometry to scrub it away. Use the size slider for small cleanups.";
+        }
+
+        private void DrawModeBadge(Rect buttonRect, Color color)
+        {
+            var badgeRect = new Rect(buttonRect.x + buttonRect.width - 18f, buttonRect.y + 6f, 12f, 12f);
+            DrawFilledRect(badgeRect, color);
+        }
+
+        private int EraseWithinBrushStroke(Vector2 worldPoint)
+        {
+            var hits = CollectHitsWithinBrush(worldPoint, eraseBrushRadius)
+                .Where(hit => !erasedObjectIdsThisBrushStroke.Contains(hit.objectId))
+                .ToList();
+            if (hits.Count == 0)
+            {
+                return 0;
+            }
+
+            var erasedCount = 0;
+            for (var i = 0; i < hits.Count; i += 1)
+            {
+                if (!EraseHit(hits[i]))
+                {
+                    continue;
+                }
+
+                erasedObjectIdsThisBrushStroke.Add(hits[i].objectId);
+                erasedCount += 1;
+            }
+
+            if (erasedCount > 0)
+            {
+                selectionService?.ClearSelection();
+                measurementService?.RefreshSelectionReadout();
+            }
+
+            return erasedCount;
+        }
+
+        private int EraseHits(IReadOnlyList<SandboxHitResult> hits, bool suppressEmptyMessage)
+        {
+            if (hits == null || hits.Count == 0)
+            {
+                if (!suppressEmptyMessage)
+                {
+                    UpdateStatus("Nothing to erase at that point.");
+                }
+
+                return 0;
+            }
+
+            var erasedCount = 0;
+            for (var i = 0; i < hits.Count; i += 1)
+            {
+                if (EraseHit(hits[i]))
+                {
+                    erasedCount += 1;
+                }
+            }
+
+            if (erasedCount > 0)
+            {
+                selectionService?.ClearSelection();
+                measurementService?.RefreshSelectionReadout();
+            }
+            else if (!suppressEmptyMessage)
+            {
+                UpdateStatus("Could not erase the targeted objects. They may be locked or unavailable.");
+            }
+
+            return erasedCount;
+        }
+
+        private bool EraseHit(SandboxHitResult hit)
+        {
+            return hit.kind switch
+            {
+                SandboxHitKind.Wall => wallAuthoringService != null && wallAuthoringService.EraseWall(hit.objectId),
+                _ => EraseNonWallObject(hit.objectId),
+            };
+        }
+
+        private List<SandboxHitResult> CollectHitsWithinBrush(Vector2 worldPoint, float brushRadius)
+        {
+            var hits = new List<SandboxHitResult>();
+            var knownObjectIds = new HashSet<string>(StringComparer.Ordinal);
+            var floor = workspaceService?.ActiveFloor;
+            if (floor == null)
+            {
+                return hits;
+            }
+
+            CollectWallsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
+            CollectOpeningsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
+            CollectExitsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
+            CollectObstaclesInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
+            CollectStairsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
+            CollectRegionsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
+
+            return hits
+                .OrderBy(hit => GetBrushErasePriority(hit.kind))
+                .ThenBy(hit => hit.score)
+                .ToList();
+        }
+
+        private void CollectWallsInBrush(
+            FloorData floor,
+            Vector2 worldPoint,
+            float brushRadius,
+            List<SandboxHitResult> hits,
+            HashSet<string> knownObjectIds)
+        {
+            foreach (var wall in floor.wallSegments)
+            {
+                if (!IsInteractable(SandboxVisualObjectType.Wall, wall.wallSegmentId))
+                {
+                    continue;
+                }
+
+                var hitRadius = Mathf.Max(WallHitPadding, (wall.thickness * 0.5f) + WallHitPadding);
+                var score = DistanceToSegment(worldPoint, wall.startPoint, wall.endPoint);
+                if (score > hitRadius + brushRadius)
+                {
+                    continue;
+                }
+
+                AddBrushHit(
+                    hits,
+                    knownObjectIds,
+                    new SandboxHitResult
+                    {
+                        kind = SandboxHitKind.Wall,
+                        objectId = wall.wallSegmentId,
+                        label = "wall segment",
+                        score = score
+                    });
+            }
+        }
+
+        private void CollectOpeningsInBrush(
+            FloorData floor,
+            Vector2 worldPoint,
+            float brushRadius,
+            List<SandboxHitResult> hits,
+            HashSet<string> knownObjectIds)
+        {
+            foreach (var door in floor.doors)
+            {
+                if (!IsInteractable(SandboxVisualObjectType.Door, door.doorId) ||
+                    !TryBuildOpeningBrushHit(floor, worldPoint, door.wallSegmentId, door.offsetAlongWall, door.width, brushRadius, out var score))
+                {
+                    continue;
+                }
+
+                AddBrushHit(
+                    hits,
+                    knownObjectIds,
+                    new SandboxHitResult
+                    {
+                        kind = SandboxHitKind.Door,
+                        objectId = door.doorId,
+                        label = "door",
+                        score = score
+                    });
+            }
+
+            foreach (var window in floor.windows)
+            {
+                if (!IsInteractable(SandboxVisualObjectType.Window, window.windowId) ||
+                    !TryBuildOpeningBrushHit(floor, worldPoint, window.wallSegmentId, window.offsetAlongWall, window.width, brushRadius, out var score))
+                {
+                    continue;
+                }
+
+                AddBrushHit(
+                    hits,
+                    knownObjectIds,
+                    new SandboxHitResult
+                    {
+                        kind = SandboxHitKind.Window,
+                        objectId = window.windowId,
+                        label = "window",
+                        score = score
+                    });
+            }
+        }
+
+        private void CollectExitsInBrush(
+            FloorData floor,
+            Vector2 worldPoint,
+            float brushRadius,
+            List<SandboxHitResult> hits,
+            HashSet<string> knownObjectIds)
+        {
+            foreach (var exitZone in floor.exits)
+            {
+                if (!IsInteractable(SandboxVisualObjectType.Exit, exitZone.exitZoneId))
+                {
+                    continue;
+                }
+
+                var score = DistanceToRotatedRect(worldPoint, exitZone.center, exitZone.size, exitZone.rotationDegrees);
+                if (score > brushRadius)
+                {
+                    continue;
+                }
+
+                AddBrushHit(
+                    hits,
+                    knownObjectIds,
+                    new SandboxHitResult
+                    {
+                        kind = SandboxHitKind.Exit,
+                        objectId = exitZone.exitZoneId,
+                        label = string.IsNullOrWhiteSpace(exitZone.name) ? "exit zone" : $"exit '{exitZone.name}'",
+                        score = score
+                    });
+            }
+        }
+
+        private void CollectObstaclesInBrush(
+            FloorData floor,
+            Vector2 worldPoint,
+            float brushRadius,
+            List<SandboxHitResult> hits,
+            HashSet<string> knownObjectIds)
+        {
+            foreach (var obstacle in floor.obstacles)
+            {
+                if (!IsInteractable(SandboxVisualObjectType.Obstacle, obstacle.obstacleId))
+                {
+                    continue;
+                }
+
+                var score = DistanceToRotatedRect(worldPoint, obstacle.center, obstacle.size, obstacle.rotationDegrees);
+                if (score > brushRadius)
+                {
+                    continue;
+                }
+
+                AddBrushHit(
+                    hits,
+                    knownObjectIds,
+                    new SandboxHitResult
+                    {
+                        kind = SandboxHitKind.Obstacle,
+                        objectId = obstacle.obstacleId,
+                        label = string.IsNullOrWhiteSpace(obstacle.name) ? "obstacle" : $"obstacle '{obstacle.name}'",
+                        score = score
+                    });
+            }
+        }
+
+        private void CollectStairsInBrush(
+            FloorData floor,
+            Vector2 worldPoint,
+            float brushRadius,
+            List<SandboxHitResult> hits,
+            HashSet<string> knownObjectIds)
+        {
+            foreach (var stairPortal in floor.stairPortals)
+            {
+                if (!IsInteractable(SandboxVisualObjectType.Stair, stairPortal.stairPortalId))
+                {
+                    continue;
+                }
+
+                var score = DistanceToRotatedRect(worldPoint, stairPortal.localPosition, stairPortal.size, stairPortal.rotationDegrees);
+                if (score > brushRadius + StairHitRadius)
+                {
+                    continue;
+                }
+
+                AddBrushHit(
+                    hits,
+                    knownObjectIds,
+                    new SandboxHitResult
+                    {
+                        kind = SandboxHitKind.Stair,
+                        objectId = stairPortal.stairPortalId,
+                        label = string.IsNullOrWhiteSpace(stairPortal.name) ? "stair portal" : $"stair '{stairPortal.name}'",
+                        score = score
+                    });
+            }
+        }
+
+        private void CollectRegionsInBrush(
+            FloorData floor,
+            Vector2 worldPoint,
+            float brushRadius,
+            List<SandboxHitResult> hits,
+            HashSet<string> knownObjectIds)
+        {
+            foreach (var region in floor.regions)
+            {
+                if (!IsInteractable(SandboxVisualObjectType.Region, region.regionId) || region.polygonPoints.Count < 2)
+                {
+                    continue;
+                }
+
+                var isInside = IsPointInsidePolygon(worldPoint, region.polygonPoints);
+                var score = isInside ? 0f : DistanceToPolygonEdges(worldPoint, region.polygonPoints);
+                if (!isInside && score > RegionEdgeHitRadius + brushRadius)
+                {
+                    continue;
+                }
+
+                AddBrushHit(
+                    hits,
+                    knownObjectIds,
+                    new SandboxHitResult
+                    {
+                        kind = SandboxHitKind.Region,
+                        objectId = region.regionId,
+                        label = string.IsNullOrWhiteSpace(region.name) ? "region" : $"region '{region.name}'",
+                        score = score
+                    });
+            }
+        }
+
+        private static void AddBrushHit(List<SandboxHitResult> hits, HashSet<string> knownObjectIds, SandboxHitResult hit)
+        {
+            if (!knownObjectIds.Add(hit.objectId))
+            {
+                return;
+            }
+
+            hits.Add(hit);
+        }
+
+        private static int GetBrushErasePriority(SandboxHitKind kind)
+        {
+            return kind switch
+            {
+                SandboxHitKind.Door => 0,
+                SandboxHitKind.Window => 1,
+                SandboxHitKind.Exit => 2,
+                SandboxHitKind.Obstacle => 3,
+                SandboxHitKind.Stair => 4,
+                SandboxHitKind.Region => 5,
+                SandboxHitKind.Wall => 6,
+                _ => 7
+            };
         }
 
         private bool EraseNonWallObject(string objectId)
@@ -579,7 +1265,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     continue;
                 }
 
-                var distance = Vector2.Distance(worldPoint, stairPortal.localPosition);
+                var distance = DistanceToRotatedRect(worldPoint, stairPortal.localPosition, stairPortal.size, stairPortal.rotationDegrees);
                 if (distance > StairHitRadius)
                 {
                     continue;
@@ -666,6 +1352,37 @@ namespace EvacLogix.Sandbox.UI.Overlays
             return true;
         }
 
+        private bool TryBuildOpeningBrushHit(
+            FloorData floor,
+            Vector2 worldPoint,
+            string wallSegmentId,
+            float openingOffset,
+            float openingWidth,
+            float brushRadius,
+            out float score)
+        {
+            score = float.MaxValue;
+            var wall = floor.wallSegments.FirstOrDefault(candidate => candidate.wallSegmentId == wallSegmentId);
+            if (wall == null)
+            {
+                return false;
+            }
+
+            var wallVector = wall.endPoint - wall.startPoint;
+            var wallLength = wallVector.magnitude;
+            if (wallLength <= Mathf.Epsilon)
+            {
+                return false;
+            }
+
+            var wallDirection = wallVector / wallLength;
+            var halfWidth = openingWidth * 0.5f;
+            var segmentStart = wall.startPoint + wallDirection * Mathf.Clamp(openingOffset - halfWidth, 0f, wallLength);
+            var segmentEnd = wall.startPoint + wallDirection * Mathf.Clamp(openingOffset + halfWidth, 0f, wallLength);
+            score = DistanceToSegment(worldPoint, segmentStart, segmentEnd);
+            return score <= OpeningHitRadius + brushRadius;
+        }
+
         private bool IsInteractable(SandboxVisualObjectType objectType, string objectId)
         {
             return visualOrganizationService == null ||
@@ -699,6 +1416,15 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
             var halfSize = size * 0.5f;
             return Mathf.Abs(localPoint.x) <= halfSize.x && Mathf.Abs(localPoint.y) <= halfSize.y;
+        }
+
+        private static float DistanceToRotatedRect(Vector2 worldPoint, Vector2 center, Vector2 size, float rotationDegrees)
+        {
+            TryPointInRotatedRect(worldPoint, center, size, rotationDegrees, out var localPoint);
+            var halfSize = size * 0.5f;
+            var deltaX = Mathf.Max(Mathf.Abs(localPoint.x) - halfSize.x, 0f);
+            var deltaY = Mathf.Max(Mathf.Abs(localPoint.y) - halfSize.y, 0f);
+            return Mathf.Sqrt((deltaX * deltaX) + (deltaY * deltaY));
         }
 
         private static float DistanceToSegment(Vector2 point, Vector2 segmentStart, Vector2 segmentEnd)
@@ -769,6 +1495,68 @@ namespace EvacLogix.Sandbox.UI.Overlays
             screenPoint.z = Mathf.Abs(cameraComponent.transform.position.z);
             var worldPoint = cameraComponent.ScreenToWorldPoint(screenPoint);
             return new Vector2(worldPoint.x, worldPoint.y);
+        }
+
+        private static Vector2 ScreenToGuiPoint(Vector2 screenPoint)
+        {
+            return new Vector2(screenPoint.x, Screen.height - screenPoint.y);
+        }
+
+        private static Vector2 WorldToGuiPoint(Camera cameraComponent, Vector2 worldPoint)
+        {
+            var screenPoint = cameraComponent.WorldToScreenPoint(new Vector3(worldPoint.x, worldPoint.y, 0f));
+            return new Vector2(screenPoint.x, Screen.height - screenPoint.y);
+        }
+
+        private void DrawCircleOutline(Vector2 center, float radiusPixels, Color color, int segments, float thickness)
+        {
+            if (segments < 3 || radiusPixels <= Mathf.Epsilon)
+            {
+                return;
+            }
+
+            var previousPoint = center + new Vector2(radiusPixels, 0f);
+            for (var index = 1; index <= segments; index += 1)
+            {
+                var angle = (index / (float)segments) * Mathf.PI * 2f;
+                var nextPoint = center + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * radiusPixels;
+                DrawGuideLine(previousPoint, nextPoint, color, thickness);
+                previousPoint = nextPoint;
+            }
+        }
+
+        private void DrawGuideLine(Vector2 startPoint, Vector2 endPoint, Color color, float thickness)
+        {
+            var delta = endPoint - startPoint;
+            var length = delta.magnitude;
+            if (length <= Mathf.Epsilon)
+            {
+                return;
+            }
+
+            var angle = Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg;
+            var previousMatrix = GUI.matrix;
+            var previousColor = GUI.color;
+            GUIUtility.RotateAroundPivot(angle, startPoint);
+            GUI.color = color;
+            GUI.DrawTexture(new Rect(startPoint.x, startPoint.y - (thickness * 0.5f), length, thickness), solidTexture);
+            GUI.color = previousColor;
+            GUI.matrix = previousMatrix;
+        }
+
+        private void DrawMarker(Vector2 center, string label, Color color, float size = 28f)
+        {
+            var markerRect = new Rect(center.x - (size * 0.5f), center.y - (size * 0.5f), size, size);
+            DrawFilledRect(markerRect, color);
+            GUI.Label(markerRect, label, eraseBadgeStyle);
+        }
+
+        private void DrawFilledRect(Rect rect, Color color)
+        {
+            var previousColor = GUI.color;
+            GUI.color = color;
+            GUI.DrawTexture(rect, solidTexture);
+            GUI.color = previousColor;
         }
 
         private void UpdateStatus(string message)

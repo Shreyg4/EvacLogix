@@ -143,18 +143,18 @@ namespace EvacLogix.Sandbox.Infrastructure
 
             foreach (var exitZone in floor.exits.Where(exitZone => selectedIds.Contains(exitZone.exitZoneId)))
             {
-                points.Add(exitZone.center);
+                AddRotatedRectPoints(points, exitZone.center, exitZone.size, exitZone.rotationDegrees);
             }
 
             foreach (var obstacle in floor.obstacles.Where(obstacle => selectedIds.Contains(obstacle.obstacleId)))
             {
-                points.Add(obstacle.center);
+                AddRotatedRectPoints(points, obstacle.center, obstacle.size, obstacle.rotationDegrees);
                 totalObstacleArea += obstacle.size.x * obstacle.size.y;
             }
 
             foreach (var stairPortal in floor.stairPortals.Where(portal => selectedIds.Contains(portal.stairPortalId)))
             {
-                points.Add(stairPortal.localPosition);
+                AddRotatedRectPoints(points, stairPortal.localPosition, stairPortal.size, stairPortal.rotationDegrees);
             }
 
             foreach (var region in floor.regions.Where(region => selectedIds.Contains(region.regionId)))
@@ -223,6 +223,16 @@ namespace EvacLogix.Sandbox.Infrastructure
             var formattedX = delta.x.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
             var formattedY = delta.y.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
             return $"Measured {formattedDistance} ({formattedX}, {formattedY}).";
+        }
+
+        private static void AddRotatedRectPoints(ICollection<Vector2> points, Vector2 center, Vector2 size, float rotationDegrees)
+        {
+            var half = size * 0.5f;
+            var rotation = Quaternion.Euler(0f, 0f, rotationDegrees);
+            points.Add(center + (Vector2)(rotation * new Vector3(-half.x, -half.y, 0f)));
+            points.Add(center + (Vector2)(rotation * new Vector3(-half.x, half.y, 0f)));
+            points.Add(center + (Vector2)(rotation * new Vector3(half.x, half.y, 0f)));
+            points.Add(center + (Vector2)(rotation * new Vector3(half.x, -half.y, 0f)));
         }
 
         private void RaiseChanged()

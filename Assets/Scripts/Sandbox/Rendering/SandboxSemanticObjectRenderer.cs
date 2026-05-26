@@ -184,10 +184,17 @@ namespace EvacLogix.Sandbox.Rendering
                         continue;
                     }
 
-                    RenderCross(
+                    var color = ResolveSelectionColor(stairPortal.stairPortalId, ResolveBaseColor(SandboxVisualObjectType.Stair));
+                    RenderRectangle(
                         $"Stair_{stairPortal.stairPortalId}",
                         stairPortal.localPosition,
-                        ResolveSelectionColor(stairPortal.stairPortalId, ResolveBaseColor(SandboxVisualObjectType.Stair)));
+                        stairPortal.size,
+                        stairPortal.rotationDegrees,
+                        color);
+                    RenderCross(
+                        $"Stair_{stairPortal.stairPortalId}_Center",
+                        stairPortal.localPosition,
+                        color);
                 }
             }
 

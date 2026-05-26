@@ -270,6 +270,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                 SandboxToolMode.Select => "Select objects to inspect, rename, lock, or isolate them.",
                 SandboxToolMode.Pan => "Pan around large floor plates without disturbing authored geometry.",
                 SandboxToolMode.Measure => "Click two points to measure distance and compare against selected geometry readouts.",
+                SandboxToolMode.Erase => "Click to remove one object, or switch to Brush in the erase guide for scrub-style cleanup with a resizable radius.",
                 SandboxToolMode.WallLine => "Place two points to trace precise wall centerlines with snapping. Hold Alt for fine adjustments without snapping.",
                 SandboxToolMode.WallBrush => "Sketch rough wall paths, then clean them before accepting. Hold Alt to bypass snapping during fine wall edits.",
                 SandboxToolMode.Door => "Place doors on existing walls only and review their state metadata in the inspector.",

@@ -114,11 +114,6 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
 
         private void Update()
         {
-            if (inputRouter != null && inputRouter.CurrentTarget == SandboxInputTarget.UI)
-            {
-                return;
-            }
-
             for (var i = 0; i < bindings.Count; i += 1)
             {
                 var binding = bindings[i];
@@ -127,9 +122,21 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                     continue;
                 }
 
+                if (inputRouter != null &&
+                    inputRouter.CurrentTarget == SandboxInputTarget.UI &&
+                    !CanDispatchWhilePointerOverUi(binding.shortcutId))
+                {
+                    continue;
+                }
+
                 Dispatch(binding.shortcutId);
                 break;
             }
+        }
+
+        public bool CanDispatchWhilePointerOverUi(SandboxShortcutId shortcutId)
+        {
+            return shortcutId == SandboxShortcutId.Undo || shortcutId == SandboxShortcutId.Redo;
         }
 
         private void Dispatch(SandboxShortcutId shortcutId)

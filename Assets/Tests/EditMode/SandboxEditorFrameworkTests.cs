@@ -101,6 +101,26 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
+        public void KeyboardShortcutService_AllowsUndoWhilePointerIsOverUi()
+        {
+            var host = new GameObject("ShortcutHost");
+            host.AddComponent<SandboxCommandHistory>();
+            host.AddComponent<SandboxToolStateService>();
+            host.AddComponent<SandboxSelectionService>();
+            host.AddComponent<SandboxInputRouter>();
+            host.AddComponent<SandboxWorkspaceStateService>();
+            var shortcutService = host.AddComponent<SandboxKeyboardShortcutService>();
+
+            shortcutService.SendMessage("Awake");
+
+            Assert.That(shortcutService.CanDispatchWhilePointerOverUi(SandboxShortcutId.Undo), Is.True);
+            Assert.That(shortcutService.CanDispatchWhilePointerOverUi(SandboxShortcutId.Redo), Is.True);
+            Assert.That(shortcutService.CanDispatchWhilePointerOverUi(SandboxShortcutId.WallLineTool), Is.False);
+
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
         public void ToolPaletteShell_CanSwitchToolsThroughUiEntryPoint()
         {
             var servicesHost = new GameObject("ServicesHost");
@@ -234,6 +254,52 @@ namespace EvacLogix.Tests.EditMode
 
             var stairPortal = workspaceService.ActiveFloor.stairPortals.Single(portal => portal.stairPortalId == stairId);
             Assert.That(stairPortal.localPosition, Is.EqualTo(new Vector2(4f, 3f)));
+
+            Object.DestroyImmediate(overlayObject);
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void ObjectInteractionOverlay_BrushEraseCanRemoveWallsAndClampBrushRadius()
+        {
+            var host = new GameObject("BrushEraseHost");
+            host.AddComponent<SandboxCommandHistory>();
+            host.AddComponent<SandboxToolStateService>();
+            host.AddComponent<SandboxSelectionService>();
+            host.AddComponent<SandboxProjectWorkspaceService>();
+            host.AddComponent<SandboxColliderRebuildService>();
+            host.AddComponent<SandboxValidationService>();
+            host.AddComponent<SandboxVisualOrganizationService>();
+            host.AddComponent<SandboxClipboardService>();
+            host.AddComponent<SandboxWallSnappingService>();
+            var wallAuthoringService = host.AddComponent<SandboxWallAuthoringService>();
+            host.AddComponent<SandboxSemanticObjectAuthoringService>();
+            host.AddComponent<SandboxMeasurementService>();
+
+            host.GetComponent<SandboxProjectWorkspaceService>().SendMessage("Awake");
+            host.GetComponent<SandboxColliderRebuildService>().SendMessage("Awake");
+            host.GetComponent<SandboxValidationService>().SendMessage("Awake");
+            host.GetComponent<SandboxVisualOrganizationService>().SendMessage("Awake");
+            host.GetComponent<SandboxClipboardService>().SendMessage("Awake");
+            host.GetComponent<SandboxWallSnappingService>().SendMessage("Awake");
+            wallAuthoringService.SendMessage("Awake");
+            host.GetComponent<SandboxSemanticObjectAuthoringService>().SendMessage("Awake");
+            host.GetComponent<SandboxMeasurementService>().SendMessage("Awake");
+
+            var workspaceService = host.GetComponent<SandboxProjectWorkspaceService>();
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(6f, 0f)), Is.True);
+
+            var overlayObject = new GameObject("BrushEraseOverlay");
+            var overlay = overlayObject.AddComponent<SandboxObjectInteractionOverlay>();
+            overlay.SendMessage("Awake");
+            overlay.SetBrushEraseEnabled(true);
+            overlay.SetEraseBrushRadius(0.1f);
+            Assert.That(overlay.EraseBrushRadius, Is.EqualTo(0.35f).Within(0.001f));
+
+            overlay.SetEraseBrushRadius(0.6f);
+            Assert.That(overlay.EraseWithinBrush(new Vector2(3f, 0f)), Is.EqualTo(1));
+            Assert.That(workspaceService.ActiveFloor.wallSegments.Count, Is.EqualTo(0));
 
             Object.DestroyImmediate(overlayObject);
             Object.DestroyImmediate(host);

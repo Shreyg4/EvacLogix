@@ -329,6 +329,17 @@ namespace EvacLogix.Sandbox.Data.Validation
             for (var i = 0; i < floor.stairPortals.Count; i += 1)
             {
                 var portal = floor.stairPortals[i];
+                if (portal.size.x <= 0f || portal.size.y <= 0f)
+                {
+                    issues.Add(CreateIssue(
+                        ValidationIssueSeverity.BlockingError,
+                        ValidationIssueType.Structural,
+                        floor.floorId,
+                        portal.stairPortalId,
+                        "Invalid stair geometry",
+                        "Stair portal size must be positive."));
+                }
+
                 var targetFloor = project.floors.FirstOrDefault(candidate =>
                     string.Equals(candidate.floorId, portal.targetFloorId, StringComparison.Ordinal));
                 var targetPortal = targetFloor?.stairPortals.FirstOrDefault(candidate =>

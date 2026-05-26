@@ -169,6 +169,7 @@ namespace EvacLogix.Tests.EditMode
                 inspector.UpdateStairPortal(
                     lowerStairPortalId,
                     new Vector2(10.5f, 1.75f),
+                    new Vector2(1.75f, 1.25f),
                     90f,
                     "North Stair Lower",
                     StairTraversalDirection.AscendOnly,
@@ -210,6 +211,7 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(lowerPortal.targetFloorId, Is.EqualTo("floor-2"));
             Assert.That(lowerPortal.targetStairPortalId, Is.EqualTo(upperStairPortalId));
             Assert.That(lowerPortal.name, Is.EqualTo("North Stair Lower"));
+            Assert.That(lowerPortal.size, Is.EqualTo(new Vector2(1.75f, 1.25f)));
             Assert.That(upperPortal.targetFloorId, Is.EqualTo(project.floors[0].floorId));
             Assert.That(upperPortal.targetStairPortalId, Is.EqualTo(lowerStairPortalId));
             Assert.That(upperPortal.direction, Is.EqualTo(StairTraversalDirection.DescendOnly));
@@ -241,6 +243,7 @@ namespace EvacLogix.Tests.EditMode
                 Assert.That(reloadedLowerPortal.sourceFloorId, Is.EqualTo(project.floors[0].floorId));
                 Assert.That(reloadedLowerPortal.targetFloorId, Is.EqualTo("floor-2"));
                 Assert.That(reloadedLowerPortal.targetStairPortalId, Is.EqualTo(upperStairPortalId));
+                Assert.That(reloadedLowerPortal.size, Is.EqualTo(new Vector2(1.75f, 1.25f)));
                 Assert.That(reloadedUpperPortal.direction, Is.EqualTo(StairTraversalDirection.DescendOnly));
             }
             finally

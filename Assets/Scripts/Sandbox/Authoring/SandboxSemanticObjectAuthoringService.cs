@@ -15,6 +15,7 @@ namespace EvacLogix.Sandbox.Authoring
         [SerializeField] private float wallAttachDistance = 0.6f;
         [SerializeField] private Vector2 defaultExitZoneSize = new(1.5f, 1.5f);
         [SerializeField] private Vector2 defaultObstacleSize = Vector2.one;
+        [SerializeField] private Vector2 defaultStairPortalSize = Vector2.one;
         [SerializeField] private float defaultExitWidth = 1.5f;
         [SerializeField] private float obstacleRotationStepDegrees = 15f;
 
@@ -269,7 +270,8 @@ namespace EvacLogix.Sandbox.Authoring
             string name = "")
         {
             exitZoneId = string.Empty;
-            if (workspaceService?.ActiveFloor == null)
+            var resolvedSize = size ?? defaultExitZoneSize;
+            if (workspaceService?.ActiveFloor == null || resolvedSize.x <= 0f || resolvedSize.y <= 0f)
             {
                 return false;
             }
@@ -280,7 +282,6 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             var activeFloorId = workspaceService.ActiveFloor.floorId;
-            var resolvedSize = size ?? defaultExitZoneSize;
             var createdExitZoneId = SandboxId.NewId();
             var didPlaceExit = ExecuteProjectMutation(
                 "Place Exit",
@@ -327,7 +328,7 @@ namespace EvacLogix.Sandbox.Authoring
             IEnumerable<string> tags,
             IEnumerable<MetadataFieldData> metadataFields)
         {
-            if (string.IsNullOrWhiteSpace(exitZoneId))
+            if (string.IsNullOrWhiteSpace(exitZoneId) || size.x <= 0f || size.y <= 0f || width <= 0f)
             {
                 return false;
             }
@@ -370,7 +371,8 @@ namespace EvacLogix.Sandbox.Authoring
             string name = "")
         {
             obstacleId = string.Empty;
-            if (workspaceService?.ActiveFloor == null)
+            var resolvedSize = size ?? defaultObstacleSize;
+            if (workspaceService?.ActiveFloor == null || resolvedSize.x <= 0f || resolvedSize.y <= 0f)
             {
                 return false;
             }
@@ -397,7 +399,7 @@ namespace EvacLogix.Sandbox.Authoring
                         obstacleId = createdObstacleId,
                         name = name ?? string.Empty,
                         center = center,
-                        size = size ?? defaultObstacleSize,
+                        size = resolvedSize,
                         rotationDegrees = NormalizeObstacleRotation(rotationDegrees),
                         semanticType = semanticType,
                         traversalCostMultiplier = traversalCostMultiplier
@@ -425,7 +427,7 @@ namespace EvacLogix.Sandbox.Authoring
             IEnumerable<string> tags,
             IEnumerable<MetadataFieldData> metadataFields)
         {
-            if (string.IsNullOrWhiteSpace(obstacleId))
+            if (string.IsNullOrWhiteSpace(obstacleId) || size.x <= 0f || size.y <= 0f)
             {
                 return false;
             }
@@ -460,13 +462,15 @@ namespace EvacLogix.Sandbox.Authoring
         public bool PlaceStairPortal(
             Vector2 localPosition,
             out string stairPortalId,
+            Vector2? size = null,
             float rotationDegrees = 0f,
             string name = "",
             StairTraversalDirection direction = StairTraversalDirection.Bidirectional,
             float travelCost = 1f)
         {
             stairPortalId = string.Empty;
-            if (workspaceService?.ActiveFloor == null)
+            var resolvedSize = size ?? defaultStairPortalSize;
+            if (workspaceService?.ActiveFloor == null || resolvedSize.x <= 0f || resolvedSize.y <= 0f)
             {
                 return false;
             }
@@ -494,6 +498,7 @@ namespace EvacLogix.Sandbox.Authoring
                         sourceFloorId = floor.floorId,
                         name = name ?? string.Empty,
                         localPosition = localPosition,
+                        size = resolvedSize,
                         rotationDegrees = rotationDegrees,
                         direction = direction,
                         travelCost = travelCost
@@ -513,6 +518,7 @@ namespace EvacLogix.Sandbox.Authoring
         public bool UpdateStairPortal(
             string stairPortalId,
             Vector2 localPosition,
+            Vector2 size,
             float rotationDegrees,
             string name,
             StairTraversalDirection direction,
@@ -520,7 +526,7 @@ namespace EvacLogix.Sandbox.Authoring
             IEnumerable<string> tags,
             IEnumerable<MetadataFieldData> metadataFields)
         {
-            if (string.IsNullOrWhiteSpace(stairPortalId))
+            if (string.IsNullOrWhiteSpace(stairPortalId) || size.x <= 0f || size.y <= 0f)
             {
                 return false;
             }
@@ -541,6 +547,7 @@ namespace EvacLogix.Sandbox.Authoring
 
                     stairPortal.sourceFloorId = floor.floorId;
                     stairPortal.localPosition = localPosition;
+                    stairPortal.size = size;
                     stairPortal.rotationDegrees = rotationDegrees;
                     stairPortal.name = name ?? string.Empty;
                     stairPortal.direction = direction;

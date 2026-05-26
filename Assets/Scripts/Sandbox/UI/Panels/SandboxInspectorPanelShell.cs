@@ -548,19 +548,21 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public bool PlaceStairPortal(
             Vector2 localPosition,
+            Vector2? size = null,
             float rotationDegrees = 0f,
             string name = "",
             StairTraversalDirection direction = StairTraversalDirection.Bidirectional,
             float travelCost = 1f)
         {
             return UpdateSemanticActionStatus(
-                semanticObjectAuthoringService != null && semanticObjectAuthoringService.PlaceStairPortal(localPosition, out _, rotationDegrees, name, direction, travelCost),
+                semanticObjectAuthoringService != null && semanticObjectAuthoringService.PlaceStairPortal(localPosition, out _, size, rotationDegrees, name, direction, travelCost),
                 "Placed stair endpoint.");
         }
 
         public bool UpdateStairPortal(
             string stairPortalId,
             Vector2 localPosition,
+            Vector2 size,
             float rotationDegrees,
             string name,
             StairTraversalDirection direction,
@@ -569,7 +571,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             IEnumerable<MetadataFieldData> metadataFields)
         {
             return UpdateSemanticActionStatus(
-                semanticObjectAuthoringService != null && semanticObjectAuthoringService.UpdateStairPortal(stairPortalId, localPosition, rotationDegrees, name, direction, travelCost, tags, metadataFields),
+                semanticObjectAuthoringService != null && semanticObjectAuthoringService.UpdateStairPortal(stairPortalId, localPosition, size, rotationDegrees, name, direction, travelCost, tags, metadataFields),
                 "Updated stair metadata.");
         }
 

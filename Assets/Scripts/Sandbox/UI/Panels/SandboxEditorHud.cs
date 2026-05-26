@@ -12,9 +12,19 @@ namespace EvacLogix.Sandbox.UI.Panels
 {
     public sealed class SandboxEditorHud : MonoBehaviour
     {
+        private enum SelectionEditableKind
+        {
+            None = 0,
+            Exit = 1,
+            Obstacle = 2,
+            Stair = 3,
+        }
+
         [SerializeField] private string blueprintImportPath = string.Empty;
         [SerializeField] private string calibrationDistanceText = "10";
         [SerializeField] private string pendingFloorName = "Floor";
+        [SerializeField] private string selectionSizeXText = string.Empty;
+        [SerializeField] private string selectionSizeYText = string.Empty;
         [SerializeField] private bool showLegend = true;
         [SerializeField] private bool showValidation = true;
         [SerializeField] private Vector2 toolScrollPosition;
@@ -49,6 +59,8 @@ namespace EvacLogix.Sandbox.UI.Panels
         private Rect validationRect;
         private Rect statusBarRect;
         private Rect modalRect;
+        private string selectionEditorTargetId = string.Empty;
+        private SelectionEditableKind selectionEditorKind = SelectionEditableKind.None;
 
         public bool IsFullyWired =>
             topBarShell != null &&
@@ -276,6 +288,8 @@ namespace EvacLogix.Sandbox.UI.Panels
             DrawActionButton("Use Centimeters", () => inspectorPanelShell?.SetProjectDistanceUnit(DistanceUnit.Centimeters), activeProject != null);
             GUILayout.EndHorizontal();
 
+            DrawSelectionEditor();
+
             DrawInspectorSection("Blueprint");
             blueprintImportPath = GUILayout.TextField(blueprintImportPath, GUILayout.Height(24f));
             DrawActionButton("Import Blueprint Path", () => { inspectorPanelShell?.ImportBlueprintToActiveFloor(blueprintImportPath); }, activeFloor != null && !string.IsNullOrWhiteSpace(blueprintImportPath));
@@ -471,6 +485,224 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
             GUILayout.EndScrollView();
             GUILayout.EndArea();
+        }
+
+        private void DrawSelectionEditor()
+        {
+            DrawInspectorSection("Selection");
+            if (selectionService == null || selectionService.SelectedObjectIds.Count != 1)
+            {
+                ResetSelectionEditorState();
+                GUILayout.Label("Select a single exit, obstacle, or stair to edit its size.", bodyStyle);
+                return;
+            }
+
+            var selectedId = selectionService.SelectedObjectIds[0];
+            if (TryFindSelectedExit(selectedId, out var exitZone))
+            {
+                SyncSelectionEditorState(selectedId, SelectionEditableKind.Exit, exitZone.size);
+                DrawEditableSelectionSizeFields(
+                    "Exit Zone",
+                    string.IsNullOrWhiteSpace(exitZone.name) ? selectedId : exitZone.name,
+                    () => TryApplyExitSize(exitZone));
+                return;
+            }
+
+            if (TryFindSelectedObstacle(selectedId, out var obstacle))
+            {
+                SyncSelectionEditorState(selectedId, SelectionEditableKind.Obstacle, obstacle.size);
+                DrawEditableSelectionSizeFields(
+                    "Obstacle",
+                    string.IsNullOrWhiteSpace(obstacle.name) ? selectedId : obstacle.name,
+                    () => TryApplyObstacleSize(obstacle));
+                return;
+            }
+
+            if (TryFindSelectedStair(selectedId, out var stairPortal))
+            {
+                SyncSelectionEditorState(selectedId, SelectionEditableKind.Stair, stairPortal.size);
+                DrawEditableSelectionSizeFields(
+                    "Stair Portal",
+                    string.IsNullOrWhiteSpace(stairPortal.name) ? selectedId : stairPortal.name,
+                    () => TryApplyStairSize(stairPortal));
+                return;
+            }
+
+            ResetSelectionEditorState();
+            GUILayout.Label("The current selection does not expose editable size controls yet.", bodyStyle);
+        }
+
+        private void DrawEditableSelectionSizeFields(string objectTypeLabel, string objectLabel, Action applyAction)
+        {
+            GUILayout.Label($"{objectTypeLabel}: {objectLabel}", bodyStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Width", bodyStyle, GUILayout.Width(42f));
+            selectionSizeXText = GUILayout.TextField(selectionSizeXText, GUILayout.Width(64f));
+            GUILayout.Label("Height", bodyStyle, GUILayout.Width(48f));
+            selectionSizeYText = GUILayout.TextField(selectionSizeYText, GUILayout.Width(64f));
+            GUILayout.EndHorizontal();
+
+            var canApply = inspectorPanelShell != null && TryParseSelectionSize(out _);
+            DrawActionButton("Apply Size", applyAction, canApply);
+        }
+
+        private bool TryApplyExitSize(ExitZoneData exitZone)
+        {
+            if (exitZone == null || !TryParseSelectionSize(out var nextSize))
+            {
+                return false;
+            }
+
+            var didUpdate = inspectorPanelShell != null && inspectorPanelShell.UpdateExit(
+                exitZone.exitZoneId,
+                exitZone.center,
+                nextSize,
+                exitZone.rotationDegrees,
+                exitZone.width,
+                exitZone.capacity,
+                exitZone.priority,
+                exitZone.name,
+                exitZone.tags,
+                exitZone.metadataFields);
+            if (didUpdate)
+            {
+                SyncSelectionEditorState(exitZone.exitZoneId, SelectionEditableKind.Exit, nextSize, true);
+            }
+
+            return didUpdate;
+        }
+
+        private bool TryApplyObstacleSize(ObstacleData obstacle)
+        {
+            if (obstacle == null || !TryParseSelectionSize(out var nextSize))
+            {
+                return false;
+            }
+
+            var didUpdate = inspectorPanelShell != null && inspectorPanelShell.UpdateObstacle(
+                obstacle.obstacleId,
+                obstacle.center,
+                nextSize,
+                obstacle.rotationDegrees,
+                obstacle.semanticType,
+                obstacle.traversalCostMultiplier,
+                obstacle.name,
+                obstacle.tags,
+                obstacle.metadataFields);
+            if (didUpdate)
+            {
+                SyncSelectionEditorState(obstacle.obstacleId, SelectionEditableKind.Obstacle, nextSize, true);
+            }
+
+            return didUpdate;
+        }
+
+        private bool TryApplyStairSize(StairPortalData stairPortal)
+        {
+            if (stairPortal == null || !TryParseSelectionSize(out var nextSize))
+            {
+                return false;
+            }
+
+            var didUpdate = inspectorPanelShell != null && inspectorPanelShell.UpdateStairPortal(
+                stairPortal.stairPortalId,
+                stairPortal.localPosition,
+                nextSize,
+                stairPortal.rotationDegrees,
+                stairPortal.name,
+                stairPortal.direction,
+                stairPortal.travelCost,
+                stairPortal.tags,
+                stairPortal.metadataFields);
+            if (didUpdate)
+            {
+                SyncSelectionEditorState(stairPortal.stairPortalId, SelectionEditableKind.Stair, nextSize, true);
+            }
+
+            return didUpdate;
+        }
+
+        private void SyncSelectionEditorState(string targetId, SelectionEditableKind editableKind, Vector2 size, bool force = false)
+        {
+            if (!force &&
+                string.Equals(selectionEditorTargetId, targetId, StringComparison.Ordinal) &&
+                selectionEditorKind == editableKind)
+            {
+                return;
+            }
+
+            selectionEditorTargetId = targetId ?? string.Empty;
+            selectionEditorKind = editableKind;
+            selectionSizeXText = size.x.ToString("0.###");
+            selectionSizeYText = size.y.ToString("0.###");
+        }
+
+        private void ResetSelectionEditorState()
+        {
+            selectionEditorTargetId = string.Empty;
+            selectionEditorKind = SelectionEditableKind.None;
+            selectionSizeXText = string.Empty;
+            selectionSizeYText = string.Empty;
+        }
+
+        private bool TryParseSelectionSize(out Vector2 size)
+        {
+            size = Vector2.zero;
+            if (!float.TryParse(selectionSizeXText, out var width) ||
+                !float.TryParse(selectionSizeYText, out var height) ||
+                width <= 0f ||
+                height <= 0f)
+            {
+                return false;
+            }
+
+            size = new Vector2(width, height);
+            return true;
+        }
+
+        private bool TryFindSelectedExit(string selectedId, out ExitZoneData exitZone)
+        {
+            exitZone = null;
+            var floors = workspaceService?.ActiveProject?.floors;
+            if (floors == null)
+            {
+                return false;
+            }
+
+            exitZone = floors
+                .SelectMany(floor => floor.exits)
+                .FirstOrDefault(candidate => string.Equals(candidate.exitZoneId, selectedId, StringComparison.Ordinal));
+            return exitZone != null;
+        }
+
+        private bool TryFindSelectedObstacle(string selectedId, out ObstacleData obstacle)
+        {
+            obstacle = null;
+            var floors = workspaceService?.ActiveProject?.floors;
+            if (floors == null)
+            {
+                return false;
+            }
+
+            obstacle = floors
+                .SelectMany(floor => floor.obstacles)
+                .FirstOrDefault(candidate => string.Equals(candidate.obstacleId, selectedId, StringComparison.Ordinal));
+            return obstacle != null;
+        }
+
+        private bool TryFindSelectedStair(string selectedId, out StairPortalData stairPortal)
+        {
+            stairPortal = null;
+            var floors = workspaceService?.ActiveProject?.floors;
+            if (floors == null)
+            {
+                return false;
+            }
+
+            stairPortal = floors
+                .SelectMany(floor => floor.stairPortals)
+                .FirstOrDefault(candidate => string.Equals(candidate.stairPortalId, selectedId, StringComparison.Ordinal));
+            return stairPortal != null;
         }
 
         private void DrawStatusBar()
