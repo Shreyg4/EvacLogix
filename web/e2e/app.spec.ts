@@ -50,6 +50,19 @@ test.describe("EvacLogix presentation site", () => {
     await expect(page.getByRole("link", { name: "Open Unity Play" })).toBeVisible();
   });
 
+  test("keeps sandbox editor hidden from navigation but addressable by profile route", async ({ page }) => {
+    await page.goto("/");
+
+    await expect(page.getByRole("navigation").getByText("Sandbox Editor")).toHaveCount(0);
+
+    await page.goto("/demo?app=sandbox-editor");
+    await expect(page.locator("#unity-embed-title")).toHaveText("Embedded Sandbox Editor");
+    await expect(page.getByRole("button", { name: "Launch Sandbox Editor" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Launch Sandbox Editor" }).click();
+    await expect(page.locator("#evaclogix-unity-canvas")).toBeVisible({ timeout: 10000 });
+  });
+
   test("keeps the homepage usable at a smaller viewport", async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 900 });
     await page.goto("/");

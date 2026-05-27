@@ -7,6 +7,12 @@ import {
   homeScopeStatement
 } from "../content/homeContent";
 import { siteContent } from "../content/siteContent";
+import {
+  defaultUnityAppProfileId,
+  getDefaultUnityAppProfile,
+  getVisibleUnityAppProfiles,
+  unityAppProfiles
+} from "../content/unityAppProfiles";
 import { appRoutes } from "../utils/routes";
 
 describe("content shape", () => {
@@ -38,5 +44,13 @@ describe("content shape", () => {
     expect(homeHighlightsSection.title.length).toBeGreaterThan(0);
     expect(homeMissionStatementSection.body.length).toBeGreaterThan(0);
     expect(homeScopeStatement.body).toBe(siteContent.status.scopeNote);
+  });
+
+  it("defines named Unity app profiles with one visible default target", () => {
+    expect(unityAppProfiles.length).toBeGreaterThanOrEqual(2);
+    expect(getDefaultUnityAppProfile().id).toBe(defaultUnityAppProfileId);
+    expect(getVisibleUnityAppProfiles()).toHaveLength(1);
+    expect(getVisibleUnityAppProfiles()[0]?.id).toBe("evac-sim");
+    expect(unityAppProfiles.find((profile) => profile.id === "sandbox-editor")?.hidden).toBe(true);
   });
 });

@@ -1,14 +1,23 @@
+import { useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { HeroSection } from "../components/sections/HeroSection";
 import { StatementSection } from "../components/sections/StatementSection";
 import { UnityEmbed } from "../components/unity/UnityEmbed";
 import {
-  demoFallbackContent,
   demoGuidanceContent,
   demoInstructions,
   demoPageContent,
+  defaultDemoProfile,
 } from "../content/demoContent";
+import { getUnityAppProfile } from "../content/unityAppProfiles";
 
 export function DemoPage() {
+  const [searchParams] = useSearchParams();
+  const selectedProfile = useMemo(() => {
+    const requestedProfileId = searchParams.get("app");
+    return getUnityAppProfile(requestedProfileId) ?? defaultDemoProfile;
+  }, [searchParams]);
+
   return (
     <div className="page-stack page-demo">
       <HeroSection content={demoPageContent} />
@@ -18,13 +27,15 @@ export function DemoPage() {
         body={demoGuidanceContent.body}
       />
       <UnityEmbed
-        title="Embedded Simulation Frame"
+        title={selectedProfile.embedTitle}
         instructions={demoInstructions}
-        fallbackMessage={demoFallbackContent.message}
-        unavailableExplanation={demoFallbackContent.explanation}
-        backupHref={demoFallbackContent.backupHref}
-        backupLabel={demoFallbackContent.backupLabel}
-        launchLabel="Play Simulation"
+        fallbackMessage={selectedProfile.fallbackMessage}
+        unavailableExplanation={selectedProfile.fallbackExplanation}
+        backupHref={selectedProfile.backupHref}
+        backupLabel={selectedProfile.backupLabel}
+        launchLabel={selectedProfile.launchLabel}
+        buildConfigPath={selectedProfile.buildConfigPath}
+        allowedBridgeCommands={selectedProfile.allowedBridgeCommands}
       />
     </div>
   );

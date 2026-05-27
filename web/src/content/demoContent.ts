@@ -1,5 +1,5 @@
 import type { HeroContent, StatementContent } from "../types/content";
-import { appRoutes } from "../utils/routes";
+import { getDefaultUnityAppProfile } from "./unityAppProfiles";
 
 export const demoPageContent: HeroContent = {
   eyebrow: "Demo",
@@ -20,10 +20,4 @@ export const demoInstructions: string[] = [
   "Focus on how evacuation movement, congestion, and exits are presented."
 ];
 
-export const demoFallbackContent = {
-  message: "Simulation unavailable",
-  explanation:
-    "The current build could not be launched from this embedded frame. The page remains usable, and a secondary backup path can still be provided.",
-  backupHref: "https://play.unity.com/",
-  backupLabel: "Open Unity Play"
-};
+export const defaultDemoProfile = getDefaultUnityAppProfile();

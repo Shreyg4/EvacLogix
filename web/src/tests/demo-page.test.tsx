@@ -46,4 +46,11 @@ describe("demo page", () => {
       expect(screen.getByText("Press play to attempt launching the embedded simulation.")).toBeInTheDocument();
     });
   });
+
+  it("can resolve a hidden sandbox target intentionally without exposing it in main navigation", async () => {
+    renderAppAt("/demo?app=sandbox-editor");
+
+    expect(await screen.findByRole("button", { name: "Launch Sandbox Editor" })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: "Embedded Sandbox Editor" }).length).toBeGreaterThan(0);
+  });
 });
