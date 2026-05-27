@@ -1,7 +1,7 @@
 import type { UnityBuildConfig } from "../types/unity";
 
 type CreateUnityInstance = (
-  canvasHost: HTMLElement,
+  canvas: HTMLCanvasElement,
   config: UnityBuildConfig
 ) => Promise<unknown>;
 
@@ -41,8 +41,14 @@ export function loadUnityLoader(loaderUrl: string): Promise<void> {
 }
 
 export async function fetchUnityBuildConfig(): Promise<UnityBuildConfig | null> {
+  return fetchUnityBuildConfigFromPath("/unity-build/unity-build-config.json");
+}
+
+export async function fetchUnityBuildConfigFromPath(
+  buildConfigPath: string
+): Promise<UnityBuildConfig | null> {
   try {
-    const response = await fetch("/unity-build/unity-build-config.json");
+    const response = await fetch(buildConfigPath);
 
     if (!response.ok) {
       return null;
@@ -56,7 +62,7 @@ export async function fetchUnityBuildConfig(): Promise<UnityBuildConfig | null> 
 }
 
 export async function createUnityInstanceBridge(
-  canvasHost: HTMLElement,
+  canvas: HTMLCanvasElement,
   config: UnityBuildConfig
 ): Promise<unknown> {
   const unityWindow = window as UnityWindow;
@@ -65,5 +71,5 @@ export async function createUnityInstanceBridge(
     throw new Error("Unity runtime bridge was not found after loader execution.");
   }
 
-  return unityWindow.createUnityInstance(canvasHost, config);
+  return unityWindow.createUnityInstance(canvas, config);
 }
