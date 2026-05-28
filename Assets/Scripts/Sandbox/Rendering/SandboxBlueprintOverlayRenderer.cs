@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
 using UnityEngine;
+using System;
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -15,6 +16,7 @@ namespace EvacLogix.Sandbox.Rendering
         [SerializeField] private string overlayPrefix = "BlueprintOverlay_";
 
         private readonly List<GameObject> activeOverlayObjects = new();
+        private readonly List<Sprite> activeOverlaySprites = new();
         private SandboxProjectWorkspaceService workspaceService;
 
         private void Awake()
@@ -81,8 +83,7 @@ namespace EvacLogix.Sandbox.Rendering
                 return;
             }
 
-#if UNITY_EDITOR
-            var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(blueprintReference.assetPath);
+            var texture = ResolveBlueprintTexture(blueprintReference);
             if (texture == null)
             {
                 return;
@@ -96,9 +97,10 @@ namespace EvacLogix.Sandbox.Rendering
 
             var overlayObject = new GameObject($"{overlayPrefix}{floor.name}");
             overlayObject.transform.SetParent(transform, false);
+            var resolvedDisplayScale = blueprintReference.displayScale <= 0f ? 1f : blueprintReference.displayScale;
             overlayObject.transform.localScale = new Vector3(
-                blueprintReference.worldUnitsPerPixel,
-                blueprintReference.worldUnitsPerPixel,
+                blueprintReference.worldUnitsPerPixel * resolvedDisplayScale,
+                blueprintReference.worldUnitsPerPixel * resolvedDisplayScale,
                 1f);
 
             var renderer = overlayObject.AddComponent<SpriteRenderer>();
@@ -106,7 +108,7 @@ namespace EvacLogix.Sandbox.Rendering
             renderer.color = new Color(1f, 1f, 1f, Mathf.Clamp01(blueprintReference.opacity));
             renderer.sortingOrder = -10 - floor.order;
             activeOverlayObjects.Add(overlayObject);
-#endif
+            activeOverlaySprites.Add(sprite);
         }
 
         private void ClearOverlays()
@@ -127,6 +129,60 @@ namespace EvacLogix.Sandbox.Rendering
             }
 
             activeOverlayObjects.Clear();
+
+            for (var i = 0; i < activeOverlaySprites.Count; i += 1)
+            {
+                if (activeOverlaySprites[i] != null)
+                {
+                    if (Application.isPlaying)
+                    {
+                        Destroy(activeOverlaySprites[i]);
+                    }
+                    else
+                    {
+                        DestroyImmediate(activeOverlaySprites[i]);
+                    }
+                }
+            }
+
+            activeOverlaySprites.Clear();
+        }
+
+        private static Texture2D ResolveBlueprintTexture(BlueprintReferenceData blueprintReference)
+        {
+#if UNITY_EDITOR
+            if (!string.IsNullOrWhiteSpace(blueprintReference.assetPath))
+            {
+                var editorTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(blueprintReference.assetPath);
+                if (editorTexture != null)
+                {
+                    return editorTexture;
+                }
+            }
+#endif
+
+            if (string.IsNullOrWhiteSpace(blueprintReference.importedPayloadBase64))
+            {
+                return null;
+            }
+
+            byte[] bytes;
+            try
+            {
+                bytes = Convert.FromBase64String(blueprintReference.importedPayloadBase64);
+            }
+            catch
+            {
+                return null;
+            }
+
+            if (bytes.Length == 0)
+            {
+                return null;
+            }
+
+            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            return texture.LoadImage(bytes, false) ? texture : null;
         }
     }
 }

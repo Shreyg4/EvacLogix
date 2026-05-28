@@ -42,6 +42,7 @@ namespace EvacLogix.Sandbox.Data
         Blocked = 1,
         Locked = 2,
         OneWay = 3,
+        Closed = 4,
     }
 
     public enum ObstacleSemanticType
@@ -138,7 +139,10 @@ namespace EvacLogix.Sandbox.Data
         public string assetGuid = string.Empty;
         public string assetPath = string.Empty;
         public string sourceFileName = string.Empty;
+        public string sourceMimeType = string.Empty;
+        public string importedPayloadBase64 = string.Empty;
         public float opacity = 1f;
+        public float displayScale = 1f;
         public bool isVisible = true;
         public bool isCalibrated;
         public Vector2 calibrationPointA;

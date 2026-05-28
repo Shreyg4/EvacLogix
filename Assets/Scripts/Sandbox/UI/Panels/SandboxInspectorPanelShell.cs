@@ -14,9 +14,10 @@ namespace EvacLogix.Sandbox.UI.Panels
         [SerializeField] private bool showSelectionSummary = true;
         [SerializeField] private string latestCalibrationFeedback = string.Empty;
 
+        private ISandboxFileActionService fileActionService;
+        private SandboxBrowserFileActionCoordinator browserFileActionCoordinator;
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxProjectMetadataService projectMetadataService;
-        private SandboxBlueprintImportService blueprintImportService;
         private SandboxScaleCalibrationService calibrationService;
         private SandboxCalibrationWorkflowService calibrationWorkflowService;
         private SandboxPreviewImageExportService previewImageExportService;
@@ -47,6 +48,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         public string CurrentValidationHelpText => editorQoLService?.CurrentValidationHelpText ?? string.Empty;
         public bool HasShortcutConflicts => keyboardShortcutService != null && keyboardShortcutService.HasBindingConflicts;
         public bool IsFullyWired => GetMissingDependencies().Count == 0;
+        public bool UsesBrowserHostedFileActions => browserFileActionCoordinator != null && browserFileActionCoordinator.SupportsBrowserFileActions;
 
         private void Awake()
         {
@@ -56,9 +58,10 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public void RefreshDependencies()
         {
+            fileActionService = FindAnyObjectByType<SandboxFileActionService>();
+            browserFileActionCoordinator = FindAnyObjectByType<SandboxBrowserFileActionCoordinator>();
             workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
             projectMetadataService = FindAnyObjectByType<SandboxProjectMetadataService>();
-            blueprintImportService = FindAnyObjectByType<SandboxBlueprintImportService>();
             calibrationService = FindAnyObjectByType<SandboxScaleCalibrationService>();
             calibrationWorkflowService = FindAnyObjectByType<SandboxCalibrationWorkflowService>();
             previewImageExportService = FindAnyObjectByType<SandboxPreviewImageExportService>();
@@ -83,9 +86,10 @@ namespace EvacLogix.Sandbox.UI.Panels
         {
             RefreshDependencies();
             var missingDependencies = new List<string>();
+            AddMissingDependency(missingDependencies, fileActionService, nameof(fileActionService));
+            AddMissingDependency(missingDependencies, browserFileActionCoordinator, nameof(browserFileActionCoordinator));
             AddMissingDependency(missingDependencies, workspaceService, nameof(workspaceService));
             AddMissingDependency(missingDependencies, projectMetadataService, nameof(projectMetadataService));
-            AddMissingDependency(missingDependencies, blueprintImportService, nameof(blueprintImportService));
             AddMissingDependency(missingDependencies, calibrationService, nameof(calibrationService));
             AddMissingDependency(missingDependencies, calibrationWorkflowService, nameof(calibrationWorkflowService));
             AddMissingDependency(missingDependencies, previewImageExportService, nameof(previewImageExportService));
@@ -161,19 +165,34 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public BlueprintReferenceData ImportBlueprintToActiveFloor(string sourceFilePath)
         {
-            if (workspaceService?.ActiveFloor == null || blueprintImportService == null)
+            if (workspaceService?.ActiveFloor == null || fileActionService == null)
             {
                 return null;
             }
 
-            var blueprintReference = blueprintImportService.ImportBlueprint(sourceFilePath);
-            workspaceService.AddBlueprintReference(blueprintReference);
-            workspaceService.AssignBlueprintToFloor(workspaceService.ActiveFloor.floorId, blueprintReference.blueprintReferenceId);
+            var blueprintReference = fileActionService.ImportBlueprintToActiveFloor(sourceFilePath);
+            if (blueprintReference == null)
+            {
+                return null;
+            }
+
             if (statusBar != null)
             {
                 statusBar.StatusMessage = $"Imported blueprint {blueprintReference.sourceFileName}.";
             }
             return blueprintReference;
+        }
+
+        public bool RequestBrowserBlueprintImport()
+        {
+            var didRequest = browserFileActionCoordinator != null && browserFileActionCoordinator.RequestBlueprintImageImport();
+            Debug.Log($"SandboxInspectorPanelShell: RequestBrowserBlueprintImport result={didRequest}");
+            if (!didRequest && statusBar != null)
+            {
+                statusBar.StatusMessage = "Browser blueprint import request did not start.";
+            }
+
+            return didRequest;
         }
 
         public bool SetActiveFloorBlueprintOpacity(float opacity)
@@ -184,6 +203,16 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             return workspaceService.SetBlueprintOpacity(workspaceService.ActiveFloor.blueprintReferenceId, opacity);
+        }
+
+        public bool SetActiveFloorBlueprintDisplayScale(float displayScale)
+        {
+            if (workspaceService?.ActiveFloor == null)
+            {
+                return false;
+            }
+
+            return workspaceService.SetBlueprintDisplayScale(workspaceService.ActiveFloor.blueprintReferenceId, displayScale);
         }
 
         public bool SetActiveFloorBlueprintVisibility(bool isVisible)

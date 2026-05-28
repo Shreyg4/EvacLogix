@@ -1,4 +1,5 @@
 using System.IO;
+using System;
 using EvacLogix.Sandbox.Data;
 using UnityEngine;
 
@@ -32,13 +33,12 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             var blueprintReference = workspaceService.FindBlueprintReference(workspaceService.ActiveFloor.blueprintReferenceId);
-            if (blueprintReference == null || string.IsNullOrWhiteSpace(blueprintReference.assetPath))
+            if (blueprintReference == null)
             {
                 return false;
             }
 
-#if UNITY_EDITOR
-            var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(blueprintReference.assetPath);
+            var texture = ResolvePreviewTexture(blueprintReference);
             if (texture == null)
             {
                 return false;
@@ -59,9 +59,43 @@ namespace EvacLogix.Sandbox.Infrastructure
             File.WriteAllBytes(destinationPath, bytes);
             workspaceService.ActiveProject.metadata.lastPreviewImageExportUtc = System.DateTime.UtcNow.ToString("O");
             return true;
-#else
-            return false;
+        }
+
+        private static Texture2D ResolvePreviewTexture(BlueprintReferenceData blueprintReference)
+        {
+#if UNITY_EDITOR
+            if (!string.IsNullOrWhiteSpace(blueprintReference.assetPath))
+            {
+                var editorTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(blueprintReference.assetPath);
+                if (editorTexture != null)
+                {
+                    return editorTexture;
+                }
+            }
 #endif
+
+            if (string.IsNullOrWhiteSpace(blueprintReference.importedPayloadBase64))
+            {
+                return null;
+            }
+
+            byte[] bytes;
+            try
+            {
+                bytes = Convert.FromBase64String(blueprintReference.importedPayloadBase64);
+            }
+            catch
+            {
+                return null;
+            }
+
+            if (bytes.Length == 0)
+            {
+                return null;
+            }
+
+            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            return texture.LoadImage(bytes, false) ? texture : null;
         }
     }
 }

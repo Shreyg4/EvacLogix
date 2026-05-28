@@ -41,6 +41,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         private SandboxColliderRebuildService colliderRebuildService;
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxPreviewService previewService;
+        private SandboxWorkspaceStateService workspaceStateService;
 
         public IReadOnlyList<SandboxClipboardItem> ClipboardItems => clipboardItems;
 
@@ -53,6 +54,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             colliderRebuildService = GetComponent<SandboxColliderRebuildService>();
             visualOrganizationService = GetComponent<SandboxVisualOrganizationService>();
             previewService = GetComponent<SandboxPreviewService>();
+            workspaceStateService = GetComponent<SandboxWorkspaceStateService>();
         }
 
         public bool CopySelection()
@@ -421,7 +423,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             };
         }
 
-        private static bool TryPasteItem(
+        private bool TryPasteItem(
             BuildingProjectData project,
             FloorData targetFloor,
             SandboxClipboardItem item,
@@ -579,7 +581,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             return pasteLayout;
         }
 
-        private static bool TryMoveOpening(FloorData floor, string wallSegmentId, ref float offsetAlongWall, float width, Vector2 delta)
+        private bool TryMoveOpening(FloorData floor, string wallSegmentId, ref float offsetAlongWall, float width, Vector2 delta)
         {
             var wall = floor.wallSegments.FirstOrDefault(candidate => candidate.wallSegmentId == wallSegmentId);
             if (wall == null)
@@ -590,7 +592,11 @@ namespace EvacLogix.Sandbox.Infrastructure
             var wallDirection = (wall.endPoint - wall.startPoint).normalized;
             var nextOffset = offsetAlongWall + Vector2.Dot(delta, wallDirection);
             var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-            var halfWidth = width * 0.5f;
+            var halfWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(
+                workspaceService,
+                workspaceStateService,
+                floor,
+                width) * 0.5f;
             if (nextOffset - halfWidth < -0.01f || nextOffset + halfWidth > wallLength + 0.01f)
             {
                 return false;

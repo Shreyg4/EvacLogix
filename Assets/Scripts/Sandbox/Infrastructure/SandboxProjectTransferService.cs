@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Data.Migrations;
 using EvacLogix.Sandbox.Data.Serialization;
@@ -48,9 +49,9 @@ namespace EvacLogix.Sandbox.Infrastructure
         [SerializeField] private SandboxFloorImportAnalysis lastFloorImportAnalysis = new();
 
         private SandboxProjectWorkspaceService workspaceService;
+        private SandboxProjectRefreshService projectRefreshService;
         private SandboxSaveLoadService saveLoadService;
         private SandboxValidationService validationService;
-        private SandboxColliderRebuildService colliderRebuildService;
 
         public event Action TransferStateChanged;
 
@@ -62,14 +63,12 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         private void Awake()
         {
-            workspaceService = GetComponent<SandboxProjectWorkspaceService>();
-            saveLoadService = GetComponent<SandboxSaveLoadService>();
-            validationService = GetComponent<SandboxValidationService>();
-            colliderRebuildService = GetComponent<SandboxColliderRebuildService>();
+            RefreshDependenciesIfNeeded();
         }
 
         public bool ExportProjectJson(string filePath, bool prettyPrint = true)
         {
+            RefreshDependenciesIfNeeded();
             if (workspaceService?.ActiveProject == null || string.IsNullOrWhiteSpace(filePath))
             {
                 return false;
@@ -77,7 +76,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
             try
             {
-                WriteProject(filePath, workspaceService.ActiveProject, prettyPrint);
+                SandboxProjectFileStorage.WriteProjectToPath(filePath, workspaceService.ActiveProject, prettyPrint);
                 lastExportJsonPath = filePath;
                 ClearError();
                 RaiseStateChanged();
@@ -93,6 +92,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public BuildingProjectData ImportProjectJson(string filePath)
         {
+            RefreshDependenciesIfNeeded();
             if (saveLoadService == null)
             {
                 return null;
@@ -106,9 +106,31 @@ namespace EvacLogix.Sandbox.Infrastructure
                 return null;
             }
 
-            colliderRebuildService?.RebuildAll();
-            validationService?.ValidateActiveProject();
+            projectRefreshService?.RefreshDerivedProjectState();
             lastImportedJsonPath = filePath;
+            ClearError();
+            RaiseStateChanged();
+            return project;
+        }
+
+        public BuildingProjectData ImportProjectJsonContent(string json, string sourceLabel = "")
+        {
+            RefreshDependenciesIfNeeded();
+            if (saveLoadService == null)
+            {
+                return null;
+            }
+
+            var project = saveLoadService.LoadProjectFromJson(json);
+            if (project == null)
+            {
+                lastError = saveLoadService.LastError;
+                RaiseStateChanged();
+                return null;
+            }
+
+            projectRefreshService?.RefreshDerivedProjectState();
+            lastImportedJsonPath = sourceLabel ?? string.Empty;
             ClearError();
             RaiseStateChanged();
             return project;
@@ -116,6 +138,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public bool ExportRuntimeProjectData(string filePath, bool prettyPrint = true)
         {
+            RefreshDependenciesIfNeeded();
             if (workspaceService?.ActiveProject == null || string.IsNullOrWhiteSpace(filePath))
             {
                 return false;
@@ -134,10 +157,9 @@ namespace EvacLogix.Sandbox.Infrastructure
                 var timestamp = DateTime.UtcNow.ToString("O");
                 project.metadata.lastRuntimeExportUtc = timestamp;
                 project.metadata.updatedUtc = timestamp;
-                WriteProject(filePath, project, prettyPrint);
+                SandboxProjectFileStorage.WriteProjectToPath(filePath, project, prettyPrint);
                 workspaceService.SetActiveProject(project);
-                colliderRebuildService?.RebuildAll();
-                validationService?.ValidateActiveProject();
+                projectRefreshService?.RefreshDerivedProjectState();
                 lastRuntimeExportPath = filePath;
                 ClearError();
                 RaiseStateChanged();
@@ -151,8 +173,60 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
         }
 
+        public SandboxExportFileData BuildProjectJsonExportPayload(bool prettyPrint = true, string fileName = "sandbox-project.json")
+        {
+            RefreshDependenciesIfNeeded();
+            if (workspaceService?.ActiveProject == null)
+            {
+                return null;
+            }
+
+            var json = SandboxProjectSerializer.Serialize(workspaceService.ActiveProject, prettyPrint);
+            var bytes = Encoding.UTF8.GetBytes(json);
+            return new SandboxExportFileData
+            {
+                fileName = fileName,
+                mimeType = "application/json",
+                sizeBytes = bytes.LongLength,
+                payloadBase64 = Convert.ToBase64String(bytes)
+            };
+        }
+
+        public SandboxExportFileData BuildRuntimeProjectExportPayload(bool prettyPrint = true, string fileName = "sandbox-runtime-project.json")
+        {
+            RefreshDependenciesIfNeeded();
+            if (workspaceService?.ActiveProject == null)
+            {
+                return null;
+            }
+
+            if (validationService != null && !validationService.CanPreviewOrExport())
+            {
+                lastError = "Resolve blocking validation issues before exporting runtime-ready data.";
+                RaiseStateChanged();
+                return null;
+            }
+
+            var project = SandboxProjectSerializer.Clone(workspaceService.ActiveProject);
+            var timestamp = DateTime.UtcNow.ToString("O");
+            project.metadata.lastRuntimeExportUtc = timestamp;
+            project.metadata.updatedUtc = timestamp;
+            var json = SandboxProjectSerializer.Serialize(project, prettyPrint);
+            var bytes = Encoding.UTF8.GetBytes(json);
+            ClearError();
+            RaiseStateChanged();
+            return new SandboxExportFileData
+            {
+                fileName = fileName,
+                mimeType = "application/json",
+                sizeBytes = bytes.LongLength,
+                payloadBase64 = Convert.ToBase64String(bytes)
+            };
+        }
+
         public SandboxFloorImportAnalysis AnalyzeFloorImportFromPath(string filePath, IEnumerable<string> selectedFloorIds = null)
         {
+            RefreshDependenciesIfNeeded();
             if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             {
                 return SetLastFloorImportAnalysis(new SandboxFloorImportAnalysis
@@ -171,7 +245,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
             try
             {
-                var sourceProject = SandboxProjectSerializer.Deserialize(File.ReadAllText(filePath));
+                var sourceProject = SandboxProjectFileStorage.ReadProjectFromPath(filePath);
                 var analysis = AnalyzeFloorImport(sourceProject, selectedFloorIds);
                 analysis.sourcePath = filePath;
                 return SetLastFloorImportAnalysis(analysis);
@@ -195,6 +269,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public bool ImportFloorsFromPath(string filePath, IEnumerable<string> selectedFloorIds = null)
         {
+            RefreshDependenciesIfNeeded();
             if (workspaceService?.ActiveProject == null)
             {
                 lastError = "Create or open a project before importing floors.";
@@ -212,7 +287,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
             try
             {
-                var sourceProject = SandboxProjectSerializer.Deserialize(File.ReadAllText(filePath));
+                var sourceProject = SandboxProjectFileStorage.ReadProjectFromPath(filePath);
                 var requestedIds = analysis.selectedFloorIds.ToHashSet(StringComparer.Ordinal);
                 var selectedFloors = sourceProject.floors
                     .Where(floor => requestedIds.Contains(floor.floorId))
@@ -241,8 +316,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                     workspaceService.SetActiveFloor(selectedFloors[0].floorId);
                 }
 
-                colliderRebuildService?.RebuildAll();
-                validationService?.ValidateActiveProject();
+                projectRefreshService?.RefreshDerivedProjectState();
                 ClearError();
                 RaiseStateChanged();
                 return true;
@@ -473,8 +547,9 @@ namespace EvacLogix.Sandbox.Infrastructure
                     continue;
                 }
 
-                if (string.Equals(existingBlueprint.assetPath, sourceBlueprint.assetPath, StringComparison.Ordinal) &&
-                    string.Equals(existingBlueprint.assetGuid, sourceBlueprint.assetGuid, StringComparison.Ordinal))
+                if ((string.Equals(existingBlueprint.assetPath, sourceBlueprint.assetPath, StringComparison.Ordinal) &&
+                    string.Equals(existingBlueprint.assetGuid, sourceBlueprint.assetGuid, StringComparison.Ordinal)) ||
+                    string.Equals(existingBlueprint.importedPayloadBase64, sourceBlueprint.importedPayloadBase64, StringComparison.Ordinal))
                 {
                     remap[blueprintId] = existingBlueprint.blueprintReferenceId;
                     continue;
@@ -578,17 +653,6 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
         }
 
-        private static void WriteProject(string filePath, BuildingProjectData project, bool prettyPrint)
-        {
-            var directory = Path.GetDirectoryName(filePath);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            File.WriteAllText(filePath, SandboxProjectSerializer.Serialize(project, prettyPrint));
-        }
-
         private SandboxFloorImportAnalysis SetLastFloorImportAnalysis(SandboxFloorImportAnalysis analysis)
         {
             lastFloorImportAnalysis = analysis ?? new SandboxFloorImportAnalysis();
@@ -605,6 +669,14 @@ namespace EvacLogix.Sandbox.Infrastructure
         private void RaiseStateChanged()
         {
             TransferStateChanged?.Invoke();
+        }
+
+        private void RefreshDependenciesIfNeeded()
+        {
+            workspaceService ??= GetComponent<SandboxProjectWorkspaceService>();
+            projectRefreshService ??= GetComponent<SandboxProjectRefreshService>();
+            saveLoadService ??= GetComponent<SandboxSaveLoadService>();
+            validationService ??= GetComponent<SandboxValidationService>();
         }
     }
 }

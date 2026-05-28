@@ -18,6 +18,8 @@ namespace EvacLogix.Sandbox.UI.Panels
             Exit = 1,
             Obstacle = 2,
             Stair = 3,
+            Door = 4,
+            Window = 5,
         }
 
         [SerializeField] private string blueprintImportPath = string.Empty;
@@ -61,6 +63,10 @@ namespace EvacLogix.Sandbox.UI.Panels
         private Rect modalRect;
         private string selectionEditorTargetId = string.Empty;
         private SelectionEditableKind selectionEditorKind = SelectionEditableKind.None;
+        private bool hasLoggedGuiException;
+        private string lastGuiExceptionMessage = string.Empty;
+        private bool hasLoggedWebGlDependencyStatus;
+        private bool hasLoggedBrowserActionMode;
 
         public bool IsFullyWired =>
             topBarShell != null &&
@@ -84,6 +90,8 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void Update()
         {
             RefreshDependenciesIfNeeded();
+            LogWebGlDependencyStatusIfNeeded();
+            LogBrowserActionModeIfNeeded();
             UpdateInputCapture();
         }
 
@@ -112,21 +120,35 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void OnGUI()
         {
-            RefreshDependenciesIfNeeded();
-            EnsureStyles();
-            EnsureDefaultFieldValues();
-            RecalculateLayout();
-
-            DrawTopBar();
-            DrawToolPalette();
-            DrawFloorTabs();
-            DrawInspector();
-            DrawValidationPanel();
-            DrawStatusBar();
-
-            if (newProjectDialogShell != null && newProjectDialogShell.IsOpen)
+            try
             {
-                DrawNewProjectModal();
+                RefreshDependenciesIfNeeded();
+                EnsureStyles();
+                EnsureDefaultFieldValues();
+                RecalculateLayout();
+
+                DrawTopBar();
+                DrawToolPalette();
+                DrawFloorTabs();
+                DrawInspector();
+                DrawValidationPanel();
+                DrawStatusBar();
+
+                if (newProjectDialogShell != null && newProjectDialogShell.IsOpen)
+                {
+                    DrawNewProjectModal();
+                }
+            }
+            catch (Exception exception)
+            {
+                lastGuiExceptionMessage = exception.ToString();
+                if (!hasLoggedGuiException)
+                {
+                    hasLoggedGuiException = true;
+                    Debug.LogError($"SandboxEditorHud.OnGUI failed: {exception}");
+                }
+
+                DrawGuiExceptionFallback();
             }
         }
 
@@ -145,10 +167,22 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             GUILayout.BeginHorizontal();
             DrawActionButton("New", () => topBarShell?.OpenNewProjectDialog());
-            DrawActionButton("Save", () => { topBarShell?.SaveProject(GetWorkingProjectPath()); }, workspaceService?.ActiveProject != null);
-            DrawActionButton("Load", () => { topBarShell?.LoadProject(GetWorkingProjectPath()); });
-            DrawActionButton("Export JSON", () => { topBarShell?.ExportProjectJson(GetProjectExportPath()); }, workspaceService?.ActiveProject != null);
-            DrawActionButton("Import JSON", () => { topBarShell?.ImportProjectJson(GetProjectExportPath()); });
+
+            if (topBarShell != null && topBarShell.UsesBrowserHostedFileActions)
+            {
+                DrawActionButton("Save", () => { }, false);
+                DrawActionButton("Load", () => { }, false);
+                DrawActionButton("Export JSON", () => { topBarShell.RequestBrowserProjectJsonExport(); }, workspaceService?.ActiveProject != null && !topBarShell.IsBrowserFileActionBusy);
+                DrawActionButton("Import JSON", () => { topBarShell.RequestBrowserProjectJsonImport(); }, !topBarShell.IsBrowserFileActionBusy);
+            }
+            else
+            {
+                DrawActionButton("Save", () => { topBarShell?.SaveProject(GetWorkingProjectPath()); }, workspaceService?.ActiveProject != null);
+                DrawActionButton("Load", () => { topBarShell?.LoadProject(GetWorkingProjectPath()); });
+                DrawActionButton("Export JSON", () => { topBarShell?.ExportProjectJson(GetProjectExportPath()); }, workspaceService?.ActiveProject != null);
+                DrawActionButton("Import JSON", () => { topBarShell?.ImportProjectJson(GetProjectExportPath()); });
+            }
+
             DrawActionButton("Export Runtime", () => { topBarShell?.ExportRuntimeProjectData(GetRuntimeExportPath()); }, workspaceService?.ActiveProject != null);
             DrawActionButton("Export Preview", () => { topBarShell?.ExportPreviewImage(GetPreviewImagePath()); }, workspaceService?.ActiveProject != null);
             DrawActionButton("Rebuild All", () => topBarShell?.RebuildAll(), workspaceService?.ActiveProject != null);
@@ -165,7 +199,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
             GUILayout.EndHorizontal();
 
-            GUILayout.Label($"Working files: {GetStorageDirectoryPath()}", bodyStyle);
+            GUILayout.Label(topBarShell?.PersistenceModeSummary ?? $"Working files: {GetStorageDirectoryPath()}", bodyStyle);
             if (topBarShell != null && topBarShell.HasRecoveryPrompt)
             {
                 GUILayout.BeginHorizontal();
@@ -266,6 +300,9 @@ namespace EvacLogix.Sandbox.UI.Panels
         {
             GUILayout.BeginArea(inspectorRect, GUIContent.none, GUI.skin.box);
             GUILayout.Label("Inspector", headerStyle);
+
+            DrawBrushActionBanner();
+
             inspectorScrollPosition = GUILayout.BeginScrollView(inspectorScrollPosition);
 
             DrawInspectorSection("Workspace");
@@ -291,8 +328,16 @@ namespace EvacLogix.Sandbox.UI.Panels
             DrawSelectionEditor();
 
             DrawInspectorSection("Blueprint");
-            blueprintImportPath = GUILayout.TextField(blueprintImportPath, GUILayout.Height(24f));
-            DrawActionButton("Import Blueprint Path", () => { inspectorPanelShell?.ImportBlueprintToActiveFloor(blueprintImportPath); }, activeFloor != null && !string.IsNullOrWhiteSpace(blueprintImportPath));
+            if (inspectorPanelShell != null && inspectorPanelShell.UsesBrowserHostedFileActions)
+            {
+                DrawActionButton("Import Blueprint Image", () => { inspectorPanelShell.RequestBrowserBlueprintImport(); }, activeFloor != null);
+                GUILayout.Label("Browser mode uses the website file picker for blueprint uploads.", bodyStyle);
+            }
+            else
+            {
+                blueprintImportPath = GUILayout.TextField(blueprintImportPath, GUILayout.Height(24f));
+                DrawActionButton("Import Blueprint Path", () => { inspectorPanelShell?.ImportBlueprintToActiveFloor(blueprintImportPath); }, activeFloor != null && !string.IsNullOrWhiteSpace(blueprintImportPath));
+            }
 
             var blueprintReference = activeFloor == null
                 ? null
@@ -312,6 +357,14 @@ namespace EvacLogix.Sandbox.UI.Panels
                 if (!Mathf.Approximately(nextOpacity, blueprintReference.opacity))
                 {
                     inspectorPanelShell?.SetActiveFloorBlueprintOpacity(nextOpacity);
+                }
+
+                var resolvedDisplayScale = blueprintReference.displayScale <= 0f ? 1f : blueprintReference.displayScale;
+                var nextDisplayScale = GUILayout.HorizontalSlider(resolvedDisplayScale, 0.1f, 4f);
+                GUILayout.Label($"Background Size: {nextDisplayScale:0.00}x", bodyStyle);
+                if (!Mathf.Approximately(nextDisplayScale, resolvedDisplayScale))
+                {
+                    inspectorPanelShell?.SetActiveFloorBlueprintDisplayScale(nextDisplayScale);
                 }
 
                 GUILayout.Label($"Calibration Distance ({inspectorPanelShell?.CurrentDistanceUnitLabel ?? SandboxDistanceUnitUtility.GetLabel(DistanceUnit.Feet)})", bodyStyle);
@@ -368,19 +421,14 @@ namespace EvacLogix.Sandbox.UI.Panels
                 if (wallAuthoringService.IsBrushCaptureActive)
                 {
                     GUILayout.Label($"Recording stroke: {wallAuthoringService.ActiveBrushStrokePoints.Count} points captured.", bodyStyle);
-                    DrawActionButton("Cancel Brush Capture", () => inspectorPanelShell?.CancelBrushWallStroke());
                 }
                 else if (wallAuthoringService.LastCleanedBrushStrokePoints.Count >= 2 && wallAuthoringService.ActiveBrushStrokePoints.Count >= 2)
                 {
                     GUILayout.Label($"Brush stroke ready: {wallAuthoringService.LastCleanedBrushStrokePoints.Count} cleaned points.", bodyStyle);
-                    GUILayout.BeginHorizontal();
-                    DrawActionButton("Accept Brush Walls", () => { inspectorPanelShell?.AcceptBrushWallStroke(); });
-                    DrawActionButton("Discard Brush", () => inspectorPanelShell?.CancelBrushWallStroke());
-                    GUILayout.EndHorizontal();
                 }
                 else
                 {
-                    GUILayout.Label("Use Wall Brush to sketch a stroke, then accept or discard it here after capture.", bodyStyle);
+                    GUILayout.Label("Use Wall Brush to sketch a stroke, then accept or discard it from the banner above.", bodyStyle);
                 }
             }
 
@@ -446,6 +494,39 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUILayout.EndArea();
         }
 
+        private void DrawBrushActionBanner()
+        {
+            if (wallAuthoringService == null)
+            {
+                return;
+            }
+
+            if (!wallAuthoringService.IsBrushCaptureActive &&
+                !(wallAuthoringService.LastCleanedBrushStrokePoints.Count >= 2 && wallAuthoringService.ActiveBrushStrokePoints.Count >= 2))
+            {
+                return;
+            }
+
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Label("Wall Brush", subheaderStyle);
+
+            if (wallAuthoringService.IsBrushCaptureActive)
+            {
+                GUILayout.Label($"Recording stroke: {wallAuthoringService.ActiveBrushStrokePoints.Count} points captured.", bodyStyle);
+                DrawActionButton("Cancel Brush Capture", () => inspectorPanelShell?.CancelBrushWallStroke());
+            }
+            else
+            {
+                GUILayout.Label($"Brush stroke ready: {wallAuthoringService.LastCleanedBrushStrokePoints.Count} cleaned points.", bodyStyle);
+                GUILayout.BeginHorizontal();
+                DrawActionButton("Accept Brush Walls", () => inspectorPanelShell?.AcceptBrushWallStroke());
+                DrawActionButton("Discard Brush", () => inspectorPanelShell?.CancelBrushWallStroke());
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.EndVertical();
+        }
+
         private void DrawValidationPanel()
         {
             GUILayout.BeginArea(validationRect, GUIContent.none, GUI.skin.box);
@@ -470,6 +551,23 @@ namespace EvacLogix.Sandbox.UI.Panels
                 ? "Blocking issues present."
                 : "No blocking issues currently reported.", bodyStyle);
 
+            if (validationPanelShell != null)
+            {
+                var showCompleteRooms = GUILayout.Toggle(validationPanelShell.ShowCompleteRooms, "Show All Complete Rooms");
+                if (showCompleteRooms != validationPanelShell.ShowCompleteRooms)
+                {
+                    validationPanelShell.SetShowCompleteRooms(showCompleteRooms);
+                }
+
+                GUILayout.BeginHorizontal();
+                DrawActionButton("Refresh Rooms", () => validationPanelShell.RefreshCompleteRooms(), validationPanelShell.ShowCompleteRooms);
+                GUILayout.Label(validationPanelShell.RoomDetectionStatus, bodyStyle);
+                GUILayout.EndHorizontal();
+                GUILayout.Label(
+                    $"Room overlay: sealed {validationPanelShell.SealedRoomCount}, penetrated {validationPanelShell.PenetratedRoomCount}.",
+                    bodyStyle);
+            }
+
             validationScrollPosition = GUILayout.BeginScrollView(validationScrollPosition);
             foreach (var floorGroup in validationPanelShell?.IssueGroups ?? Enumerable.Empty<SandboxValidationFloorGroup>())
             {
@@ -493,7 +591,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             if (selectionService == null || selectionService.SelectedObjectIds.Count != 1)
             {
                 ResetSelectionEditorState();
-                GUILayout.Label("Select a single exit, obstacle, or stair to edit its size.", bodyStyle);
+                GUILayout.Label("Select a single editable object to update its size or traversal behavior.", bodyStyle);
                 return;
             }
 
@@ -528,8 +626,64 @@ namespace EvacLogix.Sandbox.UI.Panels
                 return;
             }
 
+            if (TryFindSelectedDoor(selectedId, out var door))
+            {
+                SyncSelectionEditorState(selectedId, SelectionEditableKind.Door, new Vector2(door.width, 0f));
+                DrawDoorFields(door);
+                return;
+            }
+
+            if (TryFindSelectedWindow(selectedId, out var window))
+            {
+                SyncSelectionEditorState(selectedId, SelectionEditableKind.Window, new Vector2(window.width, 0f));
+                DrawWindowFields(window);
+                return;
+            }
+
             ResetSelectionEditorState();
             GUILayout.Label("The current selection does not expose editable size controls yet.", bodyStyle);
+        }
+
+        private void DrawDoorFields(DoorData door)
+        {
+            GUILayout.Label($"Door: {door.doorId}", bodyStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Width", bodyStyle, GUILayout.Width(42f));
+            selectionSizeXText = GUILayout.TextField(selectionSizeXText, GUILayout.Width(64f));
+            GUILayout.EndHorizontal();
+
+            GUILayout.Label("Door State", bodyStyle);
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Normal", () => TryApplyDoor(door, DoorState.Normal), door.state != DoorState.Normal);
+            DrawActionButton("Closed", () => TryApplyDoor(door, DoorState.Closed), door.state != DoorState.Closed);
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Blocked", () => TryApplyDoor(door, DoorState.Blocked), door.state != DoorState.Blocked);
+            DrawActionButton("Locked", () => TryApplyDoor(door, DoorState.Locked), door.state != DoorState.Locked);
+            GUILayout.EndHorizontal();
+
+            var canApplyWidth = inspectorPanelShell != null && TryParseSelectionWidth(out _);
+            DrawActionButton("Apply Door Width", () => TryApplyDoor(door, door.state), canApplyWidth);
+            GUILayout.Label("Normal/Closed doors create passable collider gaps. Blocked/Locked doors remain blocked.", bodyStyle);
+        }
+
+        private void DrawWindowFields(WindowData window)
+        {
+            GUILayout.Label($"Window: {window.windowId}", bodyStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Width", bodyStyle, GUILayout.Width(42f));
+            selectionSizeXText = GUILayout.TextField(selectionSizeXText, GUILayout.Width(64f));
+            GUILayout.EndHorizontal();
+
+            var escapeUsable = GUILayout.Toggle(window.canBeUsedForEscape, "Escape Usable");
+            if (escapeUsable != window.canBeUsedForEscape)
+            {
+                TryApplyWindow(window, escapeUsable);
+            }
+
+            var canApplyWidth = inspectorPanelShell != null && TryParseSelectionWidth(out _);
+            DrawActionButton("Apply Window Width", () => TryApplyWindow(window, window.canBeUsedForEscape), canApplyWidth);
+            GUILayout.Label("Only escape-usable windows create passable collider gaps.", bodyStyle);
         }
 
         private void DrawEditableSelectionSizeFields(string objectTypeLabel, string objectLabel, Action applyAction)
@@ -622,6 +776,52 @@ namespace EvacLogix.Sandbox.UI.Panels
             return didUpdate;
         }
 
+        private bool TryApplyDoor(DoorData door, DoorState state)
+        {
+            if (door == null || !TryParseSelectionWidth(out var width))
+            {
+                return false;
+            }
+
+            var didUpdate = inspectorPanelShell != null && inspectorPanelShell.UpdateDoor(
+                door.doorId,
+                width,
+                door.offsetAlongWall,
+                state,
+                door.tags,
+                door.metadataFields);
+            if (didUpdate)
+            {
+                SyncSelectionEditorState(door.doorId, SelectionEditableKind.Door, new Vector2(width, 0f), true);
+            }
+
+            return didUpdate;
+        }
+
+        private bool TryApplyWindow(WindowData window, bool canBeUsedForEscape)
+        {
+            if (window == null || !TryParseSelectionWidth(out var width))
+            {
+                return false;
+            }
+
+            var didUpdate = inspectorPanelShell != null && inspectorPanelShell.UpdateWindow(
+                window.windowId,
+                width,
+                window.offsetAlongWall,
+                canBeUsedForEscape,
+                window.escapeCost,
+                window.escapeRiskMultiplier,
+                window.tags,
+                window.metadataFields);
+            if (didUpdate)
+            {
+                SyncSelectionEditorState(window.windowId, SelectionEditableKind.Window, new Vector2(width, 0f), true);
+            }
+
+            return didUpdate;
+        }
+
         private void SyncSelectionEditorState(string targetId, SelectionEditableKind editableKind, Vector2 size, bool force = false)
         {
             if (!force &&
@@ -658,6 +858,11 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             size = new Vector2(width, height);
             return true;
+        }
+
+        private bool TryParseSelectionWidth(out float width)
+        {
+            return float.TryParse(selectionSizeXText, out width) && width > 0f;
         }
 
         private bool TryFindSelectedExit(string selectedId, out ExitZoneData exitZone)
@@ -703,6 +908,36 @@ namespace EvacLogix.Sandbox.UI.Panels
                 .SelectMany(floor => floor.stairPortals)
                 .FirstOrDefault(candidate => string.Equals(candidate.stairPortalId, selectedId, StringComparison.Ordinal));
             return stairPortal != null;
+        }
+
+        private bool TryFindSelectedDoor(string selectedId, out DoorData door)
+        {
+            door = null;
+            var floors = workspaceService?.ActiveProject?.floors;
+            if (floors == null)
+            {
+                return false;
+            }
+
+            door = floors
+                .SelectMany(floor => floor.doors)
+                .FirstOrDefault(candidate => string.Equals(candidate.doorId, selectedId, StringComparison.Ordinal));
+            return door != null;
+        }
+
+        private bool TryFindSelectedWindow(string selectedId, out WindowData window)
+        {
+            window = null;
+            var floors = workspaceService?.ActiveProject?.floors;
+            if (floors == null)
+            {
+                return false;
+            }
+
+            window = floors
+                .SelectMany(floor => floor.windows)
+                .FirstOrDefault(candidate => string.Equals(candidate.windowId, selectedId, StringComparison.Ordinal));
+            return window != null;
         }
 
         private void DrawStatusBar()
@@ -760,8 +995,26 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUI.enabled = enabled;
             if (GUILayout.Button(label, GUILayout.Height(28f)))
             {
-                EnsureStorageDirectory();
-                action?.Invoke();
+                Debug.Log($"SandboxEditorHud: button clicked '{label}', enabled={enabled}");
+                try
+                {
+                    EnsureStorageDirectory();
+                    Debug.Log($"SandboxEditorHud: storage directory ensured for '{label}'.");
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogError($"SandboxEditorHud: EnsureStorageDirectory failed for '{label}': {exception}");
+                }
+
+                try
+                {
+                    action?.Invoke();
+                    Debug.Log($"SandboxEditorHud: action invoked for '{label}'.");
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogError($"SandboxEditorHud: action threw for '{label}': {exception}");
+                }
             }
             GUI.enabled = previousState;
         }
@@ -816,6 +1069,91 @@ namespace EvacLogix.Sandbox.UI.Panels
             {
                 RefreshDependencies();
             }
+        }
+
+        private void LogWebGlDependencyStatusIfNeeded()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (hasLoggedWebGlDependencyStatus)
+            {
+                return;
+            }
+
+            hasLoggedWebGlDependencyStatus = true;
+            Debug.Log(
+                "SandboxEditorHud WebGL wiring status: " +
+                $"IsFullyWired={IsFullyWired}, " +
+                $"TopBar={topBarShell != null}, " +
+                $"ToolPalette={toolPaletteShell != null}, " +
+                $"FloorTabs={floorTabsBarShell != null}, " +
+                $"Inspector={inspectorPanelShell != null}, " +
+                $"Legend={visualLegendShell != null}, " +
+                $"Validation={validationPanelShell != null}, " +
+                $"StatusBar={statusBarShell != null}, " +
+                $"NewProjectDialog={newProjectDialogShell != null}, " +
+                $"Workspace={workspaceService != null}, " +
+                $"InputRouter={inputRouter != null}, " +
+                $"Screen={Screen.width}x{Screen.height}");
+#endif
+        }
+
+        private void LogBrowserActionModeIfNeeded()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (hasLoggedBrowserActionMode || topBarShell == null || inspectorPanelShell == null)
+            {
+                return;
+            }
+
+            hasLoggedBrowserActionMode = true;
+            Debug.Log(
+                "SandboxEditorHud browser action mode: " +
+                $"TopBarUsesBrowserHostedFileActions={topBarShell.UsesBrowserHostedFileActions}, " +
+                $"TopBarIsBrowserFileActionBusy={topBarShell.IsBrowserFileActionBusy}, " +
+                $"TopBarUsesBrowserPersistenceMode={topBarShell.UsesBrowserPersistenceMode}, " +
+                $"InspectorUsesBrowserHostedFileActions={inspectorPanelShell.UsesBrowserHostedFileActions}");
+#endif
+        }
+
+        private void DrawGuiExceptionFallback()
+        {
+            var fallbackRect = new Rect(16f, 16f, Mathf.Min(Screen.width - 32f, 720f), Mathf.Min(Screen.height - 32f, 220f));
+            GUI.Box(fallbackRect, string.Empty);
+            GUILayout.BeginArea(fallbackRect);
+            GUILayout.Label("Sandbox HUD runtime error", headerStyle ?? GUI.skin.label);
+            GUILayout.Label(
+                string.IsNullOrWhiteSpace(lastGuiExceptionMessage)
+                    ? "An unknown IMGUI error occurred."
+                    : lastGuiExceptionMessage,
+                bodyStyle ?? GUI.skin.label);
+
+            if (!IsFullyWired)
+            {
+                GUILayout.Space(8f);
+                GUILayout.Label("Missing dependencies:", subheaderStyle ?? GUI.skin.label);
+                foreach (var dependency in BuildMissingDependencyList())
+                {
+                    GUILayout.Label($"- {dependency}", bodyStyle ?? GUI.skin.label);
+                }
+            }
+
+            GUILayout.EndArea();
+        }
+
+        private string[] BuildMissingDependencyList()
+        {
+            var missing = new System.Collections.Generic.List<string>();
+            if (topBarShell == null) missing.Add(nameof(topBarShell));
+            if (toolPaletteShell == null) missing.Add(nameof(toolPaletteShell));
+            if (floorTabsBarShell == null) missing.Add(nameof(floorTabsBarShell));
+            if (inspectorPanelShell == null) missing.Add(nameof(inspectorPanelShell));
+            if (visualLegendShell == null) missing.Add(nameof(visualLegendShell));
+            if (validationPanelShell == null) missing.Add(nameof(validationPanelShell));
+            if (statusBarShell == null) missing.Add(nameof(statusBarShell));
+            if (newProjectDialogShell == null) missing.Add(nameof(newProjectDialogShell));
+            if (workspaceService == null) missing.Add(nameof(workspaceService));
+            if (inputRouter == null) missing.Add(nameof(inputRouter));
+            return missing.ToArray();
         }
 
         private void EnsureDefaultFieldValues()

@@ -55,6 +55,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private SandboxToolStateService toolStateService;
         private SandboxProjectWorkspaceService workspaceService;
+        private SandboxWorkspaceStateService workspaceStateService;
         private SandboxSelectionService selectionService;
         private SandboxInputRouter inputRouter;
         private SandboxStatusBarShell statusBar;
@@ -159,6 +160,11 @@ namespace EvacLogix.Sandbox.UI.Overlays
             if (workspaceService == null)
             {
                 workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
+            }
+
+            if (workspaceStateService == null)
+            {
+                workspaceStateService = FindAnyObjectByType<SandboxWorkspaceStateService>();
             }
 
             if (selectionService == null)
@@ -1334,7 +1340,12 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
 
             var wallDirection = wallVector / wallLength;
-            var halfWidth = openingWidth * 0.5f;
+            var worldWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(
+                workspaceService,
+                workspaceStateService,
+                floor,
+                openingWidth);
+            var halfWidth = worldWidth * 0.5f;
             var projectionDistance = Vector2.Dot(worldPoint - wall.startPoint, wallDirection);
             if (projectionDistance < openingOffset - halfWidth - OpeningHitRadius || projectionDistance > openingOffset + halfWidth + OpeningHitRadius)
             {
@@ -1376,7 +1387,12 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
 
             var wallDirection = wallVector / wallLength;
-            var halfWidth = openingWidth * 0.5f;
+            var worldWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(
+                workspaceService,
+                workspaceStateService,
+                floor,
+                openingWidth);
+            var halfWidth = worldWidth * 0.5f;
             var segmentStart = wall.startPoint + wallDirection * Mathf.Clamp(openingOffset - halfWidth, 0f, wallLength);
             var segmentEnd = wall.startPoint + wallDirection * Mathf.Clamp(openingOffset + halfWidth, 0f, wallLength);
             score = DistanceToSegment(worldPoint, segmentStart, segmentEnd);

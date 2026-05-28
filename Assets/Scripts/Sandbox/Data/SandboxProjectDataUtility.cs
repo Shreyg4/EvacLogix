@@ -32,6 +32,10 @@ namespace EvacLogix.Sandbox.Data
             foreach (var blueprint in project.blueprintReferences)
             {
                 blueprint.blueprintReferenceId = EnsureId(blueprint.blueprintReferenceId);
+                if (blueprint.displayScale <= 0f)
+                {
+                    blueprint.displayScale = 1f;
+                }
             }
 
             foreach (var floor in project.floors)

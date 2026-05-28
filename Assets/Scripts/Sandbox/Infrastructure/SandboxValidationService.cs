@@ -16,6 +16,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxColliderRebuildService colliderRebuildService;
+        private SandboxWorkspaceStateService workspaceStateService;
 
         public event Action<IReadOnlyList<ValidationIssueData>> ValidationIssuesChanged;
 
@@ -28,6 +29,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         {
             workspaceService = GetComponent<SandboxProjectWorkspaceService>();
             colliderRebuildService = GetComponent<SandboxColliderRebuildService>();
+            workspaceStateService = GetComponent<SandboxWorkspaceStateService>();
 
             if (colliderRebuildService != null)
             {
@@ -70,7 +72,10 @@ namespace EvacLogix.Sandbox.Infrastructure
                 return issues;
             }
 
-            var nextIssues = SandboxStructuralValidationUtility.Validate(project, colliderRebuildService?.GeneratedColliders);
+            var nextIssues = SandboxStructuralValidationUtility.Validate(
+                project,
+                colliderRebuildService?.GeneratedColliders,
+                workspaceStateService != null ? workspaceStateService.GridSize : 0.5f);
             ReplaceIssues(nextIssues);
             return issues;
         }

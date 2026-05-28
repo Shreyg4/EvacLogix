@@ -10,7 +10,8 @@ namespace EvacLogix.Sandbox.Data.Validation
     {
         public static List<ValidationIssueData> Validate(
             BuildingProjectData project,
-            IReadOnlyList<SandboxGeneratedColliderData> generatedColliders)
+            IReadOnlyList<SandboxGeneratedColliderData> generatedColliders,
+            float gridSize = 0.5f)
         {
             var issues = new List<ValidationIssueData>();
             if (project == null)
@@ -30,7 +31,7 @@ namespace EvacLogix.Sandbox.Data.Validation
                     : generatedColliders.Where(collider => string.Equals(collider.floorId, floor.floorId, StringComparison.Ordinal)).ToArray();
 
                 ValidateDisconnectedWallStructures(floor, issues);
-                ValidateOpenings(floor, issues);
+                ValidateOpenings(project, floor, issues, gridSize);
                 ValidateStairs(project, floor, issues);
                 ValidateExits(floor, issues);
                 ValidateOverlappingExits(floor, issues);
@@ -256,44 +257,53 @@ namespace EvacLogix.Sandbox.Data.Validation
             }
         }
 
-        private static void ValidateOpenings(FloorData floor, ICollection<ValidationIssueData> issues)
+        private static void ValidateOpenings(BuildingProjectData project, FloorData floor, ICollection<ValidationIssueData> issues, float gridSize)
         {
             for (var i = 0; i < floor.doors.Count; i += 1)
             {
                 ValidateOpening(
+                    project,
                     floor.floorId,
+                    floor,
                     floor.doors[i].doorId,
                     floor.doors[i].wallSegmentId,
                     floor.doors[i].offsetAlongWall,
                     floor.doors[i].width,
                     floor.wallSegments,
                     "Door",
-                    issues);
+                    issues,
+                    gridSize);
             }
 
             for (var i = 0; i < floor.windows.Count; i += 1)
             {
                 ValidateOpening(
+                    project,
                     floor.floorId,
+                    floor,
                     floor.windows[i].windowId,
                     floor.windows[i].wallSegmentId,
                     floor.windows[i].offsetAlongWall,
                     floor.windows[i].width,
                     floor.wallSegments,
                     "Window",
-                    issues);
+                    issues,
+                    gridSize);
             }
         }
 
         private static void ValidateOpening(
+            BuildingProjectData project,
             string floorId,
+            FloorData floor,
             string objectId,
             string wallSegmentId,
             float offsetAlongWall,
             float width,
             IReadOnlyList<WallSegmentData> wallSegments,
             string label,
-            ICollection<ValidationIssueData> issues)
+            ICollection<ValidationIssueData> issues,
+            float gridSize)
         {
             var wall = wallSegments.FirstOrDefault(candidate =>
                 string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal));
@@ -311,7 +321,7 @@ namespace EvacLogix.Sandbox.Data.Validation
             }
 
             var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-            var halfWidth = width * 0.5f;
+            var halfWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(project, floor, width, gridSize) * 0.5f;
             if (offsetAlongWall - halfWidth < -0.01f || offsetAlongWall + halfWidth > wallLength + 0.01f)
             {
                 issues.Add(CreateIssue(

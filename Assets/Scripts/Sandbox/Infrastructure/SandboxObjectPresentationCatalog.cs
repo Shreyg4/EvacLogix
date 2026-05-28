@@ -33,7 +33,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                 label = "Doors",
                 description = "Openings placed on walls with state metadata that affects preview passability.",
                 advancedFoldoutKey = "door.advanced",
-                color = new Color(0.15f, 0.75f, 0.35f, 1f)
+                color = new Color(0.18f, 0.55f, 1f, 1f)
             },
             new()
             {
@@ -41,7 +41,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                 label = "Windows",
                 description = "Wall openings with optional escape-use metadata for preview interpretation.",
                 advancedFoldoutKey = "window.advanced",
-                color = new Color(0.2f, 0.8f, 0.95f, 1f)
+                color = new Color(0.72f, 0.3f, 1f, 1f)
             },
             new()
             {

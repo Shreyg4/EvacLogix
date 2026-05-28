@@ -11,12 +11,17 @@ namespace EvacLogix.Sandbox.Rendering
 {
     public sealed class SandboxSemanticObjectRenderer : MonoBehaviour
     {
-        [SerializeField] private Color selectedColor = new(0.6f, 0.6f, 0.6f, 1f);
+        [SerializeField] private Color selectedColor = new(0.92f, 0.96f, 1f, 1f);
+        [SerializeField] private Color openingMaskColor = new(0.11f, 0.18f, 0.3f, 1f);
         [SerializeField] private float lineWidth = 0.05f;
+        [SerializeField] private float openingEdgeWidth = 0.1f;
+        [SerializeField] private float openingMaskWidth = 0.18f;
+        [SerializeField] private float openingEdgeLength = 0.42f;
         [SerializeField] private float markerRadius = 0.25f;
 
         private readonly List<GameObject> renderedObjects = new();
         private SandboxProjectWorkspaceService workspaceService;
+        private SandboxWorkspaceStateService workspaceStateService;
         private SandboxSelectionService selectionService;
         private SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
         private SandboxVisualOrganizationService visualOrganizationService;
@@ -25,6 +30,7 @@ namespace EvacLogix.Sandbox.Rendering
         private void Awake()
         {
             workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
+            workspaceStateService = FindAnyObjectByType<SandboxWorkspaceStateService>();
             selectionService = FindAnyObjectByType<SandboxSelectionService>();
             semanticObjectAuthoringService = FindAnyObjectByType<SandboxSemanticObjectAuthoringService>();
             visualOrganizationService = FindAnyObjectByType<SandboxVisualOrganizationService>();
@@ -287,13 +293,28 @@ namespace EvacLogix.Sandbox.Rendering
                 return;
             }
 
-            var wallDirection = (wall.endPoint - wall.startPoint).normalized;
-            var normal = new Vector2(-wallDirection.y, wallDirection.x);
+            var wallVector = wall.endPoint - wall.startPoint;
+            if (wallVector.sqrMagnitude <= 0.0001f)
+            {
+                return;
+            }
+
+            var wallDirection = wallVector.normalized;
+            var wallNormal = new Vector2(-wallDirection.y, wallDirection.x);
             var center = wall.startPoint + wallDirection * offsetAlongWall;
-            var halfWidth = Mathf.Max(0.15f, width * 0.5f);
-            var start = center - normal * halfWidth;
-            var end = center + normal * halfWidth;
-            RenderLine(name, start, end, ResolveSelectionColor(objectId, color));
+            var worldWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(
+                workspaceService,
+                workspaceStateService,
+                floor,
+                width);
+            var halfWidth = Mathf.Max(0.15f, worldWidth * 0.5f);
+            var start = center - wallDirection * halfWidth;
+            var end = center + wallDirection * halfWidth;
+            RenderLine($"{name}_Mask", start, end, openingMaskColor, openingMaskWidth, 0.02f);
+            var edgeColor = ResolveOpeningSelectionColor(objectId, color);
+            var halfEdgeLength = openingEdgeLength * 0.5f;
+            RenderLine($"{name}_StartEdge", start - wallNormal * halfEdgeLength, start + wallNormal * halfEdgeLength, edgeColor, openingEdgeWidth, 0.04f);
+            RenderLine($"{name}_EndEdge", end - wallNormal * halfEdgeLength, end + wallNormal * halfEdgeLength, edgeColor, openingEdgeWidth, 0.04f);
         }
 
         private void RenderRectangle(string name, Vector2 center, Vector2 size, float rotationDegrees, Color color)
@@ -342,15 +363,20 @@ namespace EvacLogix.Sandbox.Rendering
 
         private void RenderLine(string name, Vector2 start, Vector2 end, Color color)
         {
+            RenderLine(name, start, end, color, lineWidth, 0f);
+        }
+
+        private void RenderLine(string name, Vector2 start, Vector2 end, Color color, float width, float zOffset)
+        {
             var lineObject = new GameObject(name);
             lineObject.transform.SetParent(transform, false);
             var lineRenderer = lineObject.AddComponent<LineRenderer>();
             lineRenderer.useWorldSpace = false;
             lineRenderer.positionCount = 2;
-            lineRenderer.SetPosition(0, new Vector3(start.x, start.y, 0f));
-            lineRenderer.SetPosition(1, new Vector3(end.x, end.y, 0f));
+            lineRenderer.SetPosition(0, new Vector3(start.x, start.y, zOffset));
+            lineRenderer.SetPosition(1, new Vector3(end.x, end.y, zOffset));
             lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-            lineRenderer.widthMultiplier = lineWidth;
+            lineRenderer.widthMultiplier = width;
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
             renderedObjects.Add(lineObject);
@@ -379,7 +405,7 @@ namespace EvacLogix.Sandbox.Rendering
         private Color ResolveDoorColor(DoorData door)
         {
             var baseColor = ResolveBaseColor(SandboxVisualObjectType.Door);
-            return door.state == DoorState.Normal
+            return door.state == DoorState.Normal || door.state == DoorState.Closed || door.state == DoorState.OneWay
                 ? ResolveSelectionColor(door.doorId, baseColor)
                 : ResolveSelectionColor(door.doorId, Color.Lerp(baseColor, Color.red, 0.35f));
         }
@@ -391,8 +417,28 @@ namespace EvacLogix.Sandbox.Rendering
                 : baseColor;
         }
 
+        private Color ResolveOpeningSelectionColor(string objectId, Color baseColor)
+        {
+            if (selectionService == null || !selectionService.SelectedObjectIds.Contains(objectId))
+            {
+                return baseColor;
+            }
+
+            return Color.Lerp(baseColor, selectedColor, 0.35f);
+        }
+
         private Color ResolveBaseColor(SandboxVisualObjectType objectType)
         {
+            if (objectType == SandboxVisualObjectType.Door)
+            {
+                return new Color(0.18f, 0.55f, 1f, 1f);
+            }
+
+            if (objectType == SandboxVisualObjectType.Window)
+            {
+                return new Color(0.72f, 0.3f, 1f, 1f);
+            }
+
             return visualOrganizationService == null
                 ? Color.white
                 : visualOrganizationService.GetColor(objectType);

@@ -47,6 +47,12 @@ namespace EvacLogix.Sandbox.Infrastructure
         public bool AutosaveEnabled => autosaveEnabled;
         public bool HasUnsavedChanges => hasUnsavedChanges;
         public bool HasRecoveryPrompt => hasRecoveryPrompt;
+        public bool UsesBrowserPersistenceMode =>
+#if UNITY_WEBGL && !UNITY_EDITOR
+            true;
+#else
+            Application.platform == RuntimePlatform.WebGLPlayer && !Application.isEditor;
+#endif
 
         private void Awake()
         {
@@ -226,9 +232,29 @@ namespace EvacLogix.Sandbox.Infrastructure
 
             try
             {
-                var json = File.ReadAllText(filePath);
-                var project = SandboxProjectSerializer.Deserialize(json);
+                var project = SandboxProjectFileStorage.ReadProjectFromPath(filePath);
                 ApplyLoadedProject(project, setAsWorkingSavePath ? filePath : lastSavePath, false);
+                return project;
+            }
+            catch (Exception exception) when (exception is IOException || exception is SandboxMigrationException || exception is ArgumentException)
+            {
+                lastError = exception.Message;
+                RaiseStateChanged();
+                return null;
+            }
+        }
+
+        public BuildingProjectData LoadProjectFromJson(string json, string workingSavePath = "", bool setAsWorkingSavePath = false)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return null;
+            }
+
+            try
+            {
+                var project = SandboxProjectSerializer.Deserialize(json);
+                ApplyLoadedProject(project, setAsWorkingSavePath ? workingSavePath : lastSavePath, false);
                 return project;
             }
             catch (Exception exception) when (exception is IOException || exception is SandboxMigrationException || exception is ArgumentException)
@@ -241,6 +267,13 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public bool TryRestoreRecovery()
         {
+            if (UsesBrowserPersistenceMode)
+            {
+                lastError = "Recovery snapshot restore is not offered in browser mode.";
+                RaiseStateChanged();
+                return false;
+            }
+
             var autosavePath = recoveryAutosavePath;
             if (string.IsNullOrWhiteSpace(autosavePath) || !File.Exists(autosavePath))
             {
@@ -249,8 +282,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
             try
             {
-                var json = File.ReadAllText(autosavePath);
-                var project = SandboxProjectSerializer.Deserialize(json);
+                var project = SandboxProjectFileStorage.ReadProjectFromPath(autosavePath);
                 lastAutosavePath = autosavePath;
                 ApplyLoadedProject(project, lastSavePath, true);
                 hasRecoveryPrompt = false;
@@ -283,6 +315,15 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public void EvaluateRecoveryPrompt()
         {
+            if (UsesBrowserPersistenceMode)
+            {
+                hasRecoveryPrompt = false;
+                recoveryAutosavePath = string.Empty;
+                recoveryPromptMessage = "Browser mode keeps autosaves in local browser storage and does not surface recovery prompts.";
+                RaiseStateChanged();
+                return;
+            }
+
             if (!TryFindLatestRecoveryCandidate(out var candidatePath, out var candidateProject, out var candidateTimestamp))
             {
                 hasRecoveryPrompt = false;
@@ -365,8 +406,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             {
                 try
                 {
-                    var json = File.ReadAllText(autosavePaths[i]);
-                    var project = SandboxProjectSerializer.Deserialize(json);
+                    var project = SandboxProjectFileStorage.ReadProjectFromPath(autosavePaths[i]);
                     if (!TryResolveRecoveryTimestamp(project, out var updatedUtc) || !IsRecoveryNewerThanManualSave(project, updatedUtc))
                     {
                         continue;
@@ -419,13 +459,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         private static void WriteProjectToPath(string filePath, BuildingProjectData project, bool prettyPrint)
         {
-            var directory = Path.GetDirectoryName(filePath);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            File.WriteAllText(filePath, SandboxProjectSerializer.Serialize(project, prettyPrint));
+            SandboxProjectFileStorage.WriteProjectToPath(filePath, project, prettyPrint);
         }
 
         private static bool TryResolveRecoveryTimestamp(BuildingProjectData project, out DateTime updatedUtc)
