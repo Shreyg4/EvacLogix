@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using EvacLogix.Sandbox.Authoring;
@@ -24,9 +25,16 @@ namespace EvacLogix.Sandbox.UI.Panels
             Window = 6,
         }
 
+        private enum FloorLevelView
+        {
+            All = 0,
+            Surface = 1,
+            Basement = 2,
+        }
+
         [SerializeField] private string blueprintImportPath = string.Empty;
         [SerializeField] private string calibrationDistanceText = "10";
-        [SerializeField] private string pendingFloorName = "Floor";
+        [SerializeField] private string pendingFloorName = string.Empty;
         [SerializeField] private string selectionSizeXText = string.Empty;
         [SerializeField] private string selectionSizeYText = string.Empty;
         [SerializeField] private bool showLegend = true;
@@ -36,6 +44,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         [SerializeField] private bool inspectorCollapsed;
         [SerializeField] private bool validationCollapsed;
         [SerializeField] private bool statusBarCollapsed;
+        [SerializeField] private FloorLevelView selectedFloorLevelView = FloorLevelView.All;
         [SerializeField] private Vector2 toolScrollPosition;
         [SerializeField] private Vector2 inspectorScrollPosition;
         [SerializeField] private Vector2 validationScrollPosition;
@@ -81,6 +90,10 @@ namespace EvacLogix.Sandbox.UI.Panels
         private string lastGuiExceptionMessage = string.Empty;
         private bool hasLoggedWebGlDependencyStatus;
         private bool hasLoggedBrowserActionMode;
+        private float uiScale = 1f;
+
+        private const float MinUiScale = 1f;
+        private const float MaxUiScale = 2f;
 
         public bool IsFullyWired =>
             topBarShell != null &&
@@ -135,6 +148,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void OnGUI()
         {
+            var previousMatrix = GUI.matrix;
             try
             {
                 RefreshDependenciesIfNeeded();
@@ -142,6 +156,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 EnsureDefaultFieldValues();
                 RecalculateLayout();
 
+                GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(uiScale, uiScale, 1f));
                 DrawTopBar();
                 DrawToolPalette();
                 DrawFloorTabs();
@@ -156,6 +171,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
             catch (Exception exception)
             {
+                GUI.matrix = previousMatrix;
                 lastGuiExceptionMessage = exception.ToString();
                 if (!hasLoggedGuiException)
                 {
@@ -165,6 +181,26 @@ namespace EvacLogix.Sandbox.UI.Panels
 
                 DrawGuiExceptionFallback();
             }
+            finally
+            {
+                GUI.matrix = previousMatrix;
+            }
+        }
+
+        public void SetUiScale(string scaleText)
+        {
+            if (!float.TryParse(scaleText, NumberStyles.Float, CultureInfo.InvariantCulture, out var nextScale))
+            {
+                return;
+            }
+
+            uiScale = Mathf.Clamp(nextScale, MinUiScale, MaxUiScale);
+        }
+
+        public void SelectDefaultTool()
+        {
+            RefreshDependenciesIfNeeded();
+            toolPaletteShell?.SelectTool(SandboxToolMode.Select);
         }
 
         private void DrawTopBar()
@@ -295,14 +331,18 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Floors", subheaderStyle, GUILayout.Width(50f));
+            GUILayout.Label("Levels", subheaderStyle, GUILayout.Width(50f));
+            DrawFloorLevelViewButton("All", FloorLevelView.All);
+            DrawFloorLevelViewButton("Surface", FloorLevelView.Surface);
+            DrawFloorLevelViewButton("Basement", FloorLevelView.Basement);
+            GUILayout.Space(10f);
 
             if (floorTabsBarShell?.FloorTabs != null)
             {
-                foreach (var tab in floorTabsBarShell.FloorTabs)
+                foreach (var tab in GetVisibleFloorTabs())
                 {
                     var buttonStyle = tab.isActive ? activeToolButtonStyle : GUI.skin.button;
-                    if (GUILayout.Button(tab.name, buttonStyle, GUILayout.Height(28f)))
+                    if (GUILayout.Button(BuildFloorTabLabel(tab), buttonStyle, GUILayout.Height(28f)))
                     {
                         floorTabsBarShell.SelectFloor(tab.floorId);
                     }
@@ -310,8 +350,14 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             GUILayout.FlexibleSpace();
+            GUILayout.Space(30f);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Add", subheaderStyle, GUILayout.Width(50f));
             pendingFloorName = GUILayout.TextField(pendingFloorName, GUILayout.Width(120f));
-            DrawActionButton("Add Floor", () => { floorTabsBarShell?.AddFloor(pendingFloorName, 0f); }, workspaceService?.ActiveProject != null);
+            DrawActionButton("Add Surface", () => { floorTabsBarShell?.AddSurfaceFloor(pendingFloorName); }, workspaceService?.ActiveProject != null);
+            DrawActionButton("Add Basement", () => { floorTabsBarShell?.AddBasementFloor(pendingFloorName); }, workspaceService?.ActiveProject != null);
 
             var activeFloor = workspaceService?.ActiveFloor;
             DrawActionButton("Duplicate", () => { floorTabsBarShell?.DuplicateFloor(activeFloor.floorId); }, activeFloor != null);
@@ -330,6 +376,36 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             GUILayout.EndArea();
+        }
+
+        private void DrawFloorLevelViewButton(string label, FloorLevelView view)
+        {
+            var buttonStyle = selectedFloorLevelView == view ? activeToolButtonStyle : GUI.skin.button;
+            if (GUILayout.Button(label, buttonStyle, GUILayout.Height(28f), GUILayout.Width(82f)))
+            {
+                selectedFloorLevelView = view;
+            }
+        }
+
+        private System.Collections.Generic.IEnumerable<SandboxFloorTabEntry> GetVisibleFloorTabs()
+        {
+            var floorTabs = floorTabsBarShell?.FloorTabs ?? Array.Empty<SandboxFloorTabEntry>();
+            return selectedFloorLevelView switch
+            {
+                FloorLevelView.Surface => floorTabs.Where(tab => tab.elevation >= 0f),
+                FloorLevelView.Basement => floorTabs.Where(tab => tab.elevation < 0f),
+                _ => floorTabs
+            };
+        }
+
+        private static string BuildFloorTabLabel(SandboxFloorTabEntry tab)
+        {
+            if (tab == null)
+            {
+                return "Floor";
+            }
+
+            return tab.elevation < 0f ? $"{tab.name} ↓" : tab.name;
         }
 
         private void DrawInspector()
@@ -1385,12 +1461,6 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void EnsureDefaultFieldValues()
         {
-            if (string.IsNullOrWhiteSpace(pendingFloorName))
-            {
-                var floorCount = workspaceService?.ActiveProject?.floors.Count ?? 1;
-                pendingFloorName = $"Floor {floorCount + 1}";
-            }
-
             if (string.IsNullOrWhiteSpace(calibrationDistanceText))
             {
                 calibrationDistanceText = "10";
@@ -1458,29 +1528,31 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void RecalculateLayout()
         {
             var margin = 12f;
+            var logicalScreenWidth = Screen.width / uiScale;
+            var logicalScreenHeight = Screen.height / uiScale;
             var topBarHeight = topBarCollapsed ? CollapsedPanelHeight : 110f;
-            var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : 60f;
+            var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : 92f;
             var statusBarHeight = statusBarCollapsed ? CollapsedPanelHeight : 58f;
             var toolWidth = 180f;
             var inspectorWidth = 340f;
-            var toolHeight = toolPaletteCollapsed ? CollapsedPanelHeight : Screen.height - topBarHeight - statusBarHeight - (margin * 4f);
+            var toolHeight = toolPaletteCollapsed ? CollapsedPanelHeight : logicalScreenHeight - topBarHeight - statusBarHeight - (margin * 4f);
             var validationHeight = validationCollapsed ? CollapsedPanelHeight : 220f;
             var inspectorHeight = inspectorCollapsed
                 ? CollapsedPanelHeight
-                : Screen.height - topBarHeight - statusBarHeight - validationHeight - (margin * 5f);
+                : logicalScreenHeight - topBarHeight - statusBarHeight - validationHeight - (margin * 5f);
 
-            topBarRect = new Rect(margin, margin, Screen.width - (margin * 2f), topBarHeight);
+            topBarRect = new Rect(margin, margin, logicalScreenWidth - (margin * 2f), topBarHeight);
             toolPaletteRect = new Rect(margin, topBarRect.yMax + margin, toolWidth, toolHeight);
-            floorTabsRect = new Rect(toolPaletteRect.xMax + margin, topBarRect.yMax + margin, Screen.width - toolWidth - inspectorWidth - (margin * 4f), floorTabsHeight);
-            inspectorRect = new Rect(Screen.width - inspectorWidth - margin, topBarRect.yMax + margin, inspectorWidth, inspectorHeight);
-            validationRect = new Rect(Screen.width - inspectorWidth - margin, inspectorRect.yMax + margin, inspectorWidth, validationHeight);
-            statusBarRect = new Rect(margin, Screen.height - statusBarHeight - margin, Screen.width - (margin * 2f), statusBarHeight);
+            floorTabsRect = new Rect(toolPaletteRect.xMax + margin, topBarRect.yMax + margin, logicalScreenWidth - toolWidth - inspectorWidth - (margin * 4f), floorTabsHeight);
+            inspectorRect = new Rect(logicalScreenWidth - inspectorWidth - margin, topBarRect.yMax + margin, inspectorWidth, inspectorHeight);
+            validationRect = new Rect(logicalScreenWidth - inspectorWidth - margin, inspectorRect.yMax + margin, inspectorWidth, validationHeight);
+            statusBarRect = new Rect(margin, logicalScreenHeight - statusBarHeight - margin, logicalScreenWidth - (margin * 2f), statusBarHeight);
 
-            var modalWidth = Mathf.Min(480f, Screen.width - 40f);
+            var modalWidth = Mathf.Min(480f, logicalScreenWidth - 40f);
             var modalHeight = 210f;
             modalRect = new Rect(
-                (Screen.width - modalWidth) * 0.5f,
-                (Screen.height - modalHeight) * 0.5f,
+                (logicalScreenWidth - modalWidth) * 0.5f,
+                (logicalScreenHeight - modalHeight) * 0.5f,
                 modalWidth,
                 modalHeight);
         }
@@ -1494,7 +1566,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             RecalculateLayout();
             var pointer = SandboxInputAdapter.PointerScreenPosition;
-            var guiPoint = new Vector2(pointer.x, Screen.height - pointer.y);
+            var guiPoint = new Vector2(pointer.x / uiScale, (Screen.height - pointer.y) / uiScale);
             var isOverHud = topBarRect.Contains(guiPoint)
                 || toolPaletteRect.Contains(guiPoint)
                 || floorTabsRect.Contains(guiPoint)

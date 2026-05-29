@@ -121,6 +121,11 @@ namespace EvacLogix.Sandbox.Infrastructure
             return CopySelection() && PasteSelection(offset);
         }
 
+        public bool CutSelection()
+        {
+            return CopySelection() && DeleteSelection();
+        }
+
         public bool DeleteSelection()
         {
             if (workspaceService?.ActiveProject == null || selectionService == null || selectionService.SelectedObjectIds.Count == 0)

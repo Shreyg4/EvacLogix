@@ -82,6 +82,28 @@ namespace EvacLogix.Sandbox.UI.Panels
             return true;
         }
 
+        public bool AddSurfaceFloor(string name = "")
+        {
+            if (floorManagementService == null || !floorManagementService.AddSurfaceFloor(out _, name))
+            {
+                return false;
+            }
+
+            UpdateStatus("Added surface floor.");
+            return true;
+        }
+
+        public bool AddBasementFloor(string name = "")
+        {
+            if (floorManagementService == null || !floorManagementService.AddBasementFloor(out _, name))
+            {
+                return false;
+            }
+
+            UpdateStatus("Added basement floor.");
+            return true;
+        }
+
         public bool RenameFloor(string floorId, string name)
         {
             if (floorManagementService == null || !floorManagementService.RenameFloor(floorId, name))

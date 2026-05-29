@@ -86,6 +86,34 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
+        public void ClipboardService_CutSelectionCopiesThenDeletes()
+        {
+            var host = CreatePhase8Host(
+                out var workspaceService,
+                out _,
+                out _,
+                out var wallAuthoringService,
+                out var semanticObjectAuthoringService,
+                out var clipboardService,
+                out _,
+                out _,
+                out _,
+                out _,
+                out var selectionService);
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(6f, 0f), 0.25f), Is.True);
+            Assert.That(semanticObjectAuthoringService.PlaceExit(new Vector2(2f, 2f), out var exitId, new Vector2(2f, 1f), 0f, 1.5f, 25f, 1f, "North Exit"), Is.True);
+
+            selectionService.ReplaceSelection(new[] { exitId });
+            Assert.That(clipboardService.CutSelection(), Is.True);
+            Assert.That(clipboardService.ClipboardItems.Count, Is.EqualTo(1));
+            Assert.That(workspaceService.ActiveFloor.exits.Count, Is.EqualTo(0));
+
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
         public void MeasurementAndSnapSettings_EnablePreciseEditing()
         {
             var host = CreatePhase8Host(

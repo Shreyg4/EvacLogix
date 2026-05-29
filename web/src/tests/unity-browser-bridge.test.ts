@@ -128,6 +128,63 @@ describe("unity browser bridge", () => {
     expect(result.payload?.payloadBase64).toBe("eyJvayI6dHJ1ZX0=");
   });
 
+  it("waits for file change when focus returns before the picker resolves", async () => {
+    vi.useFakeTimers();
+    const goodFile = makeFile("png", "floor.png", "image/png");
+
+    class FakeFileReader {
+      public result: string | null = null;
+      public onload: null | (() => void) = null;
+      public onerror: null | (() => void) = null;
+
+      readAsDataURL(file: File) {
+        void file;
+        this.result = "data:image/png;base64,cG5n";
+        this.onload?.();
+      }
+    }
+
+    vi.stubGlobal("FileReader", FakeFileReader);
+    vi.spyOn(document, "createElement").mockImplementation(((tagName: string) => {
+      if (tagName !== "input") {
+        return originalCreateElement(tagName);
+      }
+
+      const input = originalCreateElement("input") as HTMLInputElement;
+      vi.spyOn(input, "files", "get").mockReturnValue([goodFile] as unknown as FileList);
+      vi.spyOn(input, "click").mockImplementation(() => {
+        window.dispatchEvent(new Event("focus"));
+        window.setTimeout(() => {
+          input.dispatchEvent(new Event("change"));
+        }, 100);
+      });
+      return input;
+    }) as typeof document.createElement);
+
+    const bridge = createUnityBrowserBridge();
+    bridge.setAllowedCommands(["ImportBlueprintImage"]);
+    const resultPromise = bridge.executeImportRequest({
+      command: "ImportBlueprintImage",
+      importPolicy: {
+        allowedMimeTypes: ["image/png"],
+        allowedExtensions: [".png"],
+        maxSizeBytes: 1024
+      }
+    });
+
+    await vi.advanceTimersByTimeAsync(100);
+    const result = await resultPromise;
+
+    expect(result.outcome).toBe("Success");
+    expect(result.payload).toMatchObject({
+      fileName: "floor.png",
+      mimeType: "image/png",
+      payloadBase64: "cG5n"
+    });
+
+    vi.useRealTimers();
+  });
+
   it("downloads export payloads through a browser link", async () => {
     const clickSpy = vi.fn();
     const objectUrl = "blob:evaclogix-test";

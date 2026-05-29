@@ -226,6 +226,9 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 case SandboxShortcutId.CopySelection:
                     clipboardService?.CopySelection();
                     break;
+                case SandboxShortcutId.CutSelection:
+                    clipboardService?.CutSelection();
+                    break;
                 case SandboxShortcutId.PasteSelection:
                     clipboardService?.PasteSelection();
                     break;
@@ -287,6 +290,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 CreateBinding(SandboxShortcutId.DeleteSelection, KeyCode.Backspace),
                 CreateBinding(SandboxShortcutId.DeleteSelection, KeyCode.Delete),
                 CreateBinding(SandboxShortcutId.CopySelection, KeyCode.C, requiresCommandOrControl: true),
+                CreateBinding(SandboxShortcutId.CutSelection, KeyCode.X, requiresCommandOrControl: true),
                 CreateBinding(SandboxShortcutId.PasteSelection, KeyCode.V, requiresCommandOrControl: true),
                 CreateBinding(SandboxShortcutId.DuplicateSelection, KeyCode.D, requiresCommandOrControl: true),
                 CreateBinding(SandboxShortcutId.ToggleGrid, KeyCode.G),
@@ -318,6 +322,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 SandboxShortcutId.Redo => ("Editing", "Redo", "Reapply the most recently undone editor command."),
                 SandboxShortcutId.DeleteSelection => ("Editing", "Delete Selection", "Delete or clear the current selection safely."),
                 SandboxShortcutId.CopySelection => ("Editing", "Copy Selection", "Copy the current safe selection to the clipboard."),
+                SandboxShortcutId.CutSelection => ("Editing", "Cut Selection", "Copy the current safe selection, then delete it from the floor."),
                 SandboxShortcutId.PasteSelection => ("Editing", "Paste Selection", "Paste clipboard-safe objects into the active floor."),
                 SandboxShortcutId.DuplicateSelection => ("Editing", "Duplicate Selection", "Duplicate the current selection with a safe offset."),
                 SandboxShortcutId.ToggleGrid => ("View", "Toggle Grid", "Show or hide the drafting grid overlay."),

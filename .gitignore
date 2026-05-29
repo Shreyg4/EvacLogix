@@ -108,3 +108,6 @@ InitTestScene*.unity*
 web/playwright-report/
 web/test-results/
 web/blob-report/
+
+# Local Netlify folder
+.netlify
