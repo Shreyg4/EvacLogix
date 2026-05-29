@@ -233,7 +233,7 @@ namespace EvacLogix.Tests.EditMode
             workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
             Assert.That(wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(8f, 0f), 0.25f), Is.True);
             Assert.That(semanticObjectAuthoringService.PlaceExit(new Vector2(7f, 1.5f), out var exitId, new Vector2(2f, 1f), 0f, 1.5f, 50f, 1f, "South Exit"), Is.True);
-            Assert.That(semanticObjectAuthoringService.PlaceObstacle(new Vector2(2f, 2f), out var obstacleId, new Vector2(1f, 1f), 0f, ObstacleSemanticType.HardBlocking, 1f, "Display Kiosk"), Is.True);
+            Assert.That(semanticObjectAuthoringService.PlaceObstacle(new Vector2(2f, 2f), out var obstacleId, new Vector2(1f, 1f), 0f, 1f, 0f, "Display Kiosk"), Is.True);
 
             workspaceService.ActiveProject.scenarioPresets.Add(new ScenarioPresetData
             {

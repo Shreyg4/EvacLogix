@@ -12,35 +12,50 @@ namespace EvacLogix.Sandbox.UI.Panels
         [SerializeField] private string lifecycleStateLabel = "Draft";
         [SerializeField] private string modeLabel = "Edit Mode";
 
+        private ISandboxFileActionService fileActionService;
+        private SandboxBrowserFileActionCoordinator browserFileActionCoordinator;
+        private ISandboxPreviewImageExportBackend previewImageExportBackend;
         private SandboxNewProjectDialogShell newProjectDialog;
-        private SandboxSaveLoadService saveLoadService;
-        private SandboxProjectTransferService projectTransferService;
-        private SandboxPreviewImageExportService previewImageExportService;
+        private SandboxProjectRefreshService projectRefreshService;
         private SandboxPreviewService previewService;
-        private SandboxColliderRebuildService colliderRebuildService;
         private SandboxValidationService validationService;
         private SandboxProjectWorkspaceService workspaceService;
+        private SandboxSaveLoadService saveLoadService;
         private SandboxStatusBarShell statusBar;
 
         public string Title => title;
         public string LifecycleStateLabel => lifecycleStateLabel;
         public string ModeLabel => modeLabel;
-        public bool HasRecoveryPrompt => saveLoadService != null && saveLoadService.HasRecoveryPrompt;
-        public string RecoveryPromptMessage => saveLoadService?.RecoveryPromptMessage ?? string.Empty;
+        public bool UsesBrowserHostedFileActions => browserFileActionCoordinator != null && browserFileActionCoordinator.SupportsBrowserFileActions;
+        public bool IsBrowserFileActionBusy => browserFileActionCoordinator != null && browserFileActionCoordinator.IsBusy;
+        public bool UsesBrowserPersistenceMode => saveLoadService != null && saveLoadService.UsesBrowserPersistenceMode;
+        public string PersistenceModeSummary => UsesBrowserPersistenceMode
+            ? "Browser mode uses local autosave storage and browser-based import/export instead of arbitrary file paths."
+            : "Working files are stored using local project paths.";
+        public bool HasRecoveryPrompt => fileActionService != null && fileActionService.HasRecoveryPrompt;
+        public string RecoveryPromptMessage => fileActionService?.RecoveryPromptMessage ?? string.Empty;
         public bool IsPreviewModeActive => previewService != null && previewService.IsPreviewModeActive;
         public string PreviewSummary => previewService?.LastPreviewReport?.summary ?? string.Empty;
 
         private void Awake()
         {
+            fileActionService = FindAnyObjectByType<SandboxFileActionService>();
+            browserFileActionCoordinator = FindAnyObjectByType<SandboxBrowserFileActionCoordinator>();
+            previewImageExportBackend = FindAnyObjectByType<SandboxDesktopPreviewImageExportBackend>();
             newProjectDialog = FindAnyObjectByType<SandboxNewProjectDialogShell>();
-            saveLoadService = FindAnyObjectByType<SandboxSaveLoadService>();
-            projectTransferService = FindAnyObjectByType<SandboxProjectTransferService>();
-            previewImageExportService = FindAnyObjectByType<SandboxPreviewImageExportService>();
+            projectRefreshService = FindAnyObjectByType<SandboxProjectRefreshService>();
             previewService = FindAnyObjectByType<SandboxPreviewService>();
-            colliderRebuildService = FindAnyObjectByType<SandboxColliderRebuildService>();
+            saveLoadService = FindAnyObjectByType<SandboxSaveLoadService>();
             validationService = FindAnyObjectByType<SandboxValidationService>();
             workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
             statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
+
+            Debug.Log(
+                "SandboxTopBarShell initialized: " +
+                $"BrowserCoordinatorPresent={browserFileActionCoordinator != null}, " +
+                $"UsesBrowserHostedFileActions={UsesBrowserHostedFileActions}, " +
+                $"UsesBrowserPersistenceMode={UsesBrowserPersistenceMode}, " +
+                $"ActiveBackendId={((SandboxFileActionService)fileActionService)?.ActiveBackendId ?? "None"}");
 
             if (workspaceService != null)
             {
@@ -57,6 +72,11 @@ namespace EvacLogix.Sandbox.UI.Panels
             {
                 previewService.PreviewModeChanged += HandlePreviewModeChanged;
                 HandlePreviewModeChanged(previewService.IsPreviewModeActive);
+            }
+
+            if (browserFileActionCoordinator != null)
+            {
+                browserFileActionCoordinator.StatusMessagePublished += HandleBrowserFileActionStatusPublished;
             }
         }
 
@@ -76,6 +96,11 @@ namespace EvacLogix.Sandbox.UI.Panels
             {
                 previewService.PreviewModeChanged -= HandlePreviewModeChanged;
             }
+
+            if (browserFileActionCoordinator != null)
+            {
+                browserFileActionCoordinator.StatusMessagePublished -= HandleBrowserFileActionStatusPublished;
+            }
         }
 
         public void OpenNewProjectDialog()
@@ -85,7 +110,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public bool SaveProject(string filePath)
         {
-            var didSave = saveLoadService != null && saveLoadService.SaveActiveProjectToPath(filePath);
+            var didSave = fileActionService != null && fileActionService.SaveProject(filePath);
             if (didSave && statusBar != null)
             {
                 statusBar.StatusMessage = "Saved sandbox project.";
@@ -97,13 +122,10 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public bool LoadProject(string filePath)
         {
-            if (saveLoadService == null || saveLoadService.LoadProjectFromPath(filePath) == null)
+            if (fileActionService == null || fileActionService.LoadProject(filePath) == null)
             {
                 return false;
             }
-
-            colliderRebuildService?.RebuildAll();
-            validationService?.ValidateActiveProject();
             if (statusBar != null)
             {
                 statusBar.StatusMessage = "Loaded sandbox project.";
@@ -115,7 +137,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public bool ExportProjectJson(string filePath)
         {
-            var didExport = projectTransferService != null && projectTransferService.ExportProjectJson(filePath);
+            var didExport = fileActionService != null && fileActionService.ExportProjectJson(filePath);
             if (didExport && statusBar != null)
             {
                 statusBar.StatusMessage = "Exported full sandbox project JSON.";
@@ -126,7 +148,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public bool ImportProjectJson(string filePath)
         {
-            var project = projectTransferService?.ImportProjectJson(filePath);
+            var project = fileActionService?.ImportProjectJson(filePath);
             if (project == null)
             {
                 return false;
@@ -143,7 +165,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public bool ExportRuntimeProjectData(string filePath)
         {
-            var didExport = projectTransferService != null && projectTransferService.ExportRuntimeProjectData(filePath);
+            var didExport = fileActionService != null && fileActionService.ExportRuntimeProjectData(filePath);
             if (didExport && statusBar != null)
             {
                 statusBar.StatusMessage = "Exported runtime-ready sandbox data.";
@@ -155,14 +177,14 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public SandboxFloorImportAnalysis AnalyzeFloorImport(string filePath, IEnumerable<string> selectedFloorIds = null)
         {
-            return projectTransferService == null
+            return fileActionService == null
                 ? new SandboxFloorImportAnalysis()
-                : projectTransferService.AnalyzeFloorImportFromPath(filePath, selectedFloorIds);
+                : fileActionService.AnalyzeFloorImport(filePath, selectedFloorIds);
         }
 
         public bool ImportFloors(string filePath, IEnumerable<string> selectedFloorIds = null)
         {
-            var didImport = projectTransferService != null && projectTransferService.ImportFloorsFromPath(filePath, selectedFloorIds);
+            var didImport = fileActionService != null && fileActionService.ImportFloors(filePath, selectedFloorIds);
             if (didImport && statusBar != null)
             {
                 statusBar.StatusMessage = "Imported selected floors into the current project.";
@@ -174,11 +196,9 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public bool TryRestoreRecovery()
         {
-            var didRestore = saveLoadService != null && saveLoadService.TryRestoreRecovery();
+            var didRestore = fileActionService != null && fileActionService.TryRestoreRecovery();
             if (didRestore)
             {
-                colliderRebuildService?.RebuildAll();
-                validationService?.ValidateActiveProject();
                 if (statusBar != null)
                 {
                     statusBar.StatusMessage = "Restored recovery autosave.";
@@ -191,7 +211,31 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public void DismissRecoveryPrompt()
         {
-            saveLoadService?.DismissRecoveryPrompt();
+            fileActionService?.DismissRecoveryPrompt();
+        }
+
+        public bool RequestBrowserProjectJsonImport()
+        {
+            var didRequest = browserFileActionCoordinator != null && browserFileActionCoordinator.RequestProjectJsonImport();
+            Debug.Log($"SandboxTopBarShell: RequestBrowserProjectJsonImport result={didRequest}");
+            if (!didRequest && statusBar != null)
+            {
+                statusBar.StatusMessage = "Browser JSON import request did not start.";
+            }
+
+            return didRequest;
+        }
+
+        public bool RequestBrowserProjectJsonExport()
+        {
+            var didRequest = browserFileActionCoordinator != null && browserFileActionCoordinator.RequestProjectJsonExport();
+            Debug.Log($"SandboxTopBarShell: RequestBrowserProjectJsonExport result={didRequest}");
+            if (!didRequest && statusBar != null)
+            {
+                statusBar.StatusMessage = "Browser JSON export request did not start.";
+            }
+
+            return didRequest;
         }
 
         public bool ExportPreviewImage(string destinationPath)
@@ -205,13 +249,12 @@ namespace EvacLogix.Sandbox.UI.Panels
                 return false;
             }
 
-            return previewImageExportService != null && previewImageExportService.TryExportActiveBlueprintPreview(destinationPath);
+            return previewImageExportBackend != null && previewImageExportBackend.TryExportActiveBlueprintPreview(destinationPath);
         }
 
         public void RebuildAll()
         {
-            colliderRebuildService?.RebuildAll();
-            validationService?.ValidateActiveProject();
+            projectRefreshService?.RefreshDerivedProjectState();
             if (statusBar != null)
             {
                 statusBar.StatusMessage = "Rebuilt all generated colliders and refreshed validation.";
@@ -271,6 +314,16 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void HandlePreviewModeChanged(bool isPreviewModeActive)
         {
             modeLabel = isPreviewModeActive ? "Preview Mode" : "Edit Mode";
+        }
+
+        private void HandleBrowserFileActionStatusPublished(string message)
+        {
+            if (statusBar != null && !string.IsNullOrWhiteSpace(message))
+            {
+                statusBar.StatusMessage = message;
+            }
+
+            RefreshLifecycleState();
         }
 
         private void RefreshLifecycleState()

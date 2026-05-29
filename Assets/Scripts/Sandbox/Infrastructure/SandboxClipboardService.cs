@@ -16,9 +16,10 @@ namespace EvacLogix.Sandbox.Infrastructure
         Exit = 2,
         Obstacle = 3,
         Stair = 4,
-        Region = 5,
-        SpawnPoint = 6,
-        SpawnBrush = 7,
+        Teleport = 5,
+        Region = 6,
+        SpawnPoint = 7,
+        SpawnBrush = 8,
     }
 
     [Serializable]
@@ -41,6 +42,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         private SandboxColliderRebuildService colliderRebuildService;
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxPreviewService previewService;
+        private SandboxWorkspaceStateService workspaceStateService;
 
         public IReadOnlyList<SandboxClipboardItem> ClipboardItems => clipboardItems;
 
@@ -53,6 +55,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             colliderRebuildService = GetComponent<SandboxColliderRebuildService>();
             visualOrganizationService = GetComponent<SandboxVisualOrganizationService>();
             previewService = GetComponent<SandboxPreviewService>();
+            workspaceStateService = GetComponent<SandboxWorkspaceStateService>();
         }
 
         public bool CopySelection()
@@ -137,11 +140,13 @@ namespace EvacLogix.Sandbox.Infrastructure
 
                     var selectedIds = selectionService.SelectedObjectIds.ToHashSet(StringComparer.Ordinal);
                     var didChange = false;
+                    didChange |= DeleteSelectedWalls(floor, selectedIds);
                     didChange |= RemoveAll(floor.doors, candidate => selectedIds.Contains(candidate.doorId) && !IsLocked(SandboxVisualObjectType.Door, candidate.doorId));
                     didChange |= RemoveAll(floor.windows, candidate => selectedIds.Contains(candidate.windowId) && !IsLocked(SandboxVisualObjectType.Window, candidate.windowId));
                     didChange |= RemoveAll(floor.exits, candidate => selectedIds.Contains(candidate.exitZoneId) && !IsLocked(SandboxVisualObjectType.Exit, candidate.exitZoneId));
                     didChange |= RemoveAll(floor.obstacles, candidate => selectedIds.Contains(candidate.obstacleId) && !IsLocked(SandboxVisualObjectType.Obstacle, candidate.obstacleId));
                     didChange |= RemoveAll(floor.stairPortals, candidate => selectedIds.Contains(candidate.stairPortalId) && !IsLocked(SandboxVisualObjectType.Stair, candidate.stairPortalId));
+                    didChange |= RemoveAll(floor.teleportPortals, candidate => selectedIds.Contains(candidate.teleportPortalId) && !IsLocked(SandboxVisualObjectType.Teleport, candidate.teleportPortalId));
                     didChange |= RemoveAll(floor.regions, candidate => selectedIds.Contains(candidate.regionId) && !IsLocked(SandboxVisualObjectType.Region, candidate.regionId));
 
                     foreach (var layout in project.spawnLayouts)
@@ -180,6 +185,8 @@ namespace EvacLogix.Sandbox.Infrastructure
                     var selectedIds = selectionService.SelectedObjectIds.ToHashSet(StringComparer.Ordinal);
                     var movedIds = new List<string>();
 
+                    MoveSelectedWalls(floor, selectedIds, delta, movedIds);
+
                     foreach (var exitZone in floor.exits.Where(candidate => selectedIds.Contains(candidate.exitZoneId)))
                     {
                         if (IsLocked(SandboxVisualObjectType.Exit, exitZone.exitZoneId))
@@ -211,6 +218,17 @@ namespace EvacLogix.Sandbox.Infrastructure
 
                         stairPortal.localPosition += delta;
                         movedIds.Add(stairPortal.stairPortalId);
+                    }
+
+                    foreach (var teleportPortal in floor.teleportPortals.Where(candidate => selectedIds.Contains(candidate.teleportPortalId)))
+                    {
+                        if (IsLocked(SandboxVisualObjectType.Teleport, teleportPortal.teleportPortalId))
+                        {
+                            continue;
+                        }
+
+                        teleportPortal.localPosition += delta;
+                        movedIds.Add(teleportPortal.teleportPortalId);
                     }
 
                     foreach (var region in floor.regions.Where(candidate => selectedIds.Contains(candidate.regionId)))
@@ -377,6 +395,13 @@ namespace EvacLogix.Sandbox.Infrastructure
                 return true;
             }
 
+            var teleportPortal = floor.teleportPortals.FirstOrDefault(candidate => candidate.teleportPortalId == selectedId);
+            if (teleportPortal != null)
+            {
+                items.Add(CreateItem(SandboxClipboardItemKind.Teleport, floor.floorId, teleportPortal));
+                return true;
+            }
+
             var region = floor.regions.FirstOrDefault(candidate => candidate.regionId == selectedId);
             if (region != null)
             {
@@ -421,7 +446,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             };
         }
 
-        private static bool TryPasteItem(
+        private bool TryPasteItem(
             BuildingProjectData project,
             FloorData targetFloor,
             SandboxClipboardItem item,
@@ -511,6 +536,22 @@ namespace EvacLogix.Sandbox.Infrastructure
                     targetFloor.stairPortals.Add(stairPortal);
                     newSelection.Add(stairPortal.stairPortalId);
                     return true;
+                case SandboxClipboardItemKind.Teleport:
+                    var teleportPortal = JsonUtility.FromJson<TeleportPortalData>(item.serializedPayload);
+                    if (teleportPortal == null)
+                    {
+                        return false;
+                    }
+
+                    teleportPortal.teleportPortalId = SandboxId.NewId();
+                    teleportPortal.pairId = SandboxId.NewId();
+                    teleportPortal.sourceFloorId = targetFloor.floorId;
+                    teleportPortal.targetFloorId = string.Empty;
+                    teleportPortal.targetTeleportPortalId = string.Empty;
+                    teleportPortal.localPosition += offset;
+                    targetFloor.teleportPortals.Add(teleportPortal);
+                    newSelection.Add(teleportPortal.teleportPortalId);
+                    return true;
                 case SandboxClipboardItemKind.Region:
                     var region = JsonUtility.FromJson<RegionData>(item.serializedPayload);
                     if (region == null)
@@ -579,7 +620,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             return pasteLayout;
         }
 
-        private static bool TryMoveOpening(FloorData floor, string wallSegmentId, ref float offsetAlongWall, float width, Vector2 delta)
+        private bool TryMoveOpening(FloorData floor, string wallSegmentId, ref float offsetAlongWall, float width, Vector2 delta)
         {
             var wall = floor.wallSegments.FirstOrDefault(candidate => candidate.wallSegmentId == wallSegmentId);
             if (wall == null)
@@ -590,7 +631,11 @@ namespace EvacLogix.Sandbox.Infrastructure
             var wallDirection = (wall.endPoint - wall.startPoint).normalized;
             var nextOffset = offsetAlongWall + Vector2.Dot(delta, wallDirection);
             var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-            var halfWidth = width * 0.5f;
+            var halfWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(
+                workspaceService,
+                workspaceStateService,
+                floor,
+                width) * 0.5f;
             if (nextOffset - halfWidth < -0.01f || nextOffset + halfWidth > wallLength + 0.01f)
             {
                 return false;
@@ -598,6 +643,186 @@ namespace EvacLogix.Sandbox.Infrastructure
 
             offsetAlongWall = nextOffset;
             return true;
+        }
+
+        private bool DeleteSelectedWalls(FloorData floor, HashSet<string> selectedIds)
+        {
+            if (floor == null || selectedIds == null || selectedIds.Count == 0)
+            {
+                return false;
+            }
+
+            var wallIds = floor.wallSegments
+                .Where(candidate => selectedIds.Contains(candidate.wallSegmentId) && !IsLocked(SandboxVisualObjectType.Wall, candidate.wallSegmentId))
+                .Select(candidate => candidate.wallSegmentId)
+                .ToList();
+            if (wallIds.Count == 0)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < wallIds.Count; i += 1)
+            {
+                var wall = floor.wallSegments.FirstOrDefault(candidate =>
+                    string.Equals(candidate.wallSegmentId, wallIds[i], StringComparison.Ordinal));
+                if (wall == null)
+                {
+                    continue;
+                }
+
+                var startJunctionId = wall.startJunctionId;
+                var endJunctionId = wall.endJunctionId;
+                var startJunction = FindJunction(floor, startJunctionId);
+                var endJunction = FindJunction(floor, endJunctionId);
+                if (startJunction != null)
+                {
+                    RemoveConnection(startJunction, wall.wallSegmentId);
+                }
+
+                if (endJunction != null)
+                {
+                    RemoveConnection(endJunction, wall.wallSegmentId);
+                }
+
+                floor.wallSegments.Remove(wall);
+                PruneJunctionIfOrphan(floor, startJunctionId);
+                PruneJunctionIfOrphan(floor, endJunctionId);
+            }
+
+            return true;
+        }
+
+        private void MoveSelectedWalls(FloorData floor, HashSet<string> selectedIds, Vector2 delta, List<string> movedIds)
+        {
+            if (floor == null || selectedIds == null || movedIds == null || delta.sqrMagnitude <= 0.0001f)
+            {
+                return;
+            }
+
+            var selectedWallIds = floor.wallSegments
+                .Where(candidate => selectedIds.Contains(candidate.wallSegmentId) && !IsLocked(SandboxVisualObjectType.Wall, candidate.wallSegmentId))
+                .Select(candidate => candidate.wallSegmentId)
+                .ToHashSet(StringComparer.Ordinal);
+            if (selectedWallIds.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var wallId in selectedWallIds.ToList())
+            {
+                var wall = floor.wallSegments.FirstOrDefault(candidate =>
+                    string.Equals(candidate.wallSegmentId, wallId, StringComparison.Ordinal));
+                if (wall == null)
+                {
+                    continue;
+                }
+
+                DetachSharedWallEndpointIfNeeded(floor, wall, true, selectedWallIds);
+                DetachSharedWallEndpointIfNeeded(floor, wall, false, selectedWallIds);
+            }
+
+            var junctionIdsToMove = floor.wallSegments
+                .Where(candidate => selectedWallIds.Contains(candidate.wallSegmentId))
+                .SelectMany(candidate => new[] { candidate.startJunctionId, candidate.endJunctionId })
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            for (var i = 0; i < junctionIdsToMove.Count; i += 1)
+            {
+                var junction = FindJunction(floor, junctionIdsToMove[i]);
+                if (junction != null)
+                {
+                    junction.position += delta;
+                }
+            }
+
+            SyncWallPointsFromJunctions(floor);
+            movedIds.AddRange(selectedWallIds);
+        }
+
+        private static void DetachSharedWallEndpointIfNeeded(FloorData floor, WallSegmentData wall, bool isStartPoint, HashSet<string> selectedWallIds)
+        {
+            if (floor == null || wall == null || selectedWallIds == null)
+            {
+                return;
+            }
+
+            var junctionId = isStartPoint ? wall.startJunctionId : wall.endJunctionId;
+            var junction = FindJunction(floor, junctionId);
+            if (junction == null)
+            {
+                return;
+            }
+
+            var hasUnselectedNeighbors = junction.connectedWallSegmentIds.Any(id => !selectedWallIds.Contains(id));
+            if (!hasUnselectedNeighbors)
+            {
+                return;
+            }
+
+            var detachedJunction = new WallJunctionData
+            {
+                wallJunctionId = SandboxId.NewId(),
+                position = junction.position
+            };
+            detachedJunction.connectedWallSegmentIds.Add(wall.wallSegmentId);
+            floor.wallJunctions.Add(detachedJunction);
+            RemoveConnection(junction, wall.wallSegmentId);
+
+            if (isStartPoint)
+            {
+                wall.startJunctionId = detachedJunction.wallJunctionId;
+                wall.startPoint = detachedJunction.position;
+            }
+            else
+            {
+                wall.endJunctionId = detachedJunction.wallJunctionId;
+                wall.endPoint = detachedJunction.position;
+            }
+        }
+
+        private static void SyncWallPointsFromJunctions(FloorData floor)
+        {
+            if (floor == null)
+            {
+                return;
+            }
+
+            for (var i = 0; i < floor.wallSegments.Count; i += 1)
+            {
+                var wall = floor.wallSegments[i];
+                var startJunction = FindJunction(floor, wall.startJunctionId);
+                var endJunction = FindJunction(floor, wall.endJunctionId);
+                if (startJunction != null)
+                {
+                    wall.startPoint = startJunction.position;
+                }
+
+                if (endJunction != null)
+                {
+                    wall.endPoint = endJunction.position;
+                }
+            }
+        }
+
+        private static WallJunctionData FindJunction(FloorData floor, string wallJunctionId)
+        {
+            return floor?.wallJunctions.FirstOrDefault(junction =>
+                string.Equals(junction.wallJunctionId, wallJunctionId, StringComparison.Ordinal));
+        }
+
+        private static void RemoveConnection(WallJunctionData junction, string wallSegmentId)
+        {
+            junction?.connectedWallSegmentIds.RemoveAll(id => string.Equals(id, wallSegmentId, StringComparison.Ordinal));
+        }
+
+        private static void PruneJunctionIfOrphan(FloorData floor, string wallJunctionId)
+        {
+            var junction = FindJunction(floor, wallJunctionId);
+            if (junction != null && junction.connectedWallSegmentIds.Count == 0)
+            {
+                floor.wallJunctions.Remove(junction);
+            }
         }
 
         private static bool RemoveAll<T>(List<T> items, Predicate<T> predicate)

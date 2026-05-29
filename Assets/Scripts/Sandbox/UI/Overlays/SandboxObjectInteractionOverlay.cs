@@ -22,6 +22,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private const float WallHitPadding = 0.3f;
         private const float OpeningHitRadius = 0.5f;
         private const float StairHitRadius = 0.55f;
+        private const float RectangleHandleHitRadius = 0.28f;
         private const float RegionEdgeHitRadius = 0.35f;
         private const float SelectionDragThreshold = 0.2f;
         private const float MinEraseBrushRadius = 0.35f;
@@ -42,7 +43,8 @@ namespace EvacLogix.Sandbox.UI.Overlays
             Exit = 4,
             Obstacle = 5,
             Stair = 6,
-            Region = 7,
+            Teleport = 7,
+            Region = 8,
         }
 
         private struct SandboxHitResult
@@ -55,6 +57,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private SandboxToolStateService toolStateService;
         private SandboxProjectWorkspaceService workspaceService;
+        private SandboxWorkspaceStateService workspaceStateService;
         private SandboxSelectionService selectionService;
         private SandboxInputRouter inputRouter;
         private SandboxStatusBarShell statusBar;
@@ -63,6 +66,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private SandboxMeasurementService measurementService;
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxPreviewService previewService;
+        private SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
         private Texture2D solidTexture;
         private Font overlayFont;
         private GUIStyle erasePanelStyle;
@@ -86,6 +90,14 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private SandboxHitKind draggedHitKind = SandboxHitKind.None;
         private Vector2 selectionDragStartWorldPoint;
         private Vector2 selectionDragCurrentWorldPoint;
+        private bool isRectangleHandleDragActive;
+        private string draggedRectangleObjectId = string.Empty;
+        private SandboxHitKind draggedRectangleHitKind = SandboxHitKind.None;
+        private int draggedRectangleHandleIndex = -1;
+        private Vector2 draggedRectanglePreviewCenter;
+        private Vector2 draggedRectanglePreviewSize;
+        private float draggedRectanglePreviewRotationDegrees;
+        private Vector2 draggedRectangleAnchorWorld;
 
         private void Awake()
         {
@@ -144,6 +156,18 @@ namespace EvacLogix.Sandbox.UI.Overlays
         public string DraggedObjectId => draggedObjectId;
         public Vector2 SelectionDragStartWorldPoint => selectionDragStartWorldPoint;
         public Vector2 SelectionDragCurrentWorldPoint => selectionDragCurrentWorldPoint;
+        public bool IsRectangleHandleDragActive => isRectangleHandleDragActive;
+        public string DraggedRectangleObjectId => draggedRectangleObjectId;
+        public SandboxVisualObjectType? DraggedRectangleObjectType => draggedRectangleHitKind switch
+        {
+            SandboxHitKind.Exit => SandboxVisualObjectType.Exit,
+            SandboxHitKind.Obstacle => SandboxVisualObjectType.Obstacle,
+            SandboxHitKind.Teleport => SandboxVisualObjectType.Teleport,
+            _ => null,
+        };
+        public Vector2 DraggedRectanglePreviewCenter => draggedRectanglePreviewCenter;
+        public Vector2 DraggedRectanglePreviewSize => draggedRectanglePreviewSize;
+        public float DraggedRectanglePreviewRotationDegrees => draggedRectanglePreviewRotationDegrees;
         public bool IsEraseVisualAidVisible => toolStateService != null && toolStateService.CurrentToolMode == SandboxToolMode.Erase;
         public EraseMode CurrentEraseMode => eraseMode;
         public bool BrushEraseEnabled => eraseMode == EraseMode.Brush;
@@ -159,6 +183,11 @@ namespace EvacLogix.Sandbox.UI.Overlays
             if (workspaceService == null)
             {
                 workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
+            }
+
+            if (workspaceStateService == null)
+            {
+                workspaceStateService = FindAnyObjectByType<SandboxWorkspaceStateService>();
             }
 
             if (selectionService == null)
@@ -199,6 +228,11 @@ namespace EvacLogix.Sandbox.UI.Overlays
             if (previewService == null)
             {
                 previewService = FindAnyObjectByType<SandboxPreviewService>();
+            }
+
+            if (semanticObjectAuthoringService == null)
+            {
+                semanticObjectAuthoringService = FindAnyObjectByType<SandboxSemanticObjectAuthoringService>();
             }
         }
 
@@ -348,6 +382,26 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private void HandleSelectTool()
         {
             var worldPoint = ScreenToWorldPoint(SandboxInputAdapter.PointerScreenPosition);
+            if (isRectangleHandleDragActive)
+            {
+                if (SandboxInputAdapter.GetMouseButton(0))
+                {
+                    UpdateRectangleHandleDragPreview(worldPoint);
+                }
+
+                if (SandboxInputAdapter.GetMouseButtonUp(0))
+                {
+                    CommitRectangleHandleDrag();
+                }
+
+                if (SandboxInputAdapter.GetMouseButtonDown(1))
+                {
+                    CancelRectangleHandleDrag();
+                }
+
+                return;
+            }
+
             if (SandboxInputAdapter.GetMouseButtonDown(0))
             {
                 BeginSelectionPress(worldPoint);
@@ -461,6 +515,12 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void BeginSelectionPress(Vector2 worldPoint)
         {
+            if (TryBeginRectangleHandleDrag(worldPoint))
+            {
+                hasPendingSelectPress = false;
+                return;
+            }
+
             pendingPressedHit = default;
             hasPendingSelectPress = true;
             pendingPressWorldPoint = worldPoint;
@@ -528,6 +588,154 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
             measurementService?.RefreshSelectionReadout();
             UpdateStatus($"Selected {pendingPressedHit.label}.");
+        }
+
+        private bool TryBeginRectangleHandleDrag(Vector2 worldPoint)
+        {
+            if (selectionService == null || selectionService.SelectedObjectIds.Count != 1)
+            {
+                return false;
+            }
+
+            var selectedId = selectionService.SelectedObjectIds[0];
+            if (TryResolveResizableRect(selectedId, out var hitKind, out var center, out var size, out var rotationDegrees))
+            {
+                var corners = BuildRotatedRectCorners(center, size, rotationDegrees);
+                for (var i = 0; i < corners.Length; i += 1)
+                {
+                    if (Vector2.Distance(worldPoint, corners[i]) > RectangleHandleHitRadius)
+                    {
+                        continue;
+                    }
+
+                    isRectangleHandleDragActive = true;
+                    draggedRectangleObjectId = selectedId;
+                    draggedRectangleHitKind = hitKind;
+                    draggedRectangleHandleIndex = i;
+                    draggedRectanglePreviewCenter = center;
+                    draggedRectanglePreviewSize = size;
+                    draggedRectanglePreviewRotationDegrees = rotationDegrees;
+                    draggedRectangleAnchorWorld = corners[(i + 2) % corners.Length];
+                    UpdateStatus("Dragging rectangle corner handle. Release to resize.");
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void UpdateRectangleHandleDragPreview(Vector2 worldPoint)
+        {
+            if (!isRectangleHandleDragActive)
+            {
+                return;
+            }
+
+            var rotation = Quaternion.Euler(0f, 0f, draggedRectanglePreviewRotationDegrees);
+            var inverseRotation = Quaternion.Inverse(rotation);
+            var anchorInRotationSpace = (Vector2)(inverseRotation * new Vector3(draggedRectangleAnchorWorld.x, draggedRectangleAnchorWorld.y, 0f));
+            var currentInRotationSpace = (Vector2)(inverseRotation * new Vector3(worldPoint.x, worldPoint.y, 0f));
+            var min = Vector2.Min(anchorInRotationSpace, currentInRotationSpace);
+            var max = Vector2.Max(anchorInRotationSpace, currentInRotationSpace);
+            var nextSize = max - min;
+            if (nextSize.x <= 0.05f || nextSize.y <= 0.05f)
+            {
+                return;
+            }
+
+            var centerInRotationSpace = (anchorInRotationSpace + currentInRotationSpace) * 0.5f;
+            draggedRectanglePreviewCenter = rotation * new Vector3(centerInRotationSpace.x, centerInRotationSpace.y, 0f);
+            draggedRectanglePreviewSize = nextSize;
+        }
+
+        private void CommitRectangleHandleDrag()
+        {
+            if (!isRectangleHandleDragActive || semanticObjectAuthoringService == null)
+            {
+                return;
+            }
+
+            var didUpdate = false;
+            switch (draggedRectangleHitKind)
+            {
+                case SandboxHitKind.Exit:
+                    if (TryFindExit(draggedRectangleObjectId, out _, out var exitZone))
+                    {
+                        didUpdate = semanticObjectAuthoringService.UpdateExit(
+                            exitZone.exitZoneId,
+                            draggedRectanglePreviewCenter,
+                            draggedRectanglePreviewSize,
+                            draggedRectanglePreviewRotationDegrees,
+                            exitZone.width,
+                            exitZone.capacity,
+                            exitZone.priority,
+                            exitZone.name,
+                            exitZone.tags,
+                            exitZone.metadataFields);
+                    }
+
+                    break;
+                case SandboxHitKind.Obstacle:
+                    if (TryFindObstacle(draggedRectangleObjectId, out _, out var obstacle))
+                    {
+                        didUpdate = semanticObjectAuthoringService.UpdateObstacle(
+                            obstacle.obstacleId,
+                            draggedRectanglePreviewCenter,
+                            draggedRectanglePreviewSize,
+                            draggedRectanglePreviewRotationDegrees,
+                            obstacle.discourageWeight,
+                            obstacle.movementSpeedPenalty,
+                            obstacle.name,
+                            obstacle.tags,
+                            obstacle.metadataFields);
+                    }
+
+                    break;
+                case SandboxHitKind.Teleport:
+                    if (TryFindTeleport(draggedRectangleObjectId, out _, out var teleportPortal))
+                    {
+                        didUpdate = semanticObjectAuthoringService.UpdateTeleportPortal(
+                            teleportPortal.teleportPortalId,
+                            draggedRectanglePreviewCenter,
+                            draggedRectanglePreviewSize,
+                            draggedRectanglePreviewRotationDegrees,
+                            teleportPortal.name,
+                            teleportPortal.kind,
+                            teleportPortal.travelCost,
+                            teleportPortal.isPairEnabled,
+                            teleportPortal.tags,
+                            teleportPortal.metadataFields);
+                    }
+
+                    break;
+            }
+
+            ClearRectangleHandleDragState();
+            measurementService?.RefreshSelectionReadout();
+            UpdateStatus(didUpdate ? "Resized selection." : "Resize cancelled.");
+        }
+
+        private void CancelRectangleHandleDrag()
+        {
+            if (!isRectangleHandleDragActive)
+            {
+                return;
+            }
+
+            ClearRectangleHandleDragState();
+            UpdateStatus("Cancelled rectangle resize.");
+        }
+
+        private void ClearRectangleHandleDragState()
+        {
+            isRectangleHandleDragActive = false;
+            draggedRectangleObjectId = string.Empty;
+            draggedRectangleHitKind = SandboxHitKind.None;
+            draggedRectangleHandleIndex = -1;
+            draggedRectanglePreviewCenter = Vector2.zero;
+            draggedRectanglePreviewSize = Vector2.zero;
+            draggedRectanglePreviewRotationDegrees = 0f;
+            draggedRectangleAnchorWorld = Vector2.zero;
         }
 
         private void EnsureGuiResources()
@@ -783,6 +991,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             CollectExitsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
             CollectObstaclesInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
             CollectStairsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
+            CollectTeleportsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
             CollectRegionsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
 
             return hits
@@ -972,6 +1181,39 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
         }
 
+        private void CollectTeleportsInBrush(
+            FloorData floor,
+            Vector2 worldPoint,
+            float brushRadius,
+            List<SandboxHitResult> hits,
+            HashSet<string> knownObjectIds)
+        {
+            foreach (var teleportPortal in floor.teleportPortals)
+            {
+                if (!IsInteractable(SandboxVisualObjectType.Teleport, teleportPortal.teleportPortalId))
+                {
+                    continue;
+                }
+
+                var score = DistanceToRotatedRect(worldPoint, teleportPortal.localPosition, teleportPortal.size, teleportPortal.rotationDegrees);
+                if (score > brushRadius + StairHitRadius)
+                {
+                    continue;
+                }
+
+                AddBrushHit(
+                    hits,
+                    knownObjectIds,
+                    new SandboxHitResult
+                    {
+                        kind = SandboxHitKind.Teleport,
+                        objectId = teleportPortal.teleportPortalId,
+                        label = string.IsNullOrWhiteSpace(teleportPortal.name) ? "teleport endpoint" : $"teleport '{teleportPortal.name}'",
+                        score = score
+                    });
+            }
+        }
+
         private void CollectRegionsInBrush(
             FloorData floor,
             Vector2 worldPoint,
@@ -1025,9 +1267,10 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 SandboxHitKind.Exit => 2,
                 SandboxHitKind.Obstacle => 3,
                 SandboxHitKind.Stair => 4,
-                SandboxHitKind.Region => 5,
-                SandboxHitKind.Wall => 6,
-                _ => 7
+                SandboxHitKind.Teleport => 5,
+                SandboxHitKind.Region => 6,
+                SandboxHitKind.Wall => 7,
+                _ => 8
             };
         }
 
@@ -1058,6 +1301,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             EvaluateExits(floor, worldPoint, ref hit);
             EvaluateObstacles(floor, worldPoint, ref hit);
             EvaluateStairs(floor, worldPoint, ref hit);
+            EvaluateTeleports(floor, worldPoint, ref hit);
             EvaluateRegions(floor, worldPoint, ref hit);
             return hit.kind != SandboxHitKind.None;
         }
@@ -1101,6 +1345,12 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return true;
             }
 
+            if (floor.teleportPortals.Any(candidate => candidate.teleportPortalId == objectId))
+            {
+                hit = new SandboxHitResult { kind = SandboxHitKind.Teleport, objectId = objectId, label = "teleport endpoint" };
+                return true;
+            }
+
             if (floor.regions.Any(candidate => candidate.regionId == objectId))
             {
                 hit = new SandboxHitResult { kind = SandboxHitKind.Region, objectId = objectId, label = "region" };
@@ -1132,7 +1382,124 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private static bool IsMovableHit(SandboxHitKind hitKind)
         {
-            return hitKind != SandboxHitKind.None && hitKind != SandboxHitKind.Wall;
+            return hitKind != SandboxHitKind.None;
+        }
+
+        private bool TryResolveResizableRect(
+            string objectId,
+            out SandboxHitKind hitKind,
+            out Vector2 center,
+            out Vector2 size,
+            out float rotationDegrees)
+        {
+            hitKind = SandboxHitKind.None;
+            center = Vector2.zero;
+            size = Vector2.zero;
+            rotationDegrees = 0f;
+
+            if (TryFindExit(objectId, out _, out var exitZone))
+            {
+                hitKind = SandboxHitKind.Exit;
+                center = exitZone.center;
+                size = exitZone.size;
+                rotationDegrees = exitZone.rotationDegrees;
+                return true;
+            }
+
+            if (TryFindObstacle(objectId, out _, out var obstacle))
+            {
+                hitKind = SandboxHitKind.Obstacle;
+                center = obstacle.center;
+                size = obstacle.size;
+                rotationDegrees = obstacle.rotationDegrees;
+                return true;
+            }
+
+            if (TryFindTeleport(objectId, out _, out var teleportPortal))
+            {
+                hitKind = SandboxHitKind.Teleport;
+                center = teleportPortal.localPosition;
+                size = teleportPortal.size;
+                rotationDegrees = teleportPortal.rotationDegrees;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryFindObstacle(string objectId, out FloorData floor, out ObstacleData obstacle)
+        {
+            floor = null;
+            obstacle = null;
+            var project = workspaceService?.ActiveProject;
+            if (project?.floors == null)
+            {
+                return false;
+            }
+
+            foreach (var candidateFloor in project.floors)
+            {
+                obstacle = candidateFloor.obstacles.FirstOrDefault(candidate => string.Equals(candidate.obstacleId, objectId, StringComparison.Ordinal));
+                if (obstacle == null)
+                {
+                    continue;
+                }
+
+                floor = candidateFloor;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryFindExit(string objectId, out FloorData floor, out ExitZoneData exitZone)
+        {
+            floor = null;
+            exitZone = null;
+            var project = workspaceService?.ActiveProject;
+            if (project?.floors == null)
+            {
+                return false;
+            }
+
+            foreach (var candidateFloor in project.floors)
+            {
+                exitZone = candidateFloor.exits.FirstOrDefault(candidate => string.Equals(candidate.exitZoneId, objectId, StringComparison.Ordinal));
+                if (exitZone == null)
+                {
+                    continue;
+                }
+
+                floor = candidateFloor;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryFindTeleport(string objectId, out FloorData floor, out TeleportPortalData teleportPortal)
+        {
+            floor = null;
+            teleportPortal = null;
+            var project = workspaceService?.ActiveProject;
+            if (project?.floors == null)
+            {
+                return false;
+            }
+
+            foreach (var candidateFloor in project.floors)
+            {
+                teleportPortal = candidateFloor.teleportPortals.FirstOrDefault(candidate => string.Equals(candidate.teleportPortalId, objectId, StringComparison.Ordinal));
+                if (teleportPortal == null)
+                {
+                    continue;
+                }
+
+                floor = candidateFloor;
+                return true;
+            }
+
+            return false;
         }
 
         private void EvaluateWalls(FloorData floor, Vector2 worldPoint, ref SandboxHitResult bestHit)
@@ -1283,6 +1650,33 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
         }
 
+        private void EvaluateTeleports(FloorData floor, Vector2 worldPoint, ref SandboxHitResult bestHit)
+        {
+            foreach (var teleportPortal in floor.teleportPortals)
+            {
+                if (!IsInteractable(SandboxVisualObjectType.Teleport, teleportPortal.teleportPortalId))
+                {
+                    continue;
+                }
+
+                var distance = DistanceToRotatedRect(worldPoint, teleportPortal.localPosition, teleportPortal.size, teleportPortal.rotationDegrees);
+                if (distance > StairHitRadius)
+                {
+                    continue;
+                }
+
+                TryPromoteHit(
+                    ref bestHit,
+                    new SandboxHitResult
+                    {
+                        kind = SandboxHitKind.Teleport,
+                        objectId = teleportPortal.teleportPortalId,
+                        label = string.IsNullOrWhiteSpace(teleportPortal.name) ? "teleport endpoint" : $"teleport '{teleportPortal.name}'",
+                        score = distance
+                    });
+            }
+        }
+
         private void EvaluateRegions(FloorData floor, Vector2 worldPoint, ref SandboxHitResult bestHit)
         {
             foreach (var region in floor.regions)
@@ -1334,7 +1728,12 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
 
             var wallDirection = wallVector / wallLength;
-            var halfWidth = openingWidth * 0.5f;
+            var worldWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(
+                workspaceService,
+                workspaceStateService,
+                floor,
+                openingWidth);
+            var halfWidth = worldWidth * 0.5f;
             var projectionDistance = Vector2.Dot(worldPoint - wall.startPoint, wallDirection);
             if (projectionDistance < openingOffset - halfWidth - OpeningHitRadius || projectionDistance > openingOffset + halfWidth + OpeningHitRadius)
             {
@@ -1376,7 +1775,12 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
 
             var wallDirection = wallVector / wallLength;
-            var halfWidth = openingWidth * 0.5f;
+            var worldWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(
+                workspaceService,
+                workspaceStateService,
+                floor,
+                openingWidth);
+            var halfWidth = worldWidth * 0.5f;
             var segmentStart = wall.startPoint + wallDirection * Mathf.Clamp(openingOffset - halfWidth, 0f, wallLength);
             var segmentEnd = wall.startPoint + wallDirection * Mathf.Clamp(openingOffset + halfWidth, 0f, wallLength);
             score = DistanceToSegment(worldPoint, segmentStart, segmentEnd);
@@ -1425,6 +1829,19 @@ namespace EvacLogix.Sandbox.UI.Overlays
             var deltaX = Mathf.Max(Mathf.Abs(localPoint.x) - halfSize.x, 0f);
             var deltaY = Mathf.Max(Mathf.Abs(localPoint.y) - halfSize.y, 0f);
             return Mathf.Sqrt((deltaX * deltaX) + (deltaY * deltaY));
+        }
+
+        private static Vector2[] BuildRotatedRectCorners(Vector2 center, Vector2 size, float rotationDegrees)
+        {
+            var half = size * 0.5f;
+            var rotation = Quaternion.Euler(0f, 0f, rotationDegrees);
+            return new[]
+            {
+                center + (Vector2)(rotation * new Vector3(-half.x, -half.y, 0f)),
+                center + (Vector2)(rotation * new Vector3(-half.x, half.y, 0f)),
+                center + (Vector2)(rotation * new Vector3(half.x, half.y, 0f)),
+                center + (Vector2)(rotation * new Vector3(half.x, -half.y, 0f))
+            };
         }
 
         private static float DistanceToSegment(Vector2 point, Vector2 segmentStart, Vector2 segmentEnd)

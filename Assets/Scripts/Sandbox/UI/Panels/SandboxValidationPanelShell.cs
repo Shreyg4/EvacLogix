@@ -11,18 +11,25 @@ namespace EvacLogix.Sandbox.UI.Panels
         [SerializeField] private List<SandboxValidationFloorGroup> issueGroups = new();
         [SerializeField] private bool hasBlockingIssues;
 
+        private SandboxProjectRefreshService projectRefreshService;
+        private SandboxRoomDetectionService roomDetectionService;
         private SandboxValidationService validationService;
-        private SandboxColliderRebuildService colliderRebuildService;
         private SandboxStatusBarShell statusBar;
 
         public bool StartCollapsed => startCollapsed;
         public IReadOnlyList<SandboxValidationFloorGroup> IssueGroups => issueGroups;
         public bool HasBlockingIssues => hasBlockingIssues;
+        public bool ShowCompleteRooms => roomDetectionService != null && roomDetectionService.ShowCompleteRooms;
+        public string RoomDetectionStatus => roomDetectionService?.LastStatusMessage ?? "Room detector unavailable.";
+        public int CompleteRoomCount => roomDetectionService?.DetectedRooms.Count ?? 0;
+        public int SealedRoomCount => roomDetectionService?.SealedRoomCount ?? 0;
+        public int PenetratedRoomCount => roomDetectionService?.PenetratedRoomCount ?? 0;
 
         private void Awake()
         {
+            projectRefreshService = FindAnyObjectByType<SandboxProjectRefreshService>();
+            roomDetectionService = FindAnyObjectByType<SandboxRoomDetectionService>();
             validationService = FindAnyObjectByType<SandboxValidationService>();
-            colliderRebuildService = FindAnyObjectByType<SandboxColliderRebuildService>();
             statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
 
             if (validationService != null)
@@ -40,10 +47,29 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
         }
 
+        public void SetShowCompleteRooms(bool enabled)
+        {
+            roomDetectionService ??= FindAnyObjectByType<SandboxRoomDetectionService>();
+            roomDetectionService?.SetShowCompleteRooms(enabled);
+            if (statusBar != null)
+            {
+                statusBar.StatusMessage = roomDetectionService?.LastStatusMessage ?? "Room detector unavailable.";
+            }
+        }
+
+        public void RefreshCompleteRooms()
+        {
+            roomDetectionService ??= FindAnyObjectByType<SandboxRoomDetectionService>();
+            roomDetectionService?.Recalculate();
+            if (statusBar != null)
+            {
+                statusBar.StatusMessage = roomDetectionService?.LastStatusMessage ?? "Room detector unavailable.";
+            }
+        }
+
         public void RebuildAll()
         {
-            colliderRebuildService?.RebuildAll();
-            validationService?.ValidateActiveProject();
+            projectRefreshService?.RefreshDerivedProjectState();
             if (statusBar != null)
             {
                 statusBar.StatusMessage = "Rebuilt all colliders.";
@@ -52,7 +78,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public void RefreshValidation()
         {
-            validationService?.ValidateActiveProject();
+            projectRefreshService?.RefreshValidationOnly();
             if (statusBar != null)
             {
                 statusBar.StatusMessage = "Validation refreshed.";

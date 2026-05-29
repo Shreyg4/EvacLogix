@@ -187,6 +187,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             points.AddRange(floor.exits.Where(candidate => selectedIds.Contains(candidate.exitZoneId)).Select(candidate => candidate.center));
             points.AddRange(floor.obstacles.Where(candidate => selectedIds.Contains(candidate.obstacleId)).Select(candidate => candidate.center));
             points.AddRange(floor.stairPortals.Where(candidate => selectedIds.Contains(candidate.stairPortalId)).Select(candidate => candidate.localPosition));
+            points.AddRange(floor.teleportPortals.Where(candidate => selectedIds.Contains(candidate.teleportPortalId)).Select(candidate => candidate.localPosition));
             foreach (var region in floor.regions.Where(candidate => selectedIds.Contains(candidate.regionId)))
             {
                 points.AddRange(region.polygonPoints);
@@ -219,6 +220,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             points.AddRange(floor.exits.Select(exitZone => exitZone.center));
             points.AddRange(floor.obstacles.Select(obstacle => obstacle.center));
             points.AddRange(floor.stairPortals.Select(stair => stair.localPosition));
+            points.AddRange(floor.teleportPortals.Select(teleport => teleport.localPosition));
 
             foreach (var region in floor.regions)
             {

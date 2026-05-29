@@ -32,6 +32,10 @@ namespace EvacLogix.Sandbox.Data
             foreach (var blueprint in project.blueprintReferences)
             {
                 blueprint.blueprintReferenceId = EnsureId(blueprint.blueprintReferenceId);
+                if (blueprint.displayScale <= 0f)
+                {
+                    blueprint.displayScale = 1f;
+                }
             }
 
             foreach (var floor in project.floors)
@@ -45,6 +49,7 @@ namespace EvacLogix.Sandbox.Data
                 floor.exits ??= new List<ExitZoneData>();
                 floor.obstacles ??= new List<ObstacleData>();
                 floor.stairPortals ??= new List<StairPortalData>();
+                floor.teleportPortals ??= new List<TeleportPortalData>();
                 floor.regions ??= new List<RegionData>();
 
                 foreach (var junction in floor.wallJunctions)
@@ -93,6 +98,16 @@ namespace EvacLogix.Sandbox.Data
                     stair.sourceFloorId = string.IsNullOrWhiteSpace(stair.sourceFloorId) ? floor.floorId : stair.sourceFloorId;
                     stair.tags ??= new List<string>();
                     stair.metadataFields ??= new List<MetadataFieldData>();
+                }
+
+                foreach (var teleport in floor.teleportPortals)
+                {
+                    teleport.teleportPortalId = EnsureId(teleport.teleportPortalId);
+                    teleport.pairId = EnsureId(teleport.pairId);
+                    teleport.sourceFloorId = string.IsNullOrWhiteSpace(teleport.sourceFloorId) ? floor.floorId : teleport.sourceFloorId;
+                    teleport.travelCost = teleport.travelCost <= 0f ? 1f : teleport.travelCost;
+                    teleport.tags ??= new List<string>();
+                    teleport.metadataFields ??= new List<MetadataFieldData>();
                 }
 
                 foreach (var region in floor.regions)

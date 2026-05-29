@@ -175,7 +175,7 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(0f, 0f), out _, out _, null, "Validation Layout", true), Is.True);
             Assert.That(previewAuthoringService.PlaceFireOrigin(new Vector2(-3f, -3f), out _, 1f, 0f, true), Is.True);
             Assert.That(semanticObjectAuthoringService.PlaceExit(new Vector2(5f, 0f), out _, new Vector2(2f, 2f), 0f, 1.5f, 20f, 1f, "North Exit"), Is.True);
-            Assert.That(semanticObjectAuthoringService.PlaceObstacle(new Vector2(5f, 0f), out _, new Vector2(2f, 2f), 0f, ObstacleSemanticType.HardBlocking, 1f, "Blocked Exit"), Is.True);
+            Assert.That(semanticObjectAuthoringService.PlaceObstacle(new Vector2(5f, 0f), out _, new Vector2(2f, 2f), 0f, 1f, 0f, "Blocked Exit"), Is.True);
 
             Assert.That(previewService.EnterPreviewMode(), Is.True);
             Assert.That(previewService.RunPreview(), Is.False);

@@ -124,6 +124,19 @@ namespace EvacLogix.Sandbox.Infrastructure
             return true;
         }
 
+        public bool SetBlueprintDisplayScale(string blueprintReferenceId, float displayScale)
+        {
+            var blueprintReference = FindBlueprintReference(blueprintReferenceId);
+            if (blueprintReference == null)
+            {
+                return false;
+            }
+
+            blueprintReference.displayScale = Mathf.Clamp(displayScale, 0.1f, 4f);
+            ActiveProjectChanged?.Invoke(activeProject);
+            return true;
+        }
+
         public bool SetBlueprintVisibility(string blueprintReferenceId, bool isVisible)
         {
             var blueprintReference = FindBlueprintReference(blueprintReferenceId);

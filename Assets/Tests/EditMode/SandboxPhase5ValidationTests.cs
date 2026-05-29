@@ -62,7 +62,7 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(validationService.Issues.Any(issue => issue.title.Contains("Invalid door") && issue.severity == ValidationIssueSeverity.BlockingError), Is.True);
             Assert.That(validationService.Issues.Any(issue => issue.title == "Invalid stair link" && issue.severity == ValidationIssueSeverity.BlockingError), Is.True);
             Assert.That(validationService.Issues.Any(issue => issue.title == "Overlapping exits" && issue.severity == ValidationIssueSeverity.Warning), Is.True);
-            Assert.That(validationService.Issues.Any(issue => issue.title == "Invalid obstacle overlap" && issue.severity == ValidationIssueSeverity.BlockingError), Is.True);
+            Assert.That(validationService.Issues.Any(issue => issue.title == "Obstacle overlaps exit" && issue.severity == ValidationIssueSeverity.BlockingError), Is.True);
             Assert.That(validationService.Issues.Any(issue => issue.title.Contains("Duplicate wall segment ID")), Is.True);
             Assert.That(panel.HasBlockingIssues, Is.True);
             Assert.That(panel.IssueGroups.Count, Is.GreaterThanOrEqualTo(2));
@@ -249,15 +249,15 @@ namespace EvacLogix.Tests.EditMode
                 obstacleId = "obstacle-blocking",
                 center = new Vector2(5f, 5f),
                 size = new Vector2(1f, 1f),
-                semanticType = ObstacleSemanticType.HardBlocking
+                discourageWeight = 1f
             });
             floor1.obstacles.Add(new ObstacleData
             {
                 obstacleId = "obstacle-conflict",
                 center = new Vector2(5f, 5f),
                 size = new Vector2(1f, 1f),
-                semanticType = ObstacleSemanticType.SlowThrough,
-                traversalCostMultiplier = 2f
+                discourageWeight = 0.5f,
+                movementSpeedPenalty = 0.5f
             });
 
             floor1.stairPortals.Add(new StairPortalData

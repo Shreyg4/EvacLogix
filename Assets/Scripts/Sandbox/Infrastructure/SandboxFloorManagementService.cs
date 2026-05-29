@@ -357,6 +357,11 @@ namespace EvacLogix.Sandbox.Infrastructure
                 idRemap[floor.stairPortals[i].stairPortalId] = SandboxId.NewId();
             }
 
+            for (var i = 0; i < floor.teleportPortals.Count; i += 1)
+            {
+                idRemap[floor.teleportPortals[i].teleportPortalId] = SandboxId.NewId();
+            }
+
             for (var i = 0; i < floor.regions.Count; i += 1)
             {
                 idRemap[floor.regions[i].regionId] = SandboxId.NewId();
@@ -406,6 +411,13 @@ namespace EvacLogix.Sandbox.Infrastructure
                 stairPortal.sourceFloorId = floor.floorId;
             }
 
+            foreach (var teleportPortal in floor.teleportPortals)
+            {
+                var previousPortalId = teleportPortal.teleportPortalId;
+                teleportPortal.teleportPortalId = idRemap[previousPortalId];
+                teleportPortal.sourceFloorId = floor.floorId;
+            }
+
             foreach (var region in floor.regions)
             {
                 region.regionId = idRemap[region.regionId];
@@ -429,6 +441,18 @@ namespace EvacLogix.Sandbox.Infrastructure
                     if (idRemap.TryGetValue(stairPortal.targetStairPortalId, out var remappedTargetPortalId))
                     {
                         stairPortal.targetStairPortalId = remappedTargetPortalId;
+                    }
+                }
+            }
+
+            foreach (var teleportPortal in floor.teleportPortals)
+            {
+                if (string.Equals(teleportPortal.targetFloorId, sourceFloorId, StringComparison.Ordinal))
+                {
+                    teleportPortal.targetFloorId = duplicatedFloorId;
+                    if (idRemap.TryGetValue(teleportPortal.targetTeleportPortalId, out var remappedTargetPortalId))
+                    {
+                        teleportPortal.targetTeleportPortalId = remappedTargetPortalId;
                     }
                 }
             }

@@ -72,6 +72,19 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
             if (bindings.Count == 0)
             {
                 bindings = CreateDefaultBindings();
+                return;
+            }
+
+            // Inject default bindings for any shortcut ids added after this list was
+            // serialized, so new shortcuts (for example Escape -> Cancel) appear without
+            // forcing users to reset their existing customized bindings.
+            var boundShortcutIds = new HashSet<SandboxShortcutId>(bindings.Select(binding => binding.shortcutId));
+            foreach (var defaultBinding in CreateDefaultBindings())
+            {
+                if (boundShortcutIds.Add(defaultBinding.shortcutId))
+                {
+                    bindings.Add(defaultBinding);
+                }
             }
         }
 
@@ -136,7 +149,9 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
 
         public bool CanDispatchWhilePointerOverUi(SandboxShortcutId shortcutId)
         {
-            return shortcutId == SandboxShortcutId.Undo || shortcutId == SandboxShortcutId.Redo;
+            return shortcutId == SandboxShortcutId.Undo ||
+                   shortcutId == SandboxShortcutId.Redo ||
+                   shortcutId == SandboxShortcutId.CancelTool;
         }
 
         private void Dispatch(SandboxShortcutId shortcutId)
@@ -184,8 +199,8 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 case SandboxShortcutId.ObstacleTool:
                     toolStateService?.RequestToolModeChange(SandboxToolMode.Obstacle, commandHistory);
                     break;
-                case SandboxShortcutId.StairTool:
-                    toolStateService?.RequestToolModeChange(SandboxToolMode.Stair, commandHistory);
+                case SandboxShortcutId.TeleportTool:
+                    toolStateService?.RequestToolModeChange(SandboxToolMode.Teleport, commandHistory);
                     break;
                 case SandboxShortcutId.SpawnPointTool:
                     toolStateService?.RequestToolModeChange(SandboxToolMode.SpawnPoint, commandHistory);
@@ -226,6 +241,9 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 case SandboxShortcutId.ResetCamera:
                     cameraController?.ResetView();
                     break;
+                case SandboxShortcutId.CancelTool:
+                    toolStateService?.RequestToolModeChange(SandboxToolMode.Select, commandHistory);
+                    break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(shortcutId), shortcutId, null);
             }
@@ -260,7 +278,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 CreateBinding(SandboxShortcutId.WindowTool, KeyCode.W),
                 CreateBinding(SandboxShortcutId.ExitTool, KeyCode.X),
                 CreateBinding(SandboxShortcutId.ObstacleTool, KeyCode.O),
-                CreateBinding(SandboxShortcutId.StairTool, KeyCode.T),
+                CreateBinding(SandboxShortcutId.TeleportTool, KeyCode.Y),
                 CreateBinding(SandboxShortcutId.SpawnPointTool, KeyCode.Alpha1),
                 CreateBinding(SandboxShortcutId.SpawnBrushTool, KeyCode.Alpha2),
                 CreateBinding(SandboxShortcutId.RegionTool, KeyCode.R),
@@ -274,6 +292,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 CreateBinding(SandboxShortcutId.ToggleGrid, KeyCode.G),
                 CreateBinding(SandboxShortcutId.ToggleSnapping, KeyCode.S),
                 CreateBinding(SandboxShortcutId.ResetCamera, KeyCode.Home),
+                CreateBinding(SandboxShortcutId.CancelTool, KeyCode.Escape),
             };
         }
 
@@ -291,7 +310,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 SandboxShortcutId.WindowTool => ("Tools", "Window Tool", "Place windows and escape metadata on existing wall segments."),
                 SandboxShortcutId.ExitTool => ("Tools", "Exit Tool", "Place named exit zones with width and priority inputs."),
                 SandboxShortcutId.ObstacleTool => ("Tools", "Obstacle Tool", "Place blocking or slowing obstacle geometry."),
-                SandboxShortcutId.StairTool => ("Tools", "Stair Tool", "Place and link stair portals across floors."),
+                SandboxShortcutId.TeleportTool => ("Tools", "Teleport Tool", "Place paired stair, elevator, or escalator transitions across floors."),
                 SandboxShortcutId.SpawnPointTool => ("Preview", "Spawn Point Tool", "Place intentional occupant start points for preview."),
                 SandboxShortcutId.SpawnBrushTool => ("Preview", "Spawn Brush Tool", "Paint density-based spawn groups for preview."),
                 SandboxShortcutId.RegionTool => ("Preview", "Region Tool", "Draw named semantic regions for preview semantics."),
@@ -304,6 +323,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 SandboxShortcutId.ToggleGrid => ("View", "Toggle Grid", "Show or hide the drafting grid overlay."),
                 SandboxShortcutId.ToggleSnapping => ("View", "Toggle Snapping", "Enable or disable wall snapping helpers."),
                 SandboxShortcutId.ResetCamera => ("View", "Reset Camera", "Reset the editor camera to the default framing."),
+                SandboxShortcutId.CancelTool => ("Tools", "Cancel To Select", "Cancel the active placement tool and return to Select mode."),
                 _ => ("Other", shortcutId.ToString(), $"Trigger the {shortcutId} action.")
             };
         }

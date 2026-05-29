@@ -1,5 +1,7 @@
 using EvacLogix.Sandbox.Authoring;
+using EvacLogix.Sandbox.Authoring.Commands;
 using EvacLogix.Sandbox.Authoring.Tools;
+using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
 using EvacLogix.Sandbox.UI.Panels;
 using UnityEngine;
@@ -8,10 +10,29 @@ namespace EvacLogix.Sandbox.UI.Overlays
 {
     public sealed class SandboxSemanticObjectAuthoringOverlay : MonoBehaviour
     {
+        [SerializeField] private Color doorGhostColor = new(0.18f, 0.55f, 1f, 0.75f);
+        [SerializeField] private Color windowGhostColor = new(0.72f, 0.3f, 1f, 0.75f);
+        [SerializeField] private Color invalidGhostColor = new(1f, 0.2f, 0.18f, 0.65f);
+        [SerializeField] private Color ghostMaskColor = new(0.11f, 0.18f, 0.3f, 0.92f);
+        [SerializeField] private float ghostLineWidth = 0.08f;
+        [SerializeField] private float ghostMaskWidth = 0.15f;
+        [SerializeField] private float ghostEdgeLength = 0.36f;
+
+        private readonly GameObject[] ghostObjects = new GameObject[4];
+        private string lastOpeningGhostStatus = string.Empty;
         private SandboxToolStateService toolStateService;
         private SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
         private SandboxInputRouter inputRouter;
         private SandboxStatusBarShell statusBar;
+        private SandboxProjectWorkspaceService workspaceService;
+        private SandboxCommandHistory commandHistory;
+        private string pendingTeleportPortalId = string.Empty;
+        private string pendingTeleportPairId = string.Empty;
+        private int pendingTeleportColorIndex;
+        private TeleportPortalKind pendingTeleportKind = TeleportPortalKind.Stair;
+        private float pendingTeleportTravelCost = 1f;
+        private bool pendingTeleportEnabled = true;
+        private bool pendingTeleportCompletesBrokenPair;
 
         private void Awake()
         {
@@ -19,11 +40,41 @@ namespace EvacLogix.Sandbox.UI.Overlays
             semanticObjectAuthoringService = FindAnyObjectByType<SandboxSemanticObjectAuthoringService>();
             inputRouter = FindAnyObjectByType<SandboxInputRouter>();
             statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
+            workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
+            commandHistory = FindAnyObjectByType<SandboxCommandHistory>();
+
+            if (toolStateService != null)
+            {
+                toolStateService.ToolModeChanged += HandleToolModeChanged;
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (toolStateService != null)
+            {
+                toolStateService.ToolModeChanged -= HandleToolModeChanged;
+            }
+
+            ClearGhost();
         }
 
         private void Update()
         {
-            if (toolStateService == null || semanticObjectAuthoringService == null || !SandboxInputAdapter.GetMouseButtonDown(0))
+            UpdateOpeningGhost();
+
+            if (toolStateService == null || semanticObjectAuthoringService == null)
+            {
+                return;
+            }
+
+            if (IsPlacementTool(toolStateService.CurrentToolMode) && SandboxInputAdapter.GetMouseButtonDown(1))
+            {
+                CancelPlacementToSelect();
+                return;
+            }
+
+            if (!SandboxInputAdapter.GetMouseButtonDown(0))
             {
                 return;
             }
@@ -51,32 +102,229 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 case SandboxToolMode.Obstacle:
                     HandleObstaclePlacement(worldPoint);
                     break;
-                case SandboxToolMode.Stair:
-                    HandleStairPlacement(worldPoint);
+                case SandboxToolMode.Teleport:
+                    HandleTeleportPlacement(worldPoint);
                     break;
             }
         }
 
+        private static bool IsPlacementTool(SandboxToolMode toolMode)
+        {
+            return toolMode == SandboxToolMode.Door ||
+                   toolMode == SandboxToolMode.Window ||
+                   toolMode == SandboxToolMode.Exit ||
+                   toolMode == SandboxToolMode.Obstacle ||
+                   toolMode == SandboxToolMode.Teleport;
+        }
+
+        private void CancelPlacementToSelect()
+        {
+            var hadPendingTeleport = !string.IsNullOrWhiteSpace(pendingTeleportPortalId);
+            toolStateService.RequestToolModeChange(SandboxToolMode.Select, commandHistory);
+            UpdateStatus(hadPendingTeleport
+                ? "Cancelled teleport placement. Back to Select."
+                : "Exited placement. Back to Select.");
+        }
+
+        private void HandleToolModeChanged(SandboxToolMode toolMode)
+        {
+            if (toolMode != SandboxToolMode.Teleport)
+            {
+                ResetPendingTeleportPlacement();
+            }
+        }
+
+        private void ResetPendingTeleportPlacement()
+        {
+            pendingTeleportPortalId = string.Empty;
+            pendingTeleportPairId = string.Empty;
+            pendingTeleportColorIndex = 0;
+            pendingTeleportKind = TeleportPortalKind.Stair;
+            pendingTeleportTravelCost = 1f;
+            pendingTeleportEnabled = true;
+            pendingTeleportCompletesBrokenPair = false;
+        }
+
+        public bool BeginMissingTeleportPairPlacement(string teleportPortalId)
+        {
+            var project = workspaceService?.ActiveProject;
+            if (project == null || string.IsNullOrWhiteSpace(teleportPortalId))
+            {
+                return false;
+            }
+
+            foreach (var floor in project.floors)
+            {
+                var portal = floor.teleportPortals.Find(candidate => candidate.teleportPortalId == teleportPortalId);
+                if (portal == null)
+                {
+                    continue;
+                }
+
+                pendingTeleportPortalId = portal.teleportPortalId;
+                pendingTeleportPairId = string.IsNullOrWhiteSpace(portal.pairId) ? SandboxId.NewId() : portal.pairId;
+                pendingTeleportColorIndex = portal.pairColorIndex;
+                pendingTeleportKind = portal.kind;
+                pendingTeleportTravelCost = Mathf.Max(0.1f, portal.travelCost);
+                pendingTeleportEnabled = portal.isPairEnabled;
+                pendingTeleportCompletesBrokenPair = true;
+                UpdateStatus("Click to place the missing teleport endpoint. You can switch floors first.");
+                return true;
+            }
+
+            return false;
+        }
+
         private void HandleDoorPlacement(Vector2 worldPoint)
         {
-            if (semanticObjectAuthoringService.PlaceDoor(worldPoint, out _))
+            var width = semanticObjectAuthoringService.GetPlacementOpeningWidth(SandboxVisualObjectType.Door);
+            if (semanticObjectAuthoringService.PlaceDoor(worldPoint, out _, width))
             {
                 UpdateStatus("Placed door on the nearest wall.");
                 return;
             }
 
-            UpdateStatus("Doors can only be placed on existing walls.");
+            UpdateStatus(GetOpeningPlacementMessage(worldPoint, SandboxVisualObjectType.Door, "Doors can only be placed on existing walls."));
         }
 
         private void HandleWindowPlacement(Vector2 worldPoint)
         {
-            if (semanticObjectAuthoringService.PlaceWindow(worldPoint, out _))
+            var width = semanticObjectAuthoringService.GetPlacementOpeningWidth(SandboxVisualObjectType.Window);
+            if (semanticObjectAuthoringService.PlaceWindow(worldPoint, out _, width))
             {
                 UpdateStatus("Placed window on the nearest wall.");
                 return;
             }
 
-            UpdateStatus("Windows can only be placed on existing walls.");
+            UpdateStatus(GetOpeningPlacementMessage(worldPoint, SandboxVisualObjectType.Window, "Windows can only be placed on existing walls."));
+        }
+
+        private string GetOpeningPlacementMessage(Vector2 worldPoint, SandboxVisualObjectType openingType, string fallback)
+        {
+            return semanticObjectAuthoringService.TryGetOpeningPlacementPreview(
+                worldPoint,
+                semanticObjectAuthoringService.GetPlacementOpeningWidth(openingType),
+                openingType,
+                null,
+                out var preview)
+                ? preview.message
+                : fallback;
+        }
+
+        private void UpdateOpeningGhost()
+        {
+            if (toolStateService == null || semanticObjectAuthoringService == null)
+            {
+                ClearGhost();
+                return;
+            }
+
+            var isDoorTool = toolStateService.CurrentToolMode == SandboxToolMode.Door;
+            var isWindowTool = toolStateService.CurrentToolMode == SandboxToolMode.Window;
+            if (!isDoorTool && !isWindowTool)
+            {
+                lastOpeningGhostStatus = string.Empty;
+                ClearGhost();
+                return;
+            }
+
+            var inputTarget = inputRouter != null
+                ? inputRouter.ResolvePointerTarget(SandboxInputAdapter.PointerScreenPosition)
+                : SandboxInputTarget.World;
+            if (inputTarget != SandboxInputTarget.World)
+            {
+                lastOpeningGhostStatus = string.Empty;
+                ClearGhost();
+                return;
+            }
+
+            var worldPoint = ScreenToWorldPoint(SandboxInputAdapter.PointerScreenPosition);
+            var openingType = isDoorTool ? SandboxVisualObjectType.Door : SandboxVisualObjectType.Window;
+            var previewWidth = semanticObjectAuthoringService.GetPlacementOpeningWidth(openingType);
+            semanticObjectAuthoringService.TryGetOpeningPlacementPreview(
+                worldPoint,
+                previewWidth,
+                openingType,
+                null,
+                out var preview);
+
+            var color = preview.isValid
+                ? isDoorTool ? doorGhostColor : windowGhostColor
+                : invalidGhostColor;
+            var statusMessage = preview.isValid
+                ? $"{(isDoorTool ? "Door" : "Window")} ready: click to place on wall."
+                : preview.message;
+            if (!string.Equals(lastOpeningGhostStatus, statusMessage, System.StringComparison.Ordinal))
+            {
+                lastOpeningGhostStatus = statusMessage;
+                UpdateStatus(statusMessage);
+            }
+
+            if (preview.isValid)
+            {
+                RenderGhostLine(0, preview.start, preview.end, ghostMaskColor, ghostMaskWidth);
+
+                var wallDirection = (preview.end - preview.start).normalized;
+                var wallNormal = new Vector2(-wallDirection.y, wallDirection.x);
+                var halfEdgeLength = ghostEdgeLength * 0.5f;
+                RenderGhostLine(1, preview.start - wallNormal * halfEdgeLength, preview.start + wallNormal * halfEdgeLength, color, ghostLineWidth);
+                RenderGhostLine(2, preview.end - wallNormal * halfEdgeLength, preview.end + wallNormal * halfEdgeLength, color, ghostLineWidth);
+                ClearGhostObject(3);
+            }
+            else
+            {
+                RenderGhostLine(0, preview.center + new Vector2(-0.18f, 0f), preview.center + new Vector2(0.18f, 0f), invalidGhostColor, ghostLineWidth);
+                RenderGhostLine(1, preview.center + new Vector2(0f, -0.18f), preview.center + new Vector2(0f, 0.18f), invalidGhostColor, ghostLineWidth);
+                RenderGhostLine(2, preview.center + new Vector2(-0.25f, -0.25f), preview.center + new Vector2(0.25f, 0.25f), invalidGhostColor, ghostLineWidth);
+                RenderGhostLine(3, preview.center + new Vector2(-0.25f, 0.25f), preview.center + new Vector2(0.25f, -0.25f), invalidGhostColor, ghostLineWidth);
+            }
+        }
+
+        private void RenderGhostLine(int index, Vector2 start, Vector2 end, Color color, float lineWidth)
+        {
+            if (ghostObjects[index] == null)
+            {
+                ghostObjects[index] = new GameObject($"OpeningGhost_{index}");
+                ghostObjects[index].transform.SetParent(transform, false);
+                var lineRenderer = ghostObjects[index].AddComponent<LineRenderer>();
+                lineRenderer.useWorldSpace = false;
+                lineRenderer.positionCount = 2;
+                lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            }
+
+            var renderer = ghostObjects[index].GetComponent<LineRenderer>();
+            renderer.widthMultiplier = lineWidth;
+            renderer.startColor = color;
+            renderer.endColor = color;
+            renderer.SetPosition(0, new Vector3(start.x, start.y, 0.06f));
+            renderer.SetPosition(1, new Vector3(end.x, end.y, 0.06f));
+        }
+
+        private void ClearGhost()
+        {
+            for (var i = 0; i < ghostObjects.Length; i += 1)
+            {
+                ClearGhostObject(i);
+            }
+        }
+
+        private void ClearGhostObject(int index)
+        {
+            if (ghostObjects[index] == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                Destroy(ghostObjects[index]);
+            }
+            else
+            {
+                DestroyImmediate(ghostObjects[index]);
+            }
+
+            ghostObjects[index] = null;
         }
 
         private void HandleExitPlacement(Vector2 worldPoint)
@@ -95,12 +343,102 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
         }
 
-        private void HandleStairPlacement(Vector2 worldPoint)
+
+        private void HandleTeleportPlacement(Vector2 worldPoint)
         {
-            if (semanticObjectAuthoringService.PlaceStairPortal(worldPoint, out _))
+            if (workspaceService?.ActiveFloor == null)
             {
-                UpdateStatus("Placed stair endpoint. Link it to another floor from the inspector.");
+                return;
             }
+
+            if (string.IsNullOrWhiteSpace(pendingTeleportPortalId))
+            {
+                pendingTeleportPairId = SandboxId.NewId();
+                pendingTeleportColorIndex = semanticObjectAuthoringService != null
+                    ? semanticObjectAuthoringService.GetNextTeleportPairColorIndex()
+                    : 0;
+                pendingTeleportKind = TeleportPortalKind.Stair;
+                pendingTeleportTravelCost = 1f;
+                pendingTeleportEnabled = true;
+                pendingTeleportCompletesBrokenPair = false;
+
+                if (semanticObjectAuthoringService != null &&
+                    semanticObjectAuthoringService.PlaceTeleportPortal(
+                        worldPoint,
+                        out var createdPortalId,
+                        pendingTeleportPairId,
+                        pendingTeleportColorIndex,
+                        semanticObjectAuthoringService.DefaultTeleportPortalSize,
+                        0f,
+                        string.Empty,
+                        pendingTeleportKind,
+                        pendingTeleportTravelCost,
+                        pendingTeleportEnabled))
+                {
+                    pendingTeleportPortalId = createdPortalId;
+                    UpdateStatus("Placed teleport endpoint A. Switch floors if needed, then click to place endpoint B.");
+                }
+
+                return;
+            }
+
+            if (semanticObjectAuthoringService == null ||
+                !semanticObjectAuthoringService.PlaceTeleportPortal(
+                    worldPoint,
+                    out var partnerPortalId,
+                    pendingTeleportPairId,
+                    pendingTeleportColorIndex,
+                    semanticObjectAuthoringService.DefaultTeleportPortalSize,
+                    0f,
+                    string.Empty,
+                    pendingTeleportKind,
+                    pendingTeleportTravelCost,
+                    pendingTeleportEnabled))
+            {
+                UpdateStatus("Could not place teleport endpoint.");
+                return;
+            }
+
+            if (!semanticObjectAuthoringService.LinkTeleportPortals(
+                    ResolveSourceFloorId(pendingTeleportPortalId),
+                    pendingTeleportPortalId,
+                    workspaceService.ActiveFloor.floorId,
+                    partnerPortalId,
+                    pendingTeleportKind,
+                    pendingTeleportTravelCost,
+                    pendingTeleportEnabled))
+            {
+                UpdateStatus("Placed teleport endpoint, but pairing failed.");
+            }
+            else
+            {
+                UpdateStatus(pendingTeleportCompletesBrokenPair
+                    ? "Restored the teleporter pair."
+                    : "Placed teleport pair.");
+            }
+
+            pendingTeleportPortalId = string.Empty;
+            pendingTeleportPairId = string.Empty;
+            pendingTeleportCompletesBrokenPair = false;
+        }
+
+        private string ResolveSourceFloorId(string teleportPortalId)
+        {
+            var project = workspaceService?.ActiveProject;
+            if (project == null)
+            {
+                return workspaceService?.ActiveFloor?.floorId ?? string.Empty;
+            }
+
+            foreach (var floor in project.floors)
+            {
+                if (floor.teleportPortals.Exists(candidate => candidate.teleportPortalId == teleportPortalId))
+                {
+                    return floor.floorId;
+                }
+            }
+
+            return workspaceService?.ActiveFloor?.floorId ?? string.Empty;
         }
 
         private static Vector2 ScreenToWorldPoint(Vector3 screenPoint)

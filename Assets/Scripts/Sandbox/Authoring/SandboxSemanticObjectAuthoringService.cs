@@ -10,40 +10,153 @@ using UnityEngine;
 
 namespace EvacLogix.Sandbox.Authoring
 {
+    public struct SandboxOpeningPlacementPreview
+    {
+        public bool isValid;
+        public string wallSegmentId;
+        public Vector2 center;
+        public Vector2 start;
+        public Vector2 end;
+        public float offsetAlongWall;
+        public float width;
+        public string message;
+
+        public static SandboxOpeningPlacementPreview Invalid(Vector2 center, string message)
+        {
+            return new SandboxOpeningPlacementPreview
+            {
+                isValid = false,
+                wallSegmentId = string.Empty,
+                center = center,
+                start = center + new Vector2(-0.35f, 0f),
+                end = center + new Vector2(0.35f, 0f),
+                offsetAlongWall = 0f,
+                width = 0f,
+                message = message
+            };
+        }
+    }
+
     public sealed class SandboxSemanticObjectAuthoringService : MonoBehaviour
     {
-        [SerializeField] private float wallAttachDistance = 0.6f;
+        [SerializeField] private float wallAttachDistance = 0.75f;
+        [SerializeField] private float defaultOpeningWidth = 1f;
+        [SerializeField] private float openingEndMargin = 0.05f;
         [SerializeField] private Vector2 defaultExitZoneSize = new(1.5f, 1.5f);
         [SerializeField] private Vector2 defaultObstacleSize = Vector2.one;
         [SerializeField] private Vector2 defaultStairPortalSize = Vector2.one;
+        [SerializeField] private Vector2 defaultTeleportPortalSize = Vector2.one;
         [SerializeField] private float defaultExitWidth = 1.5f;
         [SerializeField] private float obstacleRotationStepDegrees = 15f;
+        [SerializeField] private Color[] teleportPairPalette =
+        {
+            new(0.18f, 0.85f, 0.92f, 1f),
+            new(0.96f, 0.58f, 0.22f, 1f),
+            new(0.84f, 0.36f, 0.95f, 1f),
+            new(0.28f, 0.88f, 0.5f, 1f),
+            new(0.96f, 0.85f, 0.24f, 1f),
+            new(0.95f, 0.42f, 0.56f, 1f),
+        };
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxCommandHistory commandHistory;
         private SandboxSelectionService selectionService;
+        private SandboxColliderRebuildService colliderRebuildService;
         private SandboxValidationService validationService;
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxPreviewService previewService;
+        private SandboxWorkspaceStateService workspaceStateService;
+        private float lastDoorPlacementWidth = -1f;
+        private float lastWindowPlacementWidth = -1f;
 
         public event Action SemanticObjectsChanged;
 
         public float WallAttachDistance => wallAttachDistance;
+        public float DefaultOpeningWidth => defaultOpeningWidth;
         public float ObstacleRotationStepDegrees => obstacleRotationStepDegrees;
+        public Vector2 DefaultTeleportPortalSize => defaultTeleportPortalSize;
+        public IReadOnlyList<Color> TeleportPairPalette => teleportPairPalette;
 
         private void Awake()
         {
             workspaceService = GetComponent<SandboxProjectWorkspaceService>();
             commandHistory = GetComponent<SandboxCommandHistory>();
             selectionService = GetComponent<SandboxSelectionService>();
+            colliderRebuildService = GetComponent<SandboxColliderRebuildService>();
             validationService = GetComponent<SandboxValidationService>();
             visualOrganizationService = GetComponent<SandboxVisualOrganizationService>();
             previewService = GetComponent<SandboxPreviewService>();
+            workspaceStateService = GetComponent<SandboxWorkspaceStateService>();
         }
 
-        public bool PlaceDoor(Vector2 worldPoint, out string doorId, float width = 1f, DoorState state = DoorState.Normal)
+        public bool TryGetOpeningPlacementPreview(
+            Vector2 worldPoint,
+            float width,
+            SandboxVisualObjectType openingType,
+            string ignoredOpeningId,
+            out SandboxOpeningPlacementPreview preview)
+        {
+            preview = SandboxOpeningPlacementPreview.Invalid(worldPoint, "Move closer to a wall.");
+            width = ResolveOpeningWidth(width, openingType);
+            var floor = workspaceService?.ActiveFloor;
+            if (floor == null || width <= 0f)
+            {
+                preview = SandboxOpeningPlacementPreview.Invalid(worldPoint, "Create or select a floor first.");
+                return false;
+            }
+
+            if (openingType != SandboxVisualObjectType.Door && openingType != SandboxVisualObjectType.Window)
+            {
+                preview = SandboxOpeningPlacementPreview.Invalid(worldPoint, "Unsupported opening type.");
+                return false;
+            }
+
+            if (!TryFindNearestWall(floor, worldPoint, out var wall, out var projectedPoint, out var offsetAlongWall))
+            {
+                preview = SandboxOpeningPlacementPreview.Invalid(worldPoint, "Move closer to a wall.");
+                return false;
+            }
+
+            var worldWidth = ResolveOpeningWorldWidth(floor, width);
+            var wallDirection = (wall.endPoint - wall.startPoint).normalized;
+            var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
+            var halfWorldWidth = worldWidth * 0.5f;
+            var start = projectedPoint - wallDirection * halfWorldWidth;
+            var end = projectedPoint + wallDirection * halfWorldWidth;
+            var message = "Click to place opening.";
+            var isValid = true;
+
+            if (wallLength <= Mathf.Epsilon ||
+                offsetAlongWall - halfWorldWidth < openingEndMargin ||
+                offsetAlongWall + halfWorldWidth > wallLength - openingEndMargin)
+            {
+                isValid = false;
+                message = "Opening too close to wall end.";
+            }
+            else if (DoesOpeningOverlap(floor, wall.wallSegmentId, offsetAlongWall, width, ignoredOpeningId))
+            {
+                isValid = false;
+                message = "Opening overlaps an existing door/window.";
+            }
+
+            preview = new SandboxOpeningPlacementPreview
+            {
+                isValid = isValid,
+                wallSegmentId = wall.wallSegmentId,
+                center = projectedPoint,
+                start = start,
+                end = end,
+                offsetAlongWall = offsetAlongWall,
+                width = width,
+                message = message
+            };
+            return true;
+        }
+
+        public bool PlaceDoor(Vector2 worldPoint, out string doorId, float width = -1f, DoorState state = DoorState.Normal)
         {
             doorId = string.Empty;
+            width = ResolveOpeningWidth(width, SandboxVisualObjectType.Door);
             if (workspaceService?.ActiveFloor == null || width <= 0f)
             {
                 return false;
@@ -55,14 +168,8 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             var activeFloorId = workspaceService.ActiveFloor.floorId;
-            if (!TryFindNearestWall(workspaceService.ActiveFloor, worldPoint, out var wall, out _, out var offsetAlongWall))
-            {
-                return false;
-            }
-
-            var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-            var halfWidth = width * 0.5f;
-            if (wallLength <= Mathf.Epsilon || offsetAlongWall - halfWidth < -0.01f || offsetAlongWall + halfWidth > wallLength + 0.01f)
+            if (!TryGetOpeningPlacementPreview(worldPoint, width, SandboxVisualObjectType.Door, null, out var placement) ||
+                !placement.isValid)
             {
                 return false;
             }
@@ -81,8 +188,8 @@ namespace EvacLogix.Sandbox.Authoring
                     floor.doors.Add(new DoorData
                     {
                         doorId = createdDoorId,
-                        wallSegmentId = wall.wallSegmentId,
-                        offsetAlongWall = offsetAlongWall,
+                        wallSegmentId = placement.wallSegmentId,
+                        offsetAlongWall = placement.offsetAlongWall,
                         width = width,
                         state = state
                     });
@@ -92,6 +199,7 @@ namespace EvacLogix.Sandbox.Authoring
 
             if (didPlaceDoor)
             {
+                lastDoorPlacementWidth = width;
                 doorId = createdDoorId;
             }
 
@@ -106,6 +214,7 @@ namespace EvacLogix.Sandbox.Authoring
             IEnumerable<string> tags,
             IEnumerable<MetadataFieldData> metadataFields)
         {
+            width = ResolveOpeningWidth(width, SandboxVisualObjectType.Door);
             if (string.IsNullOrWhiteSpace(doorId) || width <= 0f)
             {
                 return false;
@@ -116,7 +225,7 @@ namespace EvacLogix.Sandbox.Authoring
                 return false;
             }
 
-            return ExecuteProjectMutation(
+            var didUpdate = ExecuteProjectMutation(
                 "Update Door",
                 project =>
                 {
@@ -126,10 +235,8 @@ namespace EvacLogix.Sandbox.Authoring
                         return false;
                     }
 
-                    var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-                    var clampedOffset = Mathf.Clamp(offsetAlongWall, 0f, wallLength);
-                    var halfWidth = width * 0.5f;
-                    if (clampedOffset - halfWidth < -0.01f || clampedOffset + halfWidth > wallLength + 0.01f)
+                    var clampedOffset = Mathf.Clamp(offsetAlongWall, 0f, Vector2.Distance(wall.startPoint, wall.endPoint));
+                    if (!IsOpeningPlacementValid(floor, wall, clampedOffset, width, doorId))
                     {
                         return false;
                     }
@@ -142,17 +249,24 @@ namespace EvacLogix.Sandbox.Authoring
                     return true;
                 },
                 new[] { doorId });
+            if (didUpdate)
+            {
+                lastDoorPlacementWidth = width;
+            }
+
+            return didUpdate;
         }
 
         public bool PlaceWindow(
             Vector2 worldPoint,
             out string windowId,
-            float width = 1f,
+            float width = -1f,
             bool canBeUsedForEscape = false,
             float escapeCost = 1f,
             float escapeRiskMultiplier = 1f)
         {
             windowId = string.Empty;
+            width = ResolveOpeningWidth(width, SandboxVisualObjectType.Window);
             if (workspaceService?.ActiveFloor == null || width <= 0f)
             {
                 return false;
@@ -164,14 +278,8 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             var activeFloorId = workspaceService.ActiveFloor.floorId;
-            if (!TryFindNearestWall(workspaceService.ActiveFloor, worldPoint, out var wall, out _, out var offsetAlongWall))
-            {
-                return false;
-            }
-
-            var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-            var halfWidth = width * 0.5f;
-            if (wallLength <= Mathf.Epsilon || offsetAlongWall - halfWidth < -0.01f || offsetAlongWall + halfWidth > wallLength + 0.01f)
+            if (!TryGetOpeningPlacementPreview(worldPoint, width, SandboxVisualObjectType.Window, null, out var placement) ||
+                !placement.isValid)
             {
                 return false;
             }
@@ -190,8 +298,8 @@ namespace EvacLogix.Sandbox.Authoring
                     floor.windows.Add(new WindowData
                     {
                         windowId = createdWindowId,
-                        wallSegmentId = wall.wallSegmentId,
-                        offsetAlongWall = offsetAlongWall,
+                        wallSegmentId = placement.wallSegmentId,
+                        offsetAlongWall = placement.offsetAlongWall,
                         width = width,
                         canBeUsedForEscape = canBeUsedForEscape,
                         escapeCost = escapeCost,
@@ -203,6 +311,7 @@ namespace EvacLogix.Sandbox.Authoring
 
             if (didPlaceWindow)
             {
+                lastWindowPlacementWidth = width;
                 windowId = createdWindowId;
             }
 
@@ -219,6 +328,7 @@ namespace EvacLogix.Sandbox.Authoring
             IEnumerable<string> tags,
             IEnumerable<MetadataFieldData> metadataFields)
         {
+            width = ResolveOpeningWidth(width, SandboxVisualObjectType.Window);
             if (string.IsNullOrWhiteSpace(windowId) || width <= 0f)
             {
                 return false;
@@ -229,7 +339,7 @@ namespace EvacLogix.Sandbox.Authoring
                 return false;
             }
 
-            return ExecuteProjectMutation(
+            var didUpdate = ExecuteProjectMutation(
                 "Update Window",
                 project =>
                 {
@@ -239,10 +349,8 @@ namespace EvacLogix.Sandbox.Authoring
                         return false;
                     }
 
-                    var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-                    var clampedOffset = Mathf.Clamp(offsetAlongWall, 0f, wallLength);
-                    var halfWidth = width * 0.5f;
-                    if (clampedOffset - halfWidth < -0.01f || clampedOffset + halfWidth > wallLength + 0.01f)
+                    var clampedOffset = Mathf.Clamp(offsetAlongWall, 0f, Vector2.Distance(wall.startPoint, wall.endPoint));
+                    if (!IsOpeningPlacementValid(floor, wall, clampedOffset, width, windowId))
                     {
                         return false;
                     }
@@ -257,6 +365,17 @@ namespace EvacLogix.Sandbox.Authoring
                     return true;
                 },
                 new[] { windowId });
+            if (didUpdate)
+            {
+                lastWindowPlacementWidth = width;
+            }
+
+            return didUpdate;
+        }
+
+        public float GetPlacementOpeningWidth(SandboxVisualObjectType openingType)
+        {
+            return ResolveOpeningWidth(-1f, openingType);
         }
 
         public bool PlaceExit(
@@ -366,8 +485,8 @@ namespace EvacLogix.Sandbox.Authoring
             out string obstacleId,
             Vector2? size = null,
             float rotationDegrees = 0f,
-            ObstacleSemanticType semanticType = ObstacleSemanticType.HardBlocking,
-            float traversalCostMultiplier = 1f,
+            float discourageWeight = 1f,
+            float movementSpeedPenalty = 0f,
             string name = "")
         {
             obstacleId = string.Empty;
@@ -401,8 +520,8 @@ namespace EvacLogix.Sandbox.Authoring
                         center = center,
                         size = resolvedSize,
                         rotationDegrees = NormalizeObstacleRotation(rotationDegrees),
-                        semanticType = semanticType,
-                        traversalCostMultiplier = traversalCostMultiplier
+                        discourageWeight = Mathf.Clamp01(discourageWeight),
+                        movementSpeedPenalty = Mathf.Clamp01(movementSpeedPenalty)
                     });
                     return true;
                 },
@@ -421,8 +540,8 @@ namespace EvacLogix.Sandbox.Authoring
             Vector2 center,
             Vector2 size,
             float rotationDegrees,
-            ObstacleSemanticType semanticType,
-            float traversalCostMultiplier,
+            float discourageWeight,
+            float movementSpeedPenalty,
             string name,
             IEnumerable<string> tags,
             IEnumerable<MetadataFieldData> metadataFields)
@@ -449,8 +568,8 @@ namespace EvacLogix.Sandbox.Authoring
                     obstacle.center = center;
                     obstacle.size = size;
                     obstacle.rotationDegrees = NormalizeObstacleRotation(rotationDegrees);
-                    obstacle.semanticType = semanticType;
-                    obstacle.traversalCostMultiplier = Mathf.Max(0f, traversalCostMultiplier);
+                    obstacle.discourageWeight = Mathf.Clamp01(discourageWeight);
+                    obstacle.movementSpeedPenalty = Mathf.Clamp01(movementSpeedPenalty);
                     obstacle.name = name ?? string.Empty;
                     obstacle.tags = NormalizeTags(tags);
                     obstacle.metadataFields = CloneMetadataFields(metadataFields);
@@ -513,6 +632,239 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             return didPlaceStairPortal;
+        }
+
+        public bool PlaceTeleportPortal(
+            Vector2 localPosition,
+            out string teleportPortalId,
+            string pairId,
+            int pairColorIndex,
+            Vector2? size = null,
+            float rotationDegrees = 0f,
+            string name = "",
+            TeleportPortalKind kind = TeleportPortalKind.Stair,
+            float travelCost = 1f,
+            bool isPairEnabled = true,
+            string targetFloorId = "",
+            string targetTeleportPortalId = "")
+        {
+            teleportPortalId = string.Empty;
+            var resolvedSize = size ?? defaultTeleportPortalSize;
+            if (workspaceService?.ActiveFloor == null ||
+                resolvedSize.x <= 0f ||
+                resolvedSize.y <= 0f ||
+                string.IsNullOrWhiteSpace(pairId))
+            {
+                return false;
+            }
+
+            if (IsLocked(SandboxVisualObjectType.Teleport))
+            {
+                return false;
+            }
+
+            var activeFloorId = workspaceService.ActiveFloor.floorId;
+            var createdTeleportPortalId = SandboxId.NewId();
+            var didPlaceTeleportPortal = ExecuteProjectMutation(
+                "Place Teleport Portal",
+                project =>
+                {
+                    var floor = FindFloor(project, activeFloorId);
+                    if (floor == null)
+                    {
+                        return false;
+                    }
+
+                    floor.teleportPortals.Add(new TeleportPortalData
+                    {
+                        teleportPortalId = createdTeleportPortalId,
+                        pairId = pairId,
+                        pairColorIndex = Mathf.Max(0, pairColorIndex),
+                        sourceFloorId = floor.floorId,
+                        name = name ?? string.Empty,
+                        localPosition = localPosition,
+                        size = resolvedSize,
+                        rotationDegrees = rotationDegrees,
+                        targetFloorId = targetFloorId ?? string.Empty,
+                        targetTeleportPortalId = targetTeleportPortalId ?? string.Empty,
+                        kind = kind,
+                        travelCost = Mathf.Max(0.1f, travelCost),
+                        isPairEnabled = isPairEnabled
+                    });
+                    return true;
+                },
+                new[] { createdTeleportPortalId });
+
+            if (didPlaceTeleportPortal)
+            {
+                teleportPortalId = createdTeleportPortalId;
+            }
+
+            return didPlaceTeleportPortal;
+        }
+
+        public bool UpdateTeleportPortal(
+            string teleportPortalId,
+            Vector2 localPosition,
+            Vector2 size,
+            float rotationDegrees,
+            string name,
+            TeleportPortalKind kind,
+            float travelCost,
+            bool isPairEnabled,
+            IEnumerable<string> tags,
+            IEnumerable<MetadataFieldData> metadataFields)
+        {
+            if (string.IsNullOrWhiteSpace(teleportPortalId) || size.x <= 0f || size.y <= 0f)
+            {
+                return false;
+            }
+
+            if (IsLocked(SandboxVisualObjectType.Teleport, teleportPortalId))
+            {
+                return false;
+            }
+
+            return ExecuteProjectMutation(
+                "Update Teleport Portal",
+                project =>
+                {
+                    if (!TryFindTeleportPortal(project, teleportPortalId, out var floor, out var teleportPortal))
+                    {
+                        return false;
+                    }
+
+                    teleportPortal.sourceFloorId = floor.floorId;
+                    teleportPortal.localPosition = localPosition;
+                    teleportPortal.size = size;
+                    teleportPortal.rotationDegrees = rotationDegrees;
+                    teleportPortal.name = name ?? string.Empty;
+                    teleportPortal.kind = kind;
+                    teleportPortal.travelCost = Mathf.Max(0.1f, travelCost);
+                    teleportPortal.tags = NormalizeTags(tags);
+                    teleportPortal.metadataFields = CloneMetadataFields(metadataFields);
+
+                    foreach (var linkedPortal in project.floors
+                                 .SelectMany(candidate => candidate.teleportPortals)
+                                 .Where(candidate => string.Equals(candidate.pairId, teleportPortal.pairId, StringComparison.Ordinal)))
+                    {
+                        linkedPortal.isPairEnabled = isPairEnabled;
+                        linkedPortal.travelCost = Mathf.Max(0.1f, travelCost);
+                        linkedPortal.kind = kind;
+                    }
+
+                    return true;
+                },
+                new[] { teleportPortalId });
+        }
+
+        public bool LinkTeleportPortals(
+            string sourceFloorId,
+            string sourcePortalId,
+            string targetFloorId,
+            string targetPortalId,
+            TeleportPortalKind kind,
+            float travelCost,
+            bool isPairEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(sourceFloorId) ||
+                string.IsNullOrWhiteSpace(sourcePortalId) ||
+                string.IsNullOrWhiteSpace(targetFloorId) ||
+                string.IsNullOrWhiteSpace(targetPortalId))
+            {
+                return false;
+            }
+
+            if (IsLocked(SandboxVisualObjectType.Teleport, sourcePortalId) ||
+                IsLocked(SandboxVisualObjectType.Teleport, targetPortalId))
+            {
+                return false;
+            }
+
+            return ExecuteProjectMutation(
+                "Link Teleport Portals",
+                project =>
+                {
+                    var sourceFloor = FindFloor(project, sourceFloorId);
+                    var targetFloor = FindFloor(project, targetFloorId);
+                    if (sourceFloor == null || targetFloor == null)
+                    {
+                        return false;
+                    }
+
+                    var sourcePortal = sourceFloor.teleportPortals.FirstOrDefault(candidate =>
+                        string.Equals(candidate.teleportPortalId, sourcePortalId, StringComparison.Ordinal));
+                    var targetPortal = targetFloor.teleportPortals.FirstOrDefault(candidate =>
+                        string.Equals(candidate.teleportPortalId, targetPortalId, StringComparison.Ordinal));
+                    if (sourcePortal == null || targetPortal == null)
+                    {
+                        return false;
+                    }
+
+                    var sharedPairId = string.IsNullOrWhiteSpace(sourcePortal.pairId)
+                        ? string.IsNullOrWhiteSpace(targetPortal.pairId) ? SandboxId.NewId() : targetPortal.pairId
+                        : sourcePortal.pairId;
+                    var colorIndex = sourcePortal.pairColorIndex != 0 || targetPortal.pairColorIndex == 0
+                        ? sourcePortal.pairColorIndex
+                        : targetPortal.pairColorIndex;
+
+                    sourcePortal.pairId = sharedPairId;
+                    sourcePortal.sourceFloorId = sourceFloor.floorId;
+                    sourcePortal.targetFloorId = targetFloor.floorId;
+                    sourcePortal.targetTeleportPortalId = targetPortal.teleportPortalId;
+                    sourcePortal.pairColorIndex = colorIndex;
+                    sourcePortal.kind = kind;
+                    sourcePortal.travelCost = Mathf.Max(0.1f, travelCost);
+                    sourcePortal.isPairEnabled = isPairEnabled;
+
+                    targetPortal.pairId = sharedPairId;
+                    targetPortal.sourceFloorId = targetFloor.floorId;
+                    targetPortal.targetFloorId = sourceFloor.floorId;
+                    targetPortal.targetTeleportPortalId = sourcePortal.teleportPortalId;
+                    targetPortal.pairColorIndex = colorIndex;
+                    targetPortal.kind = kind;
+                    targetPortal.travelCost = Mathf.Max(0.1f, travelCost);
+                    targetPortal.isPairEnabled = isPairEnabled;
+                    return true;
+                },
+                new[] { sourcePortalId, targetPortalId });
+        }
+
+        public int GetNextTeleportPairColorIndex()
+        {
+            var project = workspaceService?.ActiveProject;
+            if (project == null || teleportPairPalette == null || teleportPairPalette.Length == 0)
+            {
+                return 0;
+            }
+
+            var usedIndexes = project.floors
+                .SelectMany(floor => floor.teleportPortals)
+                .Select(portal => Mathf.Max(0, portal.pairColorIndex))
+                .Distinct()
+                .ToHashSet();
+            for (var index = 0; index < teleportPairPalette.Length; index += 1)
+            {
+                if (!usedIndexes.Contains(index))
+                {
+                    return index;
+                }
+            }
+
+            return usedIndexes.Count % teleportPairPalette.Length;
+        }
+
+        public bool TryGetTeleportPairColor(int pairColorIndex, out Color color)
+        {
+            color = Color.white;
+            if (teleportPairPalette == null || teleportPairPalette.Length == 0)
+            {
+                return false;
+            }
+
+            var index = Mathf.Clamp(pairColorIndex, 0, teleportPairPalette.Length - 1);
+            color = teleportPairPalette[index];
+            return true;
         }
 
         public bool UpdateStairPortal(
@@ -677,6 +1029,7 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             validationService?.ValidateActiveProject();
+            colliderRebuildService?.RequestRebuild(activeFloorId);
             SemanticObjectsChanged?.Invoke();
         }
 
@@ -700,6 +1053,11 @@ namespace EvacLogix.Sandbox.Authoring
             for (var i = 0; i < floor.wallSegments.Count; i += 1)
             {
                 var wall = floor.wallSegments[i];
+                if ((wall.endPoint - wall.startPoint).sqrMagnitude <= 0.0001f)
+                {
+                    continue;
+                }
+
                 var projection = ProjectPointOntoSegment(worldPoint, wall.startPoint, wall.endPoint);
                 var distance = Vector2.Distance(worldPoint, projection);
                 if (distance > wallAttachDistance || distance >= bestDistance)
@@ -715,6 +1073,92 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             return nearestWall != null;
+        }
+
+        private float ResolveOpeningWidth(float width, SandboxVisualObjectType openingType)
+        {
+            if (width > 0f)
+            {
+                return width;
+            }
+
+            return openingType switch
+            {
+                SandboxVisualObjectType.Door when lastDoorPlacementWidth > 0f => lastDoorPlacementWidth,
+                SandboxVisualObjectType.Window when lastWindowPlacementWidth > 0f => lastWindowPlacementWidth,
+                _ => defaultOpeningWidth,
+            };
+        }
+
+        private bool IsOpeningPlacementValid(
+            FloorData floor,
+            WallSegmentData wall,
+            float offsetAlongWall,
+            float width,
+            string ignoredOpeningId)
+        {
+            if (floor == null || wall == null || width <= 0f)
+            {
+                return false;
+            }
+
+            var worldWidth = ResolveOpeningWorldWidth(floor, width);
+            var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
+            if (wallLength <= Mathf.Epsilon ||
+                offsetAlongWall - (worldWidth * 0.5f) < openingEndMargin ||
+                offsetAlongWall + (worldWidth * 0.5f) > wallLength - openingEndMargin)
+            {
+                return false;
+            }
+
+            return !DoesOpeningOverlap(floor, wall.wallSegmentId, offsetAlongWall, width, ignoredOpeningId);
+        }
+
+        private bool DoesOpeningOverlap(
+            FloorData floor,
+            string wallSegmentId,
+            float offsetAlongWall,
+            float width,
+            string ignoredOpeningId)
+        {
+            var worldWidth = ResolveOpeningWorldWidth(floor, width);
+            var start = offsetAlongWall - (worldWidth * 0.5f);
+            var end = offsetAlongWall + (worldWidth * 0.5f);
+
+            foreach (var door in (floor.doors ?? Enumerable.Empty<DoorData>()).Where(door => string.Equals(door.wallSegmentId, wallSegmentId, StringComparison.Ordinal)))
+            {
+                if (string.Equals(door.doorId, ignoredOpeningId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var doorWorldWidth = ResolveOpeningWorldWidth(floor, door.width);
+                if (IntervalsOverlap(start, end, door.offsetAlongWall - (doorWorldWidth * 0.5f), door.offsetAlongWall + (doorWorldWidth * 0.5f)))
+                {
+                    return true;
+                }
+            }
+
+            foreach (var window in (floor.windows ?? Enumerable.Empty<WindowData>()).Where(window => string.Equals(window.wallSegmentId, wallSegmentId, StringComparison.Ordinal)))
+            {
+                if (string.Equals(window.windowId, ignoredOpeningId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var windowWorldWidth = ResolveOpeningWorldWidth(floor, window.width);
+                if (IntervalsOverlap(start, end, window.offsetAlongWall - (windowWorldWidth * 0.5f), window.offsetAlongWall + (windowWorldWidth * 0.5f)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IntervalsOverlap(float firstStart, float firstEnd, float secondStart, float secondEnd)
+        {
+            return firstStart < secondEnd && secondStart < firstEnd;
         }
 
         private static FloorData FindFloor(BuildingProjectData project, string floorId)
@@ -815,6 +1259,26 @@ namespace EvacLogix.Sandbox.Authoring
             return false;
         }
 
+        private static bool TryFindTeleportPortal(BuildingProjectData project, string teleportPortalId, out FloorData floor, out TeleportPortalData teleportPortal)
+        {
+            if (project?.floors != null)
+            {
+                for (var i = 0; i < project.floors.Count; i += 1)
+                {
+                    teleportPortal = project.floors[i].teleportPortals.FirstOrDefault(candidate => string.Equals(candidate.teleportPortalId, teleportPortalId, StringComparison.Ordinal));
+                    if (teleportPortal != null)
+                    {
+                        floor = project.floors[i];
+                        return true;
+                    }
+                }
+            }
+
+            floor = null;
+            teleportPortal = null;
+            return false;
+        }
+
         private static List<string> NormalizeTags(IEnumerable<string> tags)
         {
             return tags == null
@@ -879,6 +1343,15 @@ namespace EvacLogix.Sandbox.Authoring
             var t = Vector2.Dot(point - segmentStart, segment) / segmentLengthSquared;
             t = Mathf.Clamp01(t);
             return segmentStart + segment * t;
+        }
+
+        private float ResolveOpeningWorldWidth(FloorData floor, float authoredWidth)
+        {
+            return SandboxOpeningWidthUtility.ResolveWorldWidth(
+                workspaceService,
+                workspaceStateService,
+                floor,
+                authoredWidth);
         }
 
         private bool IsLocked(SandboxVisualObjectType objectType, string objectId = null)

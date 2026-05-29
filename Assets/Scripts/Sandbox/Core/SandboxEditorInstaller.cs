@@ -32,6 +32,7 @@ namespace EvacLogix.Sandbox.Core
         private const string ColliderRootName = "ColliderRoot";
         private const string ValidationHighlightRootName = "ValidationHighlightRoot";
         private const string DiagnosticsOverlayRootName = "DiagnosticsOverlayRoot";
+        private const string RoomOverlayRootName = "RoomOverlayRoot";
 
         [SerializeField] private string editorCameraName = "Main Camera";
 
@@ -40,6 +41,12 @@ namespace EvacLogix.Sandbox.Core
             InstallServices();
             InstallUiShells();
             EnsureEditorCamera();
+#if UNITY_WEBGL && !UNITY_EDITOR
+            Debug.Log(
+                "SandboxEditorInstaller completed for WebGL. " +
+                $"SceneRole={app?.SceneRole ?? "Unknown"}, " +
+                $"MainCameraPresent={Camera.main != null}");
+#endif
         }
 
         private void InstallServices()
@@ -49,10 +56,18 @@ namespace EvacLogix.Sandbox.Core
             EnsureComponent<SandboxSelectionService>(gameObject);
             EnsureComponent<SandboxInputRouter>(gameObject);
             EnsureComponent<SandboxWorkspaceStateService>(gameObject);
+            EnsureComponent<SandboxDesktopFileActionBackend>(gameObject);
+            EnsureComponent<SandboxWebGlFileActionBackend>(gameObject);
+            EnsureComponent<SandboxWebGlBrowserFileBridgeAdapter>(gameObject);
+            EnsureComponent<SandboxBrowserFileActionCoordinator>(gameObject);
+            EnsureComponent<SandboxDesktopPreviewImageExportBackend>(gameObject);
+            EnsureComponent<SandboxFileActionService>(gameObject);
+            EnsureComponent<SandboxProjectRefreshService>(gameObject);
             EnsureComponent<SandboxSaveLoadService>(gameObject);
             EnsureComponent<SandboxProjectTransferService>(gameObject);
             EnsureComponent<SandboxProjectMetadataService>(gameObject);
             EnsureComponent<SandboxValidationService>(gameObject);
+            EnsureComponent<SandboxRoomDetectionService>(gameObject);
             EnsureComponent<SandboxColliderRebuildService>(gameObject);
             EnsureComponent<SandboxProjectWorkspaceService>(gameObject);
             EnsureComponent<SandboxFloorManagementService>(gameObject);
@@ -91,6 +106,7 @@ namespace EvacLogix.Sandbox.Core
             EnsureComponent<SandboxSemanticObjectRenderer>(semanticRoot);
             EnsureComponent<SandboxValidationHighlightRenderer>(FindOrCreateNestedRoot(DebugRootName, ValidationHighlightRootName));
             EnsureComponent<SandboxDiagnosticsOverlayRenderer>(FindOrCreateNestedRoot(DebugRootName, DiagnosticsOverlayRootName));
+            EnsureComponent<SandboxRoomOverlayRenderer>(FindOrCreateNestedRoot(DebugRootName, RoomOverlayRootName));
             EnsureComponent<SandboxPreviewDiagnosticsRenderer>(FindOrCreateNestedRoot(DebugRootName, "PreviewDiagnosticsRoot"));
         }
 
@@ -116,6 +132,9 @@ namespace EvacLogix.Sandbox.Core
             if (existingCamera != null)
             {
                 EnsureCameraController(existingCamera.gameObject);
+#if UNITY_WEBGL && !UNITY_EDITOR
+                Debug.Log($"SandboxEditorInstaller using existing main camera: {existingCamera.name}");
+#endif
                 return;
             }
 
@@ -126,6 +145,9 @@ namespace EvacLogix.Sandbox.Core
             cameraObject.AddComponent<Camera>().orthographic = true;
             cameraObject.AddComponent<AudioListener>();
             EnsureCameraController(cameraObject);
+#if UNITY_WEBGL && !UNITY_EDITOR
+            Debug.Log($"SandboxEditorInstaller created fallback main camera: {cameraObject.name}");
+#endif
         }
 
         private void EnsureCameraController(GameObject cameraObject)
