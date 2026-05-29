@@ -13,17 +13,22 @@ namespace EvacLogix.Sandbox.Rendering
         [SerializeField] private Color unreachableColor = new(0.95f, 0.25f, 0.25f, 0.95f);
         [SerializeField] private Color chokePointColor = new(1f, 0.55f, 0.1f, 0.95f);
         [SerializeField] private Color heatmapColor = new(1f, 0.7f, 0.15f, 0.55f);
+        [SerializeField] private Color fireCellColor = new(1f, 0.4f, 0.1f, 0.6f);
         [SerializeField] private float lineWidth = 0.05f;
         [SerializeField] private float markerRadius = 0.22f;
 
         private readonly List<GameObject> renderedObjects = new();
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxPreviewService previewService;
+        private SandboxFireSimulationService fireSimulationService;
+        private SandboxFireSimulationService fireSimulationService;
 
         private void Awake()
         {
             workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
             previewService = FindAnyObjectByType<SandboxPreviewService>();
+            fireSimulationService = FindAnyObjectByType<SandboxFireSimulationService>();
+            fireSimulationService = FindAnyObjectByType<SandboxFireSimulationService>();
 
             if (workspaceService != null)
             {
@@ -73,6 +78,30 @@ namespace EvacLogix.Sandbox.Rendering
                 {
                     RenderCross($"FireOrigin_{fireOrigin.fireOriginId}", fireOrigin.position, fireOriginColor, markerRadius * 1.25f);
                     RenderCircle($"FireOriginHeat_{fireOrigin.fireOriginId}", fireOrigin.position, markerRadius * (1.1f + fireOrigin.spreadIntensity * 0.3f), fireOriginColor);
+                }
+            }
+
+            if (fireSimulationService != null && fireSimulationService.SimulationActive)
+            {
+                foreach (var fireCell in fireSimulationService.ActiveFireCells.Where(cell => cell.floorId == floor.floorId))
+                {
+                    var radius = markerRadius * (0.75f + Mathf.Clamp01(fireCell.intensity) * 0.95f);
+                    var alpha = Mathf.Lerp(0.15f, 0.85f, Mathf.Clamp01(fireCell.intensity));
+                    RenderCircle(
+                        $"FireCell_{fireCell.cellId}",
+                        fireCell.position,
+                        radius,
+                        new Color(fireCellColor.r, fireCellColor.g, fireCellColor.b, alpha));
+                }
+            }
+
+            if (fireSimulationService != null && fireSimulationService.SimulationActive)
+            {
+                foreach (var fireCell in fireSimulationService.ActiveFireCells.Where(cell => cell.floorId == floor.floorId))
+                {
+                    var radius = markerRadius * (0.8f + Mathf.Clamp(fireCell.intensity, 0f, 1f) * 0.9f);
+                    var alpha = Mathf.Lerp(0.2f, 0.85f, Mathf.Clamp01(fireCell.intensity));
+                    RenderCircle($"FireCell_{fireCell.cellId}", fireCell.position, radius, new Color(fireCellColor.r, fireCellColor.g, fireCellColor.b, alpha));
                 }
             }
 

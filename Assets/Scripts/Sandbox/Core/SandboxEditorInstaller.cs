@@ -70,6 +70,7 @@ namespace EvacLogix.Sandbox.Core
             EnsureComponent<SandboxValidationService>(gameObject);
             EnsureComponent<SandboxRoomDetectionService>(gameObject);
             EnsureComponent<SandboxColliderRebuildService>(gameObject);
+            EnsureComponent<SandboxFireSimulationService>(gameObject);
             EnsureComponent<SandboxProjectWorkspaceService>(gameObject);
             EnsureComponent<SandboxFloorManagementService>(gameObject);
             EnsureComponent<SandboxVisualOrganizationService>(gameObject);

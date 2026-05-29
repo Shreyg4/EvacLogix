@@ -114,6 +114,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         [SerializeField] private string pendingRegionName = "Preview Region";
         [SerializeField] private RegionSemanticType pendingRegionSemanticType = RegionSemanticType.SpawnZone;
         [SerializeField] private bool pendingFireOriginIsPersistent = true;
+        [SerializeField] private List<string> activeFireOriginSelectionIds = new();
         [SerializeField] private PreviewParameterData activePreviewParameters = new();
         [SerializeField] private SandboxPreviewReportData lastPreviewReport = new();
 
@@ -136,6 +137,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         public string PendingRegionName => pendingRegionName;
         public RegionSemanticType PendingRegionSemanticType => pendingRegionSemanticType;
         public bool PendingFireOriginIsPersistent => pendingFireOriginIsPersistent;
+        public IReadOnlyList<string> ActiveFireOriginSelectionIds => activeFireOriginSelectionIds;
         public PreviewParameterData ActivePreviewParameters => activePreviewParameters;
         public SandboxPreviewReportData LastPreviewReport => lastPreviewReport;
 
@@ -259,6 +261,25 @@ namespace EvacLogix.Sandbox.Infrastructure
         public void SetActiveSpawnLayout(string spawnLayoutId)
         {
             activeSpawnLayoutId = spawnLayoutId ?? string.Empty;
+            RaisePreviewStateChanged();
+        }
+
+        public void SetActiveFireOriginIds(IEnumerable<string> fireOriginIds)
+        {
+            activeFireOriginSelectionIds = fireOriginIds == null
+                ? new List<string>()
+                : fireOriginIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal).ToList();
+            RaisePreviewStateChanged();
+        }
+
+        public void ClearActiveFireOriginSelection()
+        {
+            if (activeFireOriginSelectionIds.Count == 0)
+            {
+                return;
+            }
+
+            activeFireOriginSelectionIds = new List<string>();
             RaisePreviewStateChanged();
         }
 
@@ -479,8 +500,20 @@ namespace EvacLogix.Sandbox.Infrastructure
                 .ToList();
         }
 
-        private static List<FireOriginData> ResolveActiveFireOrigins(BuildingProjectData project, ScenarioPresetData scenarioPreset)
+        private List<FireOriginData> ResolveActiveFireOrigins(BuildingProjectData project, ScenarioPresetData scenarioPreset)
         {
+            if (project == null)
+            {
+                return new List<FireOriginData>();
+            }
+
+            if (activeFireOriginSelectionIds.Count > 0)
+            {
+                return project.fireOrigins
+                    .Where(origin => activeFireOriginSelectionIds.Contains(origin.fireOriginId, StringComparer.Ordinal))
+                    .ToList();
+            }
+
             if (scenarioPreset != null)
             {
                 return project.fireOrigins

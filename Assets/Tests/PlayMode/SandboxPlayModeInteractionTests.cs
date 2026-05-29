@@ -105,6 +105,37 @@ namespace EvacLogix.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator FireSimulation_UsesSelectedOriginAndRespectsWalls()
+        {
+            var harness = CreateHarness();
+            yield return null;
+
+            harness.workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            CreateEnclosedRoom(harness.wallAuthoringService);
+            Assert.That(harness.wallAuthoringService.CreateLineWall(new Vector2(1f, 0f), new Vector2(1f, 6f), 0.2f), Is.True);
+            yield return null;
+
+            harness.colliderService.RebuildAll();
+
+            Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(-1.5f, 3f), out var leftFireOriginId, 10f, 0f, true), Is.True);
+            Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(2.5f, 3f), out _, 10f, 0f, true), Is.True);
+            yield return null;
+
+            harness.fireSimulationService.SetActiveFireOriginIds(new[] { leftFireOriginId });
+            harness.fireSimulationService.RestartSimulation();
+
+            for (var i = 0; i < 8; i += 1)
+            {
+                harness.fireSimulationService.AdvanceSimulation(0.25f);
+            }
+
+            Assert.That(harness.fireSimulationService.ActiveFireCells.Count, Is.GreaterThan(0));
+            Assert.That(harness.fireSimulationService.ActiveFireCells.Any(cell => cell.position.x > 1.1f), Is.False);
+
+            harness.Destroy();
+        }
+
+        [UnityTest]
         public IEnumerator Selection_TracksAndMovesClipboardSafeObjects()
         {
             var harness = CreateHarness();
@@ -134,9 +165,10 @@ namespace EvacLogix.Tests.PlayMode
             host.AddComponent<SandboxToolStateService>();
             var workspaceStateService = host.AddComponent<SandboxWorkspaceStateService>();
             var workspaceService = host.AddComponent<SandboxProjectWorkspaceService>();
-            host.AddComponent<SandboxColliderRebuildService>();
+            var colliderService = host.AddComponent<SandboxColliderRebuildService>();
             host.AddComponent<SandboxValidationService>();
             host.AddComponent<SandboxRoomDetectionService>();
+            var fireSimulationService = host.AddComponent<SandboxFireSimulationService>();
             host.AddComponent<SandboxVisualOrganizationService>();
             var clipboardService = host.AddComponent<SandboxClipboardService>();
             host.AddComponent<SandboxWallSnappingService>();
@@ -154,9 +186,11 @@ namespace EvacLogix.Tests.PlayMode
                 workspaceStateService = workspaceStateService,
                 selectionService = selectionService,
                 clipboardService = clipboardService,
+                colliderService = colliderService,
                 wallAuthoringService = wallAuthoringService,
                 semanticObjectAuthoringService = semanticObjectAuthoringService,
                 previewService = previewService,
+                fireSimulationService = fireSimulationService,
                 agentSimulationService = agentSimulationService,
                 previewAuthoringService = previewAuthoringService
             };
@@ -177,9 +211,11 @@ namespace EvacLogix.Tests.PlayMode
             public SandboxWorkspaceStateService workspaceStateService;
             public SandboxSelectionService selectionService;
             public SandboxClipboardService clipboardService;
+            public SandboxColliderRebuildService colliderService;
             public SandboxWallAuthoringService wallAuthoringService;
             public SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
             public SandboxPreviewService previewService;
+            public SandboxFireSimulationService fireSimulationService;
             public SandboxAgentSimulationService agentSimulationService;
             public SandboxPreviewAuthoringService previewAuthoringService;
 

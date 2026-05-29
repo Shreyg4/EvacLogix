@@ -16,6 +16,7 @@ namespace EvacLogix.Sandbox.Runtime
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxPreviewService previewService;
+        private SandboxFireSimulationService fireSimulationService;
         private SandboxRoomDetectionService roomDetectionService;
         private GameObject agentRoot;
         private Texture2D agentTexture;
@@ -176,7 +177,10 @@ namespace EvacLogix.Sandbox.Runtime
                 return;
             }
 
-            var fireOrigins = project.fireOrigins ?? Array.Empty<FireOriginData>();
+            var fireOrigins = ResolveActiveFireOrigins(project);
+            var fireCells = fireSimulationService != null && fireSimulationService.SimulationActive
+                ? fireSimulationService.ActiveFireCells
+                : Array.Empty<SandboxFireCellData>();
             for (var i = 0; i < activeAgents.Count; i += 1)
             {
                 var agent = activeAgents[i];
@@ -189,7 +193,7 @@ namespace EvacLogix.Sandbox.Runtime
                 var destination = agent.CurrentDestination;
                 if (agent.NeedsRepath() || agent.IsAtDestination())
                 {
-                    destination = ChooseExitDestination(project, agent.FloorId, position, fireOrigins, out var exitId);
+                    destination = ChooseExitDestination(project, agent.FloorId, position, fireOrigins, fireCells, out var exitId);
                     if (!string.IsNullOrWhiteSpace(exitId))
                     {
                         agent.SetDestination(exitId, destination);
@@ -200,7 +204,7 @@ namespace EvacLogix.Sandbox.Runtime
                     }
                 }
 
-                var movement = ComputeMovementVector(position, destination, fireOrigins, agent.FloorId, out var exposure);
+                var movement = ComputeMovementVector(position, destination, fireOrigins, fireCells, agent.FloorId, out var exposure);
                 agent.Tick(deltaTime, movement, exposure);
 
                 if (agent.IsAtDestination())
@@ -212,12 +216,29 @@ namespace EvacLogix.Sandbox.Runtime
             lastPreviewDigestTime += deltaTime;
         }
 
-        private Vector2 ComputeMovementVector(Vector2 position, Vector2 destination, IReadOnlyList<FireOriginData> fireOrigins, string floorId, out float exposure)
+        private Vector2 ComputeMovementVector(Vector2 position, Vector2 destination, IReadOnlyList<FireOriginData> fireOrigins, IReadOnlyList<SandboxFireCellData> fireCells, string floorId, out float exposure)
         {
             var toDestination = destination - position;
             var desiredDirection = toDestination.sqrMagnitude > 0.0001f ? toDestination.normalized : Vector2.zero;
             var avoidance = Vector2.zero;
             exposure = 0f;
+
+            if (fireCells != null && fireCells.Count > 0)
+            {
+                for (var i = 0; i < fireCells.Count; i += 1)
+                {
+                    var fireCell = fireCells[i];
+                    if (!string.Equals(fireCell.floorId, floorId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    ApplyFireInfluence(position, fireCell.position, fireCell.intensity, fireCell.sourceSpreadIntensity, ref exposure, ref avoidance);
+                }
+
+                var blendedFire = desiredDirection + avoidance;
+                return blendedFire.sqrMagnitude <= 0.0001f ? desiredDirection : blendedFire.normalized;
+            }
 
             for (var i = 0; i < fireOrigins.Count; i += 1)
             {
@@ -227,23 +248,7 @@ namespace EvacLogix.Sandbox.Runtime
                     continue;
                 }
 
-                var offset = position - fireOrigin.position;
-                var distance = offset.magnitude;
-                if (distance <= 0.0001f)
-                {
-                    exposure += 1f;
-                    avoidance += UnityEngine.Random.insideUnitCircle * 0.01f;
-                    continue;
-                }
-
-                if (distance > GetProfile().FireDangerRadius)
-                {
-                    continue;
-                }
-
-                var normalizedThreat = 1f - Mathf.Clamp01(distance / GetProfile().FireDangerRadius);
-                exposure += normalizedThreat;
-                avoidance += (offset / distance) * (normalizedThreat * GetProfile().FireAvoidanceWeight);
+                ApplyFireInfluence(position, fireOrigin.position, 1f, fireOrigin.spreadIntensity, ref exposure, ref avoidance);
             }
 
             var blended = desiredDirection + avoidance;
@@ -260,6 +265,7 @@ namespace EvacLogix.Sandbox.Runtime
             string floorId,
             Vector2 origin,
             IReadOnlyList<FireOriginData> fireOrigins,
+            IReadOnlyList<SandboxFireCellData> fireCells,
             out string exitId)
         {
             exitId = string.Empty;
@@ -280,7 +286,7 @@ namespace EvacLogix.Sandbox.Runtime
             {
                 var exitZone = floor.exits[i];
                 var distance = Vector2.Distance(origin, exitZone.center);
-                var firePenalty = GetFirePenalty(origin, exitZone.center, floorId, fireOrigins);
+                var firePenalty = GetFirePenalty(origin, exitZone.center, floorId, fireOrigins, fireCells);
                 var score = distance + firePenalty - Mathf.Max(0f, exitZone.priority * 0.25f);
                 if (score < bestScore)
                 {
@@ -293,11 +299,33 @@ namespace EvacLogix.Sandbox.Runtime
             return bestExit.center;
         }
 
-        private float GetFirePenalty(Vector2 origin, Vector2 exitCenter, string floorId, IReadOnlyList<FireOriginData> fireOrigins)
+        private float GetFirePenalty(Vector2 origin, Vector2 exitCenter, string floorId, IReadOnlyList<FireOriginData> fireOrigins, IReadOnlyList<SandboxFireCellData> fireCells)
         {
             var midpoint = (origin + exitCenter) * 0.5f;
             var dangerRadius = GetProfile().FireDangerRadius;
             var penalty = 0f;
+            if (fireCells != null && fireCells.Count > 0)
+            {
+                for (var i = 0; i < fireCells.Count; i += 1)
+                {
+                    var fireCell = fireCells[i];
+                    if (!string.Equals(fireCell.floorId, floorId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var distance = Vector2.Distance(midpoint, fireCell.position);
+                    if (distance >= dangerRadius)
+                    {
+                        continue;
+                    }
+
+                    penalty += 1f - Mathf.Clamp01(distance / dangerRadius);
+                }
+
+                return penalty;
+            }
+
             for (var i = 0; i < fireOrigins.Count; i += 1)
             {
                 var fireOrigin = fireOrigins[i];
@@ -485,7 +513,47 @@ namespace EvacLogix.Sandbox.Runtime
         {
             workspaceService ??= GetComponent<SandboxProjectWorkspaceService>();
             previewService ??= GetComponent<SandboxPreviewService>();
+            fireSimulationService ??= GetComponent<SandboxFireSimulationService>();
             roomDetectionService ??= GetComponent<SandboxRoomDetectionService>();
+        }
+
+        private void ApplyFireInfluence(Vector2 position, Vector2 firePosition, float intensity, float spreadIntensity, ref float exposure, ref Vector2 avoidance)
+        {
+            var offset = position - firePosition;
+            var distance = offset.magnitude;
+            var dangerRadius = GetProfile().FireDangerRadius;
+            if (distance <= 0.0001f)
+            {
+                exposure += Mathf.Clamp01(intensity);
+                avoidance += UnityEngine.Random.insideUnitCircle * 0.01f;
+                return;
+            }
+
+            if (distance > dangerRadius)
+            {
+                return;
+            }
+
+            var normalizedThreat = 1f - Mathf.Clamp01(distance / dangerRadius);
+            exposure += normalizedThreat * Mathf.Clamp01(intensity * spreadIntensity);
+            avoidance += (offset / distance) * (normalizedThreat * GetProfile().FireAvoidanceWeight);
+        }
+
+        private List<FireOriginData> ResolveActiveFireOrigins(BuildingProjectData project)
+        {
+            if (project?.fireOrigins == null)
+            {
+                return new List<FireOriginData>();
+            }
+
+            if (fireSimulationService != null && fireSimulationService.ActiveFireOriginSelectionIds.Count > 0)
+            {
+                return project.fireOrigins
+                    .Where(origin => fireSimulationService.ActiveFireOriginSelectionIds.Contains(origin.fireOriginId, StringComparer.Ordinal))
+                    .ToList();
+            }
+
+            return project.fireOrigins.ToList();
         }
 
         private SandboxAgentProfile GetProfile()
