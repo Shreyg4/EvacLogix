@@ -157,6 +157,11 @@ namespace EvacLogix.Sandbox.Infrastructure
                 ActivateReadySeeds();
             }
 
+            if (activeFireCells.Count > 0)
+            {
+                FireStateChanged?.Invoke(activeFireCells);
+            }
+
             if (pendingSeeds.Count == 0 && activeFireCells.Count == 0)
             {
                 simulationActive = false;
@@ -249,10 +254,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                 }
             }
 
-            if (ignitionAttempts > 0)
-            {
-                FireStateChanged?.Invoke(activeFireCells);
-            }
+            FireStateChanged?.Invoke(activeFireCells);
         }
 
         private void IgniteCell(FireSeed seed, Vector2 position, float intensityOverride)

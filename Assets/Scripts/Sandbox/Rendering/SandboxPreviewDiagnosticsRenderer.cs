@@ -45,6 +45,16 @@ namespace EvacLogix.Sandbox.Rendering
                 previewService.PreviewReportChanged += HandlePreviewReportChanged;
             }
 
+            if (fireSimulationService != null)
+            {
+                fireSimulationService.FireStateChanged += HandleFireStateChanged;
+            }
+
+            if (agentSimulationService != null)
+            {
+                agentSimulationService.AgentsChanged += HandleAgentsChanged;
+            }
+
             Refresh();
         }
 
@@ -61,6 +71,16 @@ namespace EvacLogix.Sandbox.Rendering
                 previewService.PreviewModeChanged -= HandlePreviewModeChanged;
                 previewService.PreviewStateChanged -= HandlePreviewStateChanged;
                 previewService.PreviewReportChanged -= HandlePreviewReportChanged;
+            }
+
+            if (fireSimulationService != null)
+            {
+                fireSimulationService.FireStateChanged -= HandleFireStateChanged;
+            }
+
+            if (agentSimulationService != null)
+            {
+                agentSimulationService.AgentsChanged -= HandleAgentsChanged;
             }
         }
 
@@ -169,6 +189,16 @@ namespace EvacLogix.Sandbox.Rendering
         }
 
         private void HandlePreviewReportChanged(SandboxPreviewReportData report)
+        {
+            Refresh();
+        }
+
+        private void HandleFireStateChanged(IReadOnlyList<SandboxFireCellData> fireCells)
+        {
+            Refresh();
+        }
+
+        private void HandleAgentsChanged(IReadOnlyList<SandboxEvacueeAgent> agents)
         {
             Refresh();
         }

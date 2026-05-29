@@ -24,6 +24,8 @@ namespace EvacLogix.Sandbox.Runtime
         private bool simulationActive;
         private float lastPreviewDigestTime;
 
+        public event Action<IReadOnlyList<SandboxEvacueeAgent>> AgentsChanged;
+
         public IReadOnlyList<SandboxEvacueeAgent> ActiveAgents => activeAgents;
         public bool SimulationActive => simulationActive;
 
@@ -79,6 +81,7 @@ namespace EvacLogix.Sandbox.Runtime
         {
             simulationActive = false;
             ClearAgents();
+            AgentsChanged?.Invoke(activeAgents);
         }
 
         public void HandlePreviewReportChanged(SandboxPreviewReportData report)
@@ -168,6 +171,7 @@ namespace EvacLogix.Sandbox.Runtime
 
             simulationActive = activeAgents.Count > 0;
             lastPreviewDigestTime = Time.time;
+            AgentsChanged?.Invoke(activeAgents);
         }
 
         private void TickAgents(float deltaTime)
@@ -217,6 +221,7 @@ namespace EvacLogix.Sandbox.Runtime
             }
 
             lastPreviewDigestTime += deltaTime;
+            AgentsChanged?.Invoke(activeAgents);
         }
 
         private Vector2 ComputeMovementVector(Vector2 position, Vector2 destination, IReadOnlyList<FireOriginData> fireOrigins, IReadOnlyList<SandboxFireCellData> fireCells, string floorId, out float exposure)
