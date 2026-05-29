@@ -21,13 +21,11 @@ namespace EvacLogix.Sandbox.Rendering
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxPreviewService previewService;
         private SandboxFireSimulationService fireSimulationService;
-        private SandboxFireSimulationService fireSimulationService;
 
         private void Awake()
         {
             workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
             previewService = FindAnyObjectByType<SandboxPreviewService>();
-            fireSimulationService = FindAnyObjectByType<SandboxFireSimulationService>();
             fireSimulationService = FindAnyObjectByType<SandboxFireSimulationService>();
 
             if (workspaceService != null)
