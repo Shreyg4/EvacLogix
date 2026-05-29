@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Runtime;
 using UnityEngine;
 
 namespace EvacLogix.Sandbox.Rendering
@@ -13,52 +14,68 @@ namespace EvacLogix.Sandbox.Rendering
         [SerializeField] private Color unreachableColor = new(0.95f, 0.25f, 0.25f, 0.95f);
         [SerializeField] private Color chokePointColor = new(1f, 0.55f, 0.1f, 0.95f);
         [SerializeField] private Color heatmapColor = new(1f, 0.7f, 0.15f, 0.55f);
+        [SerializeField] private Color fireCellColor = new(1f, 0.4f, 0.1f, 0.6f);
+        [SerializeField] private Color agentColor = new(0.35f, 0.95f, 0.65f, 0.95f);
         [SerializeField] private float lineWidth = 0.05f;
         [SerializeField] private float markerRadius = 0.22f;
 
         private readonly List<GameObject> renderedObjects = new();
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxPreviewService previewService;
+        private SandboxFireSimulationService fireSimulationService;
+        private SandboxAgentSimulationService agentSimulationService;
+        private bool workspaceEventsSubscribed;
+        private bool previewEventsSubscribed;
+        private bool fireEventsSubscribed;
+        private bool agentEventsSubscribed;
 
         private void Awake()
         {
-            workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
-            previewService = FindAnyObjectByType<SandboxPreviewService>();
-
-            if (workspaceService != null)
-            {
-                workspaceService.ActiveProjectChanged += HandleProjectChanged;
-                workspaceService.ActiveFloorChanged += HandleFloorChanged;
-            }
-
-            if (previewService != null)
-            {
-                previewService.PreviewModeChanged += HandlePreviewModeChanged;
-                previewService.PreviewStateChanged += HandlePreviewStateChanged;
-                previewService.PreviewReportChanged += HandlePreviewReportChanged;
-            }
-
+            ResolveDependencies();
             Refresh();
+        }
+
+        private void LateUpdate()
+        {
+            var hadWorkspaceService = workspaceService != null;
+            var hadPreviewService = previewService != null;
+            ResolveDependencies();
+            if ((!hadWorkspaceService && workspaceService != null) ||
+                (!hadPreviewService && previewService != null))
+            {
+                Refresh();
+            }
         }
 
         private void OnDestroy()
         {
-            if (workspaceService != null)
+            if (workspaceService != null && workspaceEventsSubscribed)
             {
                 workspaceService.ActiveProjectChanged -= HandleProjectChanged;
                 workspaceService.ActiveFloorChanged -= HandleFloorChanged;
             }
 
-            if (previewService != null)
+            if (previewService != null && previewEventsSubscribed)
             {
                 previewService.PreviewModeChanged -= HandlePreviewModeChanged;
                 previewService.PreviewStateChanged -= HandlePreviewStateChanged;
                 previewService.PreviewReportChanged -= HandlePreviewReportChanged;
             }
+
+            if (fireSimulationService != null && fireEventsSubscribed)
+            {
+                fireSimulationService.FireStateChanged -= HandleFireStateChanged;
+            }
+
+            if (agentSimulationService != null && agentEventsSubscribed)
+            {
+                agentSimulationService.AgentsChanged -= HandleAgentsChanged;
+            }
         }
 
         public void Refresh()
         {
+            ResolveDependencies();
             Clear();
             var project = workspaceService?.ActiveProject;
             var floor = workspaceService?.ActiveFloor;
@@ -73,6 +90,48 @@ namespace EvacLogix.Sandbox.Rendering
                 {
                     RenderCross($"FireOrigin_{fireOrigin.fireOriginId}", fireOrigin.position, fireOriginColor, markerRadius * 1.25f);
                     RenderCircle($"FireOriginHeat_{fireOrigin.fireOriginId}", fireOrigin.position, markerRadius * (1.1f + fireOrigin.spreadIntensity * 0.3f), fireOriginColor);
+                }
+
+                foreach (var layout in project.spawnLayouts)
+                {
+                    foreach (var spawnPoint in layout.spawnPoints.Where(point => point.floorId == floor.floorId))
+                    {
+                        RenderCross($"SpawnPoint_{spawnPoint.spawnPointId}", spawnPoint.position, agentColor, markerRadius * 0.9f);
+                        RenderCircle($"SpawnPointHalo_{spawnPoint.spawnPointId}", spawnPoint.position, markerRadius * 1.35f, new Color(agentColor.r, agentColor.g, agentColor.b, 0.25f));
+                    }
+
+                    foreach (var spawnBrushStroke in layout.spawnBrushStrokes.Where(stroke => stroke.floorId == floor.floorId))
+                    {
+                        var centroid = CalculateCentroid(spawnBrushStroke.polygonPoints);
+                        RenderCircle($"LegacySpawnBrush_{spawnBrushStroke.spawnBrushStrokeId}", centroid, markerRadius * 1.1f, new Color(agentColor.r, agentColor.g, agentColor.b, 0.2f));
+                    }
+                }
+            }
+
+            if (fireSimulationService != null && fireSimulationService.SimulationActive)
+            {
+                foreach (var fireCell in fireSimulationService.ActiveFireCells.Where(cell => cell.floorId == floor.floorId))
+                {
+                    var radius = markerRadius * (0.75f + Mathf.Clamp01(fireCell.intensity) * 0.95f);
+                    var alpha = Mathf.Lerp(0.15f, 0.85f, Mathf.Clamp01(fireCell.intensity));
+                    RenderCircle(
+                        $"FireCell_{fireCell.cellId}",
+                        fireCell.position,
+                        radius,
+                        new Color(fireCellColor.r, fireCellColor.g, fireCellColor.b, alpha));
+                }
+            }
+
+            if (agentSimulationService != null && agentSimulationService.SimulationActive)
+            {
+                foreach (var agent in agentSimulationService.ActiveAgents.Where(candidate => candidate != null && !candidate.HasExited && candidate.FloorId == floor.floorId))
+                {
+                    var position = (Vector2)agent.transform.position;
+                    var urgency = Mathf.Clamp01(1f - agent.Health);
+                    var radius = markerRadius * (0.6f + urgency * 0.35f);
+                    var alpha = Mathf.Lerp(0.4f, 1f, Mathf.Clamp01(agent.Health));
+                    RenderCross($"Agent_{agent.AgentId}", position, new Color(agentColor.r, agentColor.g, agentColor.b, alpha), radius);
+                    RenderCircle($"AgentHalo_{agent.AgentId}", position, radius * 1.4f, new Color(agentColor.r, agentColor.g, agentColor.b, alpha * 0.35f));
                 }
             }
 
@@ -139,6 +198,16 @@ namespace EvacLogix.Sandbox.Rendering
             Refresh();
         }
 
+        private void HandleFireStateChanged(IReadOnlyList<SandboxFireCellData> fireCells)
+        {
+            Refresh();
+        }
+
+        private void HandleAgentsChanged(IReadOnlyList<SandboxEvacueeAgent> agents)
+        {
+            Refresh();
+        }
+
         private void RenderLine(string name, Vector2 start, Vector2 end, Color color, float width)
         {
             var lineObject = new GameObject(name);
@@ -153,6 +222,41 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
             renderedObjects.Add(lineObject);
+        }
+
+        private void ResolveDependencies()
+        {
+            workspaceService ??= FindAnyObjectByType<SandboxProjectWorkspaceService>();
+            previewService ??= FindAnyObjectByType<SandboxPreviewService>();
+            fireSimulationService ??= FindAnyObjectByType<SandboxFireSimulationService>();
+            agentSimulationService ??= FindAnyObjectByType<SandboxAgentSimulationService>();
+
+            if (workspaceService != null && !workspaceEventsSubscribed)
+            {
+                workspaceService.ActiveProjectChanged += HandleProjectChanged;
+                workspaceService.ActiveFloorChanged += HandleFloorChanged;
+                workspaceEventsSubscribed = true;
+            }
+
+            if (previewService != null && !previewEventsSubscribed)
+            {
+                previewService.PreviewModeChanged += HandlePreviewModeChanged;
+                previewService.PreviewStateChanged += HandlePreviewStateChanged;
+                previewService.PreviewReportChanged += HandlePreviewReportChanged;
+                previewEventsSubscribed = true;
+            }
+
+            if (fireSimulationService != null && !fireEventsSubscribed)
+            {
+                fireSimulationService.FireStateChanged += HandleFireStateChanged;
+                fireEventsSubscribed = true;
+            }
+
+            if (agentSimulationService != null && !agentEventsSubscribed)
+            {
+                agentSimulationService.AgentsChanged += HandleAgentsChanged;
+                agentEventsSubscribed = true;
+            }
         }
 
         private void RenderCross(string name, Vector2 center, Color color, float size)
@@ -231,6 +335,22 @@ namespace EvacLogix.Sandbox.Rendering
             }
 
             renderedObjects.Clear();
+        }
+
+        private static Vector2 CalculateCentroid(IReadOnlyList<Vector2> points)
+        {
+            if (points == null || points.Count == 0)
+            {
+                return Vector2.zero;
+            }
+
+            var sum = Vector2.zero;
+            for (var i = 0; i < points.Count; i += 1)
+            {
+                sum += points[i];
+            }
+
+            return sum / points.Count;
         }
     }
 }

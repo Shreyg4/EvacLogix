@@ -499,8 +499,8 @@ namespace EvacLogix.Sandbox.UI.Panels
                 {
                     GUILayout.BeginHorizontal();
                     DrawActionButton("Fire Tool", ActivateFirePlacement);
-                    DrawActionButton("Spawn Tool", ActivateSpawnPlacement);
-                    DrawActionButton("Spawn Brush", ActivateSpawnBrushPlacement);
+                    DrawActionButton("Spawn Point", ActivateSpawnPlacement);
+                    DrawActionButton("Spawn Point Brush", ActivateSpawnPointBrushPlacement);
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
@@ -508,7 +508,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                     DrawActionButton("Clear Mode", () => previewService.ClearInteractionMode());
                     GUILayout.EndHorizontal();
 
-                    GUILayout.Label($"Interaction: {previewService.InteractionMode}", bodyStyle);
+                    GUILayout.Label($"Interaction: {GetPreviewInteractionLabel(previewService.InteractionMode)}", bodyStyle);
                     if (!string.IsNullOrWhiteSpace(topBarShell.PreviewSummary))
                     {
                         GUILayout.Label(topBarShell.PreviewSummary, bodyStyle);
@@ -1439,15 +1439,15 @@ namespace EvacLogix.Sandbox.UI.Panels
             previewService.SetInteractionMode(SandboxPreviewInteractionMode.PlaceSpawnPoint);
         }
 
-        private void ActivateSpawnBrushPlacement()
+        private void ActivateSpawnPointBrushPlacement()
         {
             if (previewService == null)
             {
                 return;
             }
 
-            previewService.ConfigureSpawnBrush(1f, string.Empty, "Density Brush Layout", true);
-            previewService.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnBrush);
+            previewService.ConfigureSpawnPointBrush(1f, string.Empty, "Spawn Point Brush Layout", true);
+            previewService.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
         }
 
         private void ActivateRegionPlacement()
@@ -1982,8 +1982,20 @@ namespace EvacLogix.Sandbox.UI.Panels
                 SandboxToolMode.WallBrush => "Wall Brush",
                 SandboxToolMode.Teleport => "Teleport",
                 SandboxToolMode.SpawnPoint => "Spawn Point",
-                SandboxToolMode.SpawnBrush => "Spawn Brush",
+                SandboxToolMode.SpawnPointBrush => "Spawn Point Brush",
                 _ => toolMode.ToString()
+            };
+        }
+
+        private static string GetPreviewInteractionLabel(SandboxPreviewInteractionMode interactionMode)
+        {
+            return interactionMode switch
+            {
+                SandboxPreviewInteractionMode.PlaceFireOrigin => "Fire",
+                SandboxPreviewInteractionMode.PlaceSpawnPoint => "Spawn Point",
+                SandboxPreviewInteractionMode.PaintSpawnPointBrush => "Spawn Point Brush",
+                SandboxPreviewInteractionMode.PlaceRegion => "Region",
+                _ => "None"
             };
         }
     }

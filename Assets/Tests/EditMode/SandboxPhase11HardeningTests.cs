@@ -80,6 +80,8 @@ namespace EvacLogix.Tests.EditMode
             var harness = CreateHarness();
             harness.workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
 
+            CreateEnclosedRoom(harness.wallAuthoringService);
+
             Assert.That(harness.previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out var spawnLayoutId, null, "Morning Layout", true), Is.True);
             Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(6f, 2f), out var fireOriginId, 1f, 0f, true), Is.True);
             Assert.That(harness.previewAuthoringService.PlaceRegion(new Vector2(3f, 3f), new Vector2(2f, 2f), out var regionId, "North Zone", RegionSemanticType.SpawnZone), Is.True);
@@ -159,6 +161,7 @@ namespace EvacLogix.Tests.EditMode
             PopulateStressFloor(harness, floorTwoId, 12f);
             PopulateStressFloor(harness, floorThreeId, 24f);
 
+            CreateEnclosedRoom(harness.wallAuthoringService);
             Assert.That(harness.previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out var spawnLayoutId, null, "Stress Layout", true), Is.True);
             Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(-4f, -4f), out var fireOriginId, 1.2f, 1f, true), Is.True);
             Assert.That(harness.scenarioManagementService.CreateScenarioPreset(
@@ -267,6 +270,7 @@ namespace EvacLogix.Tests.EditMode
             var workspaceService = host.AddComponent<SandboxProjectWorkspaceService>();
             var colliderRebuildService = host.AddComponent<SandboxColliderRebuildService>();
             var validationService = host.AddComponent<SandboxValidationService>();
+            var roomDetectionService = host.AddComponent<SandboxRoomDetectionService>();
             var visualOrganizationService = host.AddComponent<SandboxVisualOrganizationService>();
             var clipboardService = host.AddComponent<SandboxClipboardService>();
             var wallSnappingService = host.AddComponent<SandboxWallSnappingService>();
@@ -284,6 +288,7 @@ namespace EvacLogix.Tests.EditMode
             workspaceService.SendMessage("Awake");
             colliderRebuildService.SendMessage("Awake");
             validationService.SendMessage("Awake");
+            roomDetectionService.SendMessage("Awake");
             visualOrganizationService.SendMessage("Awake");
             clipboardService.SendMessage("Awake");
             wallSnappingService.SendMessage("Awake");
@@ -331,6 +336,14 @@ namespace EvacLogix.Tests.EditMode
                 inspectorShell = inspectorShell,
                 legendShell = legendShell
             };
+        }
+
+        private static void CreateEnclosedRoom(SandboxWallAuthoringService wallAuthoringService)
+        {
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(-2f, -2f), new Vector2(4f, -2f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(4f, -2f), new Vector2(4f, 4f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(4f, 4f), new Vector2(-2f, 4f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(-2f, 4f), new Vector2(-2f, -2f), 0.2f), Is.True);
         }
 
         private sealed class Phase11Harness

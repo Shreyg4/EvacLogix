@@ -31,6 +31,55 @@ namespace EvacLogix.Sandbox.Infrastructure
         public int SealedRoomCount => detectedRooms.Count(room => !room.hasIntentionalOpenings);
         public int PenetratedRoomCount => detectedRooms.Count(room => room.hasIntentionalOpenings);
 
+        public bool IsPointInsideCompleteRoom(string floorId, Vector2 point)
+        {
+            var rooms = GetCompleteRoomsForFloor(floorId);
+            for (var i = 0; i < rooms.Count; i += 1)
+            {
+                if (IsPointInsidePolygon(rooms[i].polygonPoints, point))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public bool ArePointsInsideCompleteRooms(string floorId, IReadOnlyList<Vector2> points)
+        {
+            if (points == null || points.Count == 0)
+            {
+                return false;
+            }
+
+            var rooms = GetCompleteRoomsForFloor(floorId);
+            if (rooms.Count == 0)
+            {
+                return false;
+            }
+
+            for (var pointIndex = 0; pointIndex < points.Count; pointIndex += 1)
+            {
+                var point = points[pointIndex];
+                var isInsideAnyRoom = false;
+                for (var roomIndex = 0; roomIndex < rooms.Count; roomIndex += 1)
+                {
+                    if (IsPointInsidePolygon(rooms[roomIndex].polygonPoints, point))
+                    {
+                        isInsideAnyRoom = true;
+                        break;
+                    }
+                }
+
+                if (!isInsideAnyRoom)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private void Awake()
         {
             RefreshDependencies();
@@ -237,6 +286,23 @@ namespace EvacLogix.Sandbox.Infrastructure
             workspaceService ??= GetComponent<SandboxProjectWorkspaceService>();
             wallAuthoringService ??= GetComponent<SandboxWallAuthoringService>();
             semanticObjectAuthoringService ??= GetComponent<SandboxSemanticObjectAuthoringService>();
+        }
+
+        private List<SandboxDetectedRoomData> GetCompleteRoomsForFloor(string floorId)
+        {
+            if (string.IsNullOrWhiteSpace(floorId) || workspaceService?.ActiveProject == null)
+            {
+                return new List<SandboxDetectedRoomData>();
+            }
+
+            var floor = workspaceService.ActiveProject.floors.FirstOrDefault(candidate =>
+                string.Equals(candidate.floorId, floorId, StringComparison.Ordinal));
+            if (floor == null)
+            {
+                return new List<SandboxDetectedRoomData>();
+            }
+
+            return DetectRoomsForFloor(floor).ToList();
         }
 
         private static void AddNeighbor(IDictionary<string, List<string>> neighbors, string from, string to)
@@ -618,6 +684,63 @@ namespace EvacLogix.Sandbox.Infrastructure
 
             intersection = a + ab * Mathf.Clamp01(t);
             return true;
+        }
+
+        private static bool IsPointInsidePolygon(IReadOnlyList<Vector2> polygon, Vector2 point)
+        {
+            if (polygon == null || polygon.Count < 3)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < polygon.Count; index += 1)
+            {
+                var nextIndex = (index + 1) % polygon.Count;
+                if (IsPointOnSegment(point, polygon[index], polygon[nextIndex]))
+                {
+                    return true;
+                }
+            }
+
+            var inside = false;
+            for (var index = 0; index < polygon.Count; index += 1)
+            {
+                var previousIndex = index == 0 ? polygon.Count - 1 : index - 1;
+                var current = polygon[index];
+                var previous = polygon[previousIndex];
+                var deltaY = previous.y - current.y;
+                if (Mathf.Abs(deltaY) <= GeometryTolerance)
+                {
+                    continue;
+                }
+
+                var intersects = (current.y > point.y) != (previous.y > point.y) &&
+                                 point.x < ((previous.x - current.x) * (point.y - current.y) / deltaY) + current.x;
+                if (intersects)
+                {
+                    inside = !inside;
+                }
+            }
+
+            return inside;
+        }
+
+        private static bool IsPointOnSegment(Vector2 point, Vector2 start, Vector2 end)
+        {
+            var segment = end - start;
+            var toPoint = point - start;
+            if (Mathf.Abs(Cross(segment, toPoint)) > GeometryTolerance)
+            {
+                return false;
+            }
+
+            var projection = Vector2.Dot(toPoint, segment);
+            if (projection < -GeometryTolerance)
+            {
+                return false;
+            }
+
+            return projection <= segment.sqrMagnitude + GeometryTolerance;
         }
 
         private static List<OpeningInfo> FindOpeningsOnWalls(FloorData floor, IReadOnlyCollection<string> wallSegmentIds)
