@@ -1,8 +1,10 @@
+using System.Collections.Generic;
 using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Authoring.Commands;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Rendering;
 using EvacLogix.Sandbox.UI.Panels;
 using UnityEngine;
 
@@ -12,6 +14,9 @@ namespace EvacLogix.Sandbox.UI.Overlays
     {
         [SerializeField] private Color doorGhostColor = new(0.18f, 0.55f, 1f, 0.75f);
         [SerializeField] private Color windowGhostColor = new(0.72f, 0.3f, 1f, 0.75f);
+        [SerializeField] private Color exitGhostColor = new(0.2f, 0.9f, 0.5f, 0.75f);
+        [SerializeField] private Color obstacleGhostColor = new(0.85f, 0.25f, 0.2f, 0.75f);
+        [SerializeField] private Color teleportGhostColor = new(0.3f, 0.95f, 0.95f, 0.75f);
         [SerializeField] private Color invalidGhostColor = new(1f, 0.2f, 0.18f, 0.65f);
         [SerializeField] private Color ghostMaskColor = new(0.11f, 0.18f, 0.3f, 0.92f);
         [SerializeField] private float ghostLineWidth = 0.08f;
@@ -25,7 +30,9 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private SandboxInputRouter inputRouter;
         private SandboxStatusBarShell statusBar;
         private SandboxProjectWorkspaceService workspaceService;
+        private SandboxWorkspaceStateService workspaceStateService;
         private SandboxCommandHistory commandHistory;
+        private const float PlacementSnapPixelTolerance = 8f;
         private string pendingTeleportPortalId = string.Empty;
         private string pendingTeleportPairId = string.Empty;
         private int pendingTeleportColorIndex;
@@ -41,6 +48,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             inputRouter = FindAnyObjectByType<SandboxInputRouter>();
             statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
             workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
+            workspaceStateService = FindAnyObjectByType<SandboxWorkspaceStateService>();
             commandHistory = FindAnyObjectByType<SandboxCommandHistory>();
 
             if (toolStateService != null)
@@ -61,14 +69,14 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void Update()
         {
-            UpdateOpeningGhost();
+            UpdatePlacementGhost();
 
             if (toolStateService == null || semanticObjectAuthoringService == null)
             {
                 return;
             }
 
-            if (IsPlacementTool(toolStateService.CurrentToolMode) && SandboxInputAdapter.GetMouseButtonDown(1))
+            if (IsPlacementTool(toolStateService.CurrentToolMode) && SandboxInputAdapter.WasRightMouseClickReleasedThisFrame())
             {
                 CancelPlacementToSelect();
                 return;
@@ -211,6 +219,84 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 : fallback;
         }
 
+        private void UpdatePlacementGhost()
+        {
+            if (toolStateService == null || semanticObjectAuthoringService == null)
+            {
+                ClearGhost();
+                return;
+            }
+
+            var mode = toolStateService.CurrentToolMode;
+            if (mode == SandboxToolMode.Door || mode == SandboxToolMode.Window)
+            {
+                UpdateOpeningGhost();
+                return;
+            }
+
+            if (mode == SandboxToolMode.Exit || mode == SandboxToolMode.Obstacle || mode == SandboxToolMode.Teleport)
+            {
+                UpdateRectanglePlacementGhost(mode);
+                return;
+            }
+
+            lastOpeningGhostStatus = string.Empty;
+            ClearGhost();
+        }
+
+        private void UpdateRectanglePlacementGhost(SandboxToolMode mode)
+        {
+            var inputTarget = inputRouter != null
+                ? inputRouter.ResolvePointerTarget(SandboxInputAdapter.PointerScreenPosition)
+                : SandboxInputTarget.World;
+            if (workspaceService?.ActiveFloor == null || inputTarget != SandboxInputTarget.World)
+            {
+                lastOpeningGhostStatus = string.Empty;
+                ClearGhost();
+                return;
+            }
+
+            SandboxVisualObjectType type;
+            Vector2 size;
+            Color color;
+            switch (mode)
+            {
+                case SandboxToolMode.Exit:
+                    type = SandboxVisualObjectType.Exit;
+                    size = semanticObjectAuthoringService.DefaultExitZoneSize;
+                    color = exitGhostColor;
+                    break;
+                case SandboxToolMode.Obstacle:
+                    type = SandboxVisualObjectType.Obstacle;
+                    size = semanticObjectAuthoringService.DefaultObstacleSize;
+                    color = obstacleGhostColor;
+                    break;
+                default:
+                    type = SandboxVisualObjectType.Teleport;
+                    size = semanticObjectAuthoringService.DefaultTeleportPortalSize;
+                    color = teleportGhostColor;
+                    break;
+            }
+
+            var center = ApplyPlacementSnap(type, ScreenToWorldPoint(SandboxInputAdapter.PointerScreenPosition));
+            var half = size * 0.5f;
+            var bottomLeft = center + new Vector2(-half.x, -half.y);
+            var topLeft = center + new Vector2(-half.x, half.y);
+            var topRight = center + new Vector2(half.x, half.y);
+            var bottomRight = center + new Vector2(half.x, -half.y);
+            RenderGhostLine(0, bottomLeft, topLeft, color, ghostLineWidth);
+            RenderGhostLine(1, topLeft, topRight, color, ghostLineWidth);
+            RenderGhostLine(2, topRight, bottomRight, color, ghostLineWidth);
+            RenderGhostLine(3, bottomRight, bottomLeft, color, ghostLineWidth);
+
+            var statusMessage = $"{type} ready: click to place.";
+            if (!string.Equals(lastOpeningGhostStatus, statusMessage, System.StringComparison.Ordinal))
+            {
+                lastOpeningGhostStatus = statusMessage;
+                UpdateStatus(statusMessage);
+            }
+        }
+
         private void UpdateOpeningGhost()
         {
             if (toolStateService == null || semanticObjectAuthoringService == null)
@@ -329,6 +415,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void HandleExitPlacement(Vector2 worldPoint)
         {
+            worldPoint = ApplyPlacementSnap(SandboxVisualObjectType.Exit, worldPoint);
             if (semanticObjectAuthoringService.PlaceExit(worldPoint, out _))
             {
                 UpdateStatus("Placed exit zone.");
@@ -337,10 +424,46 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void HandleObstaclePlacement(Vector2 worldPoint)
         {
+            worldPoint = ApplyPlacementSnap(SandboxVisualObjectType.Obstacle, worldPoint);
             if (semanticObjectAuthoringService.PlaceObstacle(worldPoint, out _))
             {
                 UpdateStatus("Placed obstacle.");
             }
+        }
+
+        // Snaps the placement center to same-type peers, walls, and the grid (boxes only).
+        private Vector2 ApplyPlacementSnap(SandboxVisualObjectType objectType, Vector2 point)
+        {
+            if (workspaceStateService != null && !workspaceStateService.SnappingEnabled)
+            {
+                return point;
+            }
+
+            var floor = workspaceService?.ActiveFloor;
+            if (floor == null)
+            {
+                return point;
+            }
+
+            var gridSize = workspaceStateService != null ? workspaceStateService.GridSize : 0.5f;
+            var tolerance = SandboxAlignmentGuideUtility.PixelToleranceToWorld(Camera.main, PlacementSnapPixelTolerance);
+            var referenceXs = new List<float>();
+            var referenceYs = new List<float>();
+            SandboxAlignmentGuideUtility.CollectSameTypeAxisReferences(floor, objectType, null, referenceXs, referenceYs);
+            SandboxAlignmentGuideUtility.CollectWallAxisReferences(floor, referenceXs, referenceYs);
+
+            var result = point;
+            if (SandboxAlignmentGuideUtility.TryResolveAxisSnap(new[] { point.x }, referenceXs, gridSize, tolerance, true, out var offsetX))
+            {
+                result.x += offsetX;
+            }
+
+            if (SandboxAlignmentGuideUtility.TryResolveAxisSnap(new[] { point.y }, referenceYs, gridSize, tolerance, false, out var offsetY))
+            {
+                result.y += offsetY;
+            }
+
+            return result;
         }
 
 
@@ -350,6 +473,8 @@ namespace EvacLogix.Sandbox.UI.Overlays
             {
                 return;
             }
+
+            worldPoint = ApplyPlacementSnap(SandboxVisualObjectType.Teleport, worldPoint);
 
             if (string.IsNullOrWhiteSpace(pendingTeleportPortalId))
             {
