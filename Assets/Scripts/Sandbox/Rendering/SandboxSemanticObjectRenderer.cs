@@ -33,6 +33,7 @@ namespace EvacLogix.Sandbox.Rendering
         private SandboxWorkspaceStateService workspaceStateService;
         private SandboxSelectionService selectionService;
         private SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
+        private SandboxPreviewAuthoringService previewAuthoringService;
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxEditorQoLService editorQoLService;
         private SandboxObjectInteractionOverlay objectInteractionOverlay;
@@ -49,6 +50,7 @@ namespace EvacLogix.Sandbox.Rendering
             workspaceStateService = FindAnyObjectByType<SandboxWorkspaceStateService>();
             selectionService = FindAnyObjectByType<SandboxSelectionService>();
             semanticObjectAuthoringService = FindAnyObjectByType<SandboxSemanticObjectAuthoringService>();
+            previewAuthoringService = FindAnyObjectByType<SandboxPreviewAuthoringService>();
             visualOrganizationService = FindAnyObjectByType<SandboxVisualOrganizationService>();
             editorQoLService = FindAnyObjectByType<SandboxEditorQoLService>();
             objectInteractionOverlay = FindAnyObjectByType<SandboxObjectInteractionOverlay>();
@@ -67,6 +69,11 @@ namespace EvacLogix.Sandbox.Rendering
             if (semanticObjectAuthoringService != null)
             {
                 semanticObjectAuthoringService.SemanticObjectsChanged += HandleSemanticObjectsChanged;
+            }
+
+            if (previewAuthoringService != null)
+            {
+                previewAuthoringService.PreviewAuthoringChanged += HandlePreviewAuthoringChanged;
             }
 
             if (visualOrganizationService != null)
@@ -98,6 +105,11 @@ namespace EvacLogix.Sandbox.Rendering
             if (semanticObjectAuthoringService != null)
             {
                 semanticObjectAuthoringService.SemanticObjectsChanged -= HandleSemanticObjectsChanged;
+            }
+
+            if (previewAuthoringService != null)
+            {
+                previewAuthoringService.PreviewAuthoringChanged -= HandlePreviewAuthoringChanged;
             }
 
             if (visualOrganizationService != null)
@@ -343,7 +355,7 @@ namespace EvacLogix.Sandbox.Rendering
                             continue;
                         }
 
-                        RenderDiamond(
+                        RenderSpawnPointMarker(
                             $"SpawnPoint_{spawnPoint.spawnPointId}",
                             spawnPoint.position,
                             ResolveSelectionColor(spawnPoint.spawnPointId, ResolveBaseColor(SandboxVisualObjectType.Spawn)));
@@ -476,6 +488,11 @@ namespace EvacLogix.Sandbox.Rendering
             Refresh();
         }
 
+        private void HandlePreviewAuthoringChanged()
+        {
+            Refresh();
+        }
+
         private void HandleVisualStateChanged()
         {
             Refresh();
@@ -594,10 +611,36 @@ namespace EvacLogix.Sandbox.Rendering
             RenderPolyline(name, points, color, true);
         }
 
+        private void RenderSpawnPointMarker(string name, Vector2 center, Color color)
+        {
+            var haloColor = new Color(color.r, color.g, color.b, Mathf.Clamp01(color.a * 0.35f));
+            RenderCircle($"{name}_Halo", center, markerRadius * 1.2f, haloColor);
+            RenderDiamond($"{name}_Diamond", center, color);
+            RenderCross($"{name}_Cross", center, color, markerRadius * 0.55f);
+        }
+
+        private void RenderCircle(string name, Vector2 center, float radius, Color color)
+        {
+            const int segmentCount = 18;
+            var points = new Vector2[segmentCount];
+            for (var i = 0; i < segmentCount; i += 1)
+            {
+                var angle = i / (float)segmentCount * Mathf.PI * 2f;
+                points[i] = center + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * radius;
+            }
+
+            RenderPolyline(name, points, color, true);
+        }
+
         private void RenderCross(string name, Vector2 center, Color color)
         {
-            RenderLine($"{name}_A", center + new Vector2(-markerRadius, -markerRadius), center + new Vector2(markerRadius, markerRadius), color);
-            RenderLine($"{name}_B", center + new Vector2(-markerRadius, markerRadius), center + new Vector2(markerRadius, -markerRadius), color);
+            RenderCross(name, center, color, markerRadius);
+        }
+
+        private void RenderCross(string name, Vector2 center, Color color, float radius)
+        {
+            RenderLine($"{name}_A", center + new Vector2(-radius, -radius), center + new Vector2(radius, radius), color);
+            RenderLine($"{name}_B", center + new Vector2(-radius, radius), center + new Vector2(radius, -radius), color);
         }
 
         private void RenderLine(string name, Vector2 start, Vector2 end, Color color)

@@ -94,6 +94,12 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(project.floors.Single().regions.Single(region => region.regionId == regionId).name, Is.EqualTo("North Spawn Zone"));
             Assert.That(project.floors.Single().regions.Single(region => region.regionId == regionId).semanticType, Is.EqualTo(RegionSemanticType.SpawnZone));
 
+            var semanticRendererObject = new GameObject("SemanticRenderer");
+            var semanticRenderer = semanticRendererObject.AddComponent<SandboxSemanticObjectRenderer>();
+            semanticRenderer.SendMessage("Awake");
+            Assert.That(semanticRendererObject.transform.Cast<Transform>().Any(child => child.name.StartsWith($"SpawnPoint_{spawnPointId}", System.StringComparison.Ordinal)), Is.True);
+
+            Object.DestroyImmediate(semanticRendererObject);
             Object.DestroyImmediate(host);
         }
 
