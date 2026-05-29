@@ -7,6 +7,14 @@ namespace EvacLogix.Sandbox.Infrastructure
 {
     public static class SandboxInputAdapter
     {
+        private const float RightMousePanThresholdPixels = 6f;
+
+        private static int rightMouseGestureFrame = -1;
+        private static bool rightMousePressed;
+        private static bool rightMousePanActive;
+        private static bool rightMouseReleasedWithoutPanThisFrame;
+        private static Vector2 rightMousePressStartScreenPoint;
+
         public static Vector2 PointerScreenPosition
         {
             get
@@ -43,6 +51,81 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public static bool GetMouseButton(int button)
         {
+            return GetRawMouseButton(button);
+        }
+
+        public static bool GetMouseButtonDown(int button)
+        {
+            return GetRawMouseButtonDown(button);
+        }
+
+        public static bool GetMouseButtonUp(int button)
+        {
+            return GetRawMouseButtonUp(button);
+        }
+
+        public static bool IsRightMousePanActive
+        {
+            get
+            {
+                UpdateRightMouseGestureState();
+                return rightMousePanActive;
+            }
+        }
+
+        public static bool WasRightMouseClickReleasedThisFrame()
+        {
+            UpdateRightMouseGestureState();
+            return rightMouseReleasedWithoutPanThisFrame;
+        }
+
+        private static void UpdateRightMouseGestureState()
+        {
+            if (rightMouseGestureFrame == Time.frameCount)
+            {
+                return;
+            }
+
+            rightMouseGestureFrame = Time.frameCount;
+            rightMouseReleasedWithoutPanThisFrame = false;
+
+            var rightMouseDown = GetRawMouseButtonDown(1);
+            var rightMouseHeld = GetRawMouseButton(1);
+            var rightMouseUp = GetRawMouseButtonUp(1);
+            var pointerScreenPosition = PointerScreenPosition;
+
+            if (rightMouseDown)
+            {
+                rightMousePressed = true;
+                rightMousePanActive = false;
+                rightMousePressStartScreenPoint = pointerScreenPosition;
+            }
+
+            if (rightMousePressed &&
+                rightMouseHeld &&
+                !rightMousePanActive &&
+                (pointerScreenPosition - rightMousePressStartScreenPoint).sqrMagnitude >= RightMousePanThresholdPixels * RightMousePanThresholdPixels)
+            {
+                rightMousePanActive = true;
+            }
+
+            if (rightMouseUp)
+            {
+                rightMouseReleasedWithoutPanThisFrame = rightMousePressed && !rightMousePanActive;
+                rightMousePressed = false;
+                rightMousePanActive = false;
+                return;
+            }
+
+            if (!rightMouseHeld && !rightMouseDown)
+            {
+                rightMousePressed = false;
+                rightMousePanActive = false;
+            }
+        }
+
+        private static bool GetRawMouseButton(int button)
+        {
 #if ENABLE_INPUT_SYSTEM
             var mouse = Mouse.current;
             if (mouse == null)
@@ -62,7 +145,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 #endif
         }
 
-        public static bool GetMouseButtonDown(int button)
+        private static bool GetRawMouseButtonDown(int button)
         {
 #if ENABLE_INPUT_SYSTEM
             var mouse = Mouse.current;
@@ -83,7 +166,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 #endif
         }
 
-        public static bool GetMouseButtonUp(int button)
+        private static bool GetRawMouseButtonUp(int button)
         {
 #if ENABLE_INPUT_SYSTEM
             var mouse = Mouse.current;

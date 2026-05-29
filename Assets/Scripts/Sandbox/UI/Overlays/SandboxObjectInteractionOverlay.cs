@@ -6,6 +6,7 @@ using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Rendering;
 using EvacLogix.Sandbox.UI.Panels;
 using UnityEngine;
 
@@ -25,10 +26,11 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private const float RectangleHandleHitRadius = 0.28f;
         private const float RegionEdgeHitRadius = 0.35f;
         private const float SelectionDragThreshold = 0.2f;
+        private const float AlignmentSnapPixelTolerance = 8f;
         private const float MinEraseBrushRadius = 0.35f;
         private const float MaxEraseBrushRadius = 3.5f;
         private const float DefaultEraseBrushRadius = 0.9f;
-        private static readonly Color ErasePanelBackdropColor = new(0.14f, 0.07f, 0.07f, 0.88f);
+        private static readonly Color ErasePanelBackdropColor = new(0.14f, 0.07f, 0.07f, 1f);
         private static readonly Color EraseAccentColor = new(0.97f, 0.37f, 0.31f, 0.96f);
         private static readonly Color EraseSecondaryColor = new(1f, 0.79f, 0.31f, 0.94f);
         private static readonly Color EraseTextColor = new(1f, 0.96f, 0.94f, 1f);
@@ -90,6 +92,8 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private SandboxHitKind draggedHitKind = SandboxHitKind.None;
         private Vector2 selectionDragStartWorldPoint;
         private Vector2 selectionDragCurrentWorldPoint;
+        private bool hasOpeningDragPreview;
+        private SandboxOpeningPlacementPreview draggedOpeningPreview;
         private bool isRectangleHandleDragActive;
         private string draggedRectangleObjectId = string.Empty;
         private SandboxHitKind draggedRectangleHitKind = SandboxHitKind.None;
@@ -156,6 +160,15 @@ namespace EvacLogix.Sandbox.UI.Overlays
         public string DraggedObjectId => draggedObjectId;
         public Vector2 SelectionDragStartWorldPoint => selectionDragStartWorldPoint;
         public Vector2 SelectionDragCurrentWorldPoint => selectionDragCurrentWorldPoint;
+        public bool HasOpeningDragPreview => hasOpeningDragPreview;
+        public string DraggedOpeningObjectId => hasOpeningDragPreview ? draggedObjectId : string.Empty;
+        public SandboxVisualObjectType? DraggedOpeningObjectType => draggedHitKind switch
+        {
+            SandboxHitKind.Door => SandboxVisualObjectType.Door,
+            SandboxHitKind.Window => SandboxVisualObjectType.Window,
+            _ => null,
+        };
+        public SandboxOpeningPlacementPreview DraggedOpeningPreview => draggedOpeningPreview;
         public bool IsRectangleHandleDragActive => isRectangleHandleDragActive;
         public string DraggedRectangleObjectId => draggedRectangleObjectId;
         public SandboxVisualObjectType? DraggedRectangleObjectType => draggedRectangleHitKind switch
@@ -165,6 +178,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             SandboxHitKind.Teleport => SandboxVisualObjectType.Teleport,
             _ => null,
         };
+        public int DraggedRectangleHandleIndex => draggedRectangleHandleIndex;
         public Vector2 DraggedRectanglePreviewCenter => draggedRectanglePreviewCenter;
         public Vector2 DraggedRectanglePreviewSize => draggedRectanglePreviewSize;
         public float DraggedRectanglePreviewRotationDegrees => draggedRectanglePreviewRotationDegrees;
@@ -338,6 +352,8 @@ namespace EvacLogix.Sandbox.UI.Overlays
             draggedHitKind = hit.kind;
             selectionDragStartWorldPoint = worldPoint;
             selectionDragCurrentWorldPoint = worldPoint;
+            hasOpeningDragPreview = false;
+            draggedOpeningPreview = default;
             UpdateStatus($"Dragging {hit.label}. Release to move.");
             return true;
         }
@@ -349,12 +365,45 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return;
             }
 
+            worldPoint = ApplyBoxDragSnap(worldPoint);
             selectionDragCurrentWorldPoint = worldPoint;
+            if (!IsOpeningHit(draggedHitKind) || selectionService == null || selectionService.SelectedObjectIds.Count != 1 || semanticObjectAuthoringService == null)
+            {
+                return;
+            }
+
+            var openingType = draggedHitKind == SandboxHitKind.Door
+                ? SandboxVisualObjectType.Door
+                : SandboxVisualObjectType.Window;
+            var authoredWidth = GetDraggedOpeningWidth();
+            if (authoredWidth <= 0f)
+            {
+                hasOpeningDragPreview = false;
+                draggedOpeningPreview = default;
+                return;
+            }
+
+            hasOpeningDragPreview = semanticObjectAuthoringService.TryGetOpeningPlacementPreview(
+                worldPoint,
+                authoredWidth,
+                openingType,
+                draggedObjectId,
+                out draggedOpeningPreview);
         }
 
         public bool CommitSelectionDrag()
         {
-            if (!isSelectionDragActive || clipboardService == null)
+            if (!isSelectionDragActive)
+            {
+                return false;
+            }
+
+            if (TryCommitOpeningSelectionDrag(out var didCommitOpeningDrag))
+            {
+                return didCommitOpeningDrag;
+            }
+
+            if (clipboardService == null)
             {
                 return false;
             }
@@ -394,7 +443,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     CommitRectangleHandleDrag();
                 }
 
-                if (SandboxInputAdapter.GetMouseButtonDown(1))
+                if (SandboxInputAdapter.WasRightMouseClickReleasedThisFrame())
                 {
                     CancelRectangleHandleDrag();
                 }
@@ -419,7 +468,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     CommitSelectionDrag();
                 }
 
-                if (SandboxInputAdapter.GetMouseButtonDown(1))
+                if (SandboxInputAdapter.WasRightMouseClickReleasedThisFrame())
                 {
                     CancelSelectionDrag();
                 }
@@ -624,6 +673,66 @@ namespace EvacLogix.Sandbox.UI.Overlays
             return false;
         }
 
+        private bool TryCommitOpeningSelectionDrag(out bool didCommit)
+        {
+            didCommit = false;
+            if (!IsOpeningHit(draggedHitKind) ||
+                selectionService == null ||
+                selectionService.SelectedObjectIds.Count != 1)
+            {
+                return false;
+            }
+
+            if (!hasOpeningDragPreview || !draggedOpeningPreview.isValid || semanticObjectAuthoringService == null)
+            {
+                ClearSelectionDragState();
+                measurementService?.RefreshSelectionReadout();
+                UpdateStatus(string.IsNullOrWhiteSpace(draggedOpeningPreview.message)
+                    ? "Opening move cancelled. Move it to a valid wall span."
+                    : draggedOpeningPreview.message);
+                return true;
+            }
+
+            switch (draggedHitKind)
+            {
+                case SandboxHitKind.Door:
+                    if (TryFindDoor(draggedObjectId, out _, out var door))
+                    {
+                        didCommit = semanticObjectAuthoringService.UpdateDoor(
+                            door.doorId,
+                            draggedOpeningPreview.width,
+                            draggedOpeningPreview.wallSegmentId,
+                            draggedOpeningPreview.offsetAlongWall,
+                            door.state,
+                            door.tags,
+                            door.metadataFields);
+                    }
+
+                    break;
+                case SandboxHitKind.Window:
+                    if (TryFindWindow(draggedObjectId, out _, out var window))
+                    {
+                        didCommit = semanticObjectAuthoringService.UpdateWindow(
+                            window.windowId,
+                            draggedOpeningPreview.width,
+                            draggedOpeningPreview.wallSegmentId,
+                            draggedOpeningPreview.offsetAlongWall,
+                            window.canBeUsedForEscape,
+                            window.escapeCost,
+                            window.escapeRiskMultiplier,
+                            window.tags,
+                            window.metadataFields);
+                    }
+
+                    break;
+            }
+
+            ClearSelectionDragState();
+            measurementService?.RefreshSelectionReadout();
+            UpdateStatus(didCommit ? "Moved opening." : "Opening move cancelled.");
+            return true;
+        }
+
         private void UpdateRectangleHandleDragPreview(Vector2 worldPoint)
         {
             if (!isRectangleHandleDragActive)
@@ -631,6 +740,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return;
             }
 
+            worldPoint = ApplyCornerSnap(worldPoint);
             var rotation = Quaternion.Euler(0f, 0f, draggedRectanglePreviewRotationDegrees);
             var inverseRotation = Quaternion.Inverse(rotation);
             var anchorInRotationSpace = (Vector2)(inverseRotation * new Vector3(draggedRectangleAnchorWorld.x, draggedRectangleAnchorWorld.y, 0f));
@@ -646,6 +756,103 @@ namespace EvacLogix.Sandbox.UI.Overlays
             var centerInRotationSpace = (anchorInRotationSpace + currentInRotationSpace) * 0.5f;
             draggedRectanglePreviewCenter = rotation * new Vector3(centerInRotationSpace.x, centerInRotationSpace.y, 0f);
             draggedRectanglePreviewSize = nextSize;
+        }
+
+        // Snaps a box being dragged so its edges/center align to same-type peers, walls, and the
+        // grid (visual-only objects: exits/obstacles/teleports). Returns the cursor point shifted
+        // by the alignment offset so the move delta lands on the alignment.
+        private Vector2 ApplyBoxDragSnap(Vector2 worldPoint)
+        {
+            if (workspaceStateService != null && !workspaceStateService.SnappingEnabled)
+            {
+                return worldPoint;
+            }
+
+            var rawDelta = worldPoint - selectionDragStartWorldPoint;
+            if (TryFindExit(draggedObjectId, out _, out var exitZone))
+            {
+                return worldPoint + ResolveBoxAlignmentOffset(SandboxVisualObjectType.Exit, exitZone.exitZoneId, exitZone.center + rawDelta, exitZone.size, exitZone.rotationDegrees);
+            }
+
+            if (TryFindObstacle(draggedObjectId, out _, out var obstacle))
+            {
+                return worldPoint + ResolveBoxAlignmentOffset(SandboxVisualObjectType.Obstacle, obstacle.obstacleId, obstacle.center + rawDelta, obstacle.size, obstacle.rotationDegrees);
+            }
+
+            if (TryFindTeleport(draggedObjectId, out _, out var teleportPortal))
+            {
+                return worldPoint + ResolveBoxAlignmentOffset(SandboxVisualObjectType.Teleport, teleportPortal.teleportPortalId, teleportPortal.localPosition + rawDelta, teleportPortal.size, teleportPortal.rotationDegrees);
+            }
+
+            return worldPoint;
+        }
+
+        // Snaps the dragged resize corner per-axis onto a same-type peer / wall / grid reference.
+        private Vector2 ApplyCornerSnap(Vector2 corner)
+        {
+            if (workspaceStateService != null && !workspaceStateService.SnappingEnabled)
+            {
+                return corner;
+            }
+
+            var objectType = DraggedRectangleObjectType;
+            var floor = workspaceService?.ActiveFloor;
+            if (objectType == null || floor == null)
+            {
+                return corner;
+            }
+
+            var gridSize = workspaceStateService != null ? workspaceStateService.GridSize : 0.5f;
+            var tolerance = SandboxAlignmentGuideUtility.PixelToleranceToWorld(Camera.main, AlignmentSnapPixelTolerance);
+            var referenceXs = new List<float>();
+            var referenceYs = new List<float>();
+            SandboxAlignmentGuideUtility.CollectSameTypeAxisReferences(floor, objectType.Value, draggedRectangleObjectId, referenceXs, referenceYs);
+            SandboxAlignmentGuideUtility.CollectWallAxisReferences(floor, referenceXs, referenceYs);
+
+            var result = corner;
+            if (SandboxAlignmentGuideUtility.TryResolveAxisSnap(new[] { corner.x }, referenceXs, gridSize, tolerance, true, out var offsetX))
+            {
+                result.x += offsetX;
+            }
+
+            if (SandboxAlignmentGuideUtility.TryResolveAxisSnap(new[] { corner.y }, referenceYs, gridSize, tolerance, false, out var offsetY))
+            {
+                result.y += offsetY;
+            }
+
+            return result;
+        }
+
+        private Vector2 ResolveBoxAlignmentOffset(SandboxVisualObjectType objectType, string ignoredObjectId, Vector2 center, Vector2 size, float rotationDegrees)
+        {
+            var floor = workspaceService?.ActiveFloor;
+            if (floor == null)
+            {
+                return Vector2.zero;
+            }
+
+            var gridSize = workspaceStateService != null ? workspaceStateService.GridSize : 0.5f;
+            var tolerance = SandboxAlignmentGuideUtility.PixelToleranceToWorld(Camera.main, AlignmentSnapPixelTolerance);
+            var candidateXs = new List<float>();
+            var candidateYs = new List<float>();
+            SandboxAlignmentGuideUtility.AppendRectangleCandidates(center, size, rotationDegrees, candidateXs, candidateYs);
+            var referenceXs = new List<float>();
+            var referenceYs = new List<float>();
+            SandboxAlignmentGuideUtility.CollectSameTypeAxisReferences(floor, objectType, ignoredObjectId, referenceXs, referenceYs);
+            SandboxAlignmentGuideUtility.CollectWallAxisReferences(floor, referenceXs, referenceYs);
+
+            var offset = Vector2.zero;
+            if (SandboxAlignmentGuideUtility.TryResolveAxisSnap(candidateXs, referenceXs, gridSize, tolerance, true, out var offsetX))
+            {
+                offset.x = offsetX;
+            }
+
+            if (SandboxAlignmentGuideUtility.TryResolveAxisSnap(candidateYs, referenceYs, gridSize, tolerance, false, out var offsetY))
+            {
+                offset.y = offsetY;
+            }
+
+            return offset;
         }
 
         private void CommitRectangleHandleDrag()
@@ -1502,6 +1709,56 @@ namespace EvacLogix.Sandbox.UI.Overlays
             return false;
         }
 
+        private bool TryFindDoor(string objectId, out FloorData floor, out DoorData door)
+        {
+            floor = null;
+            door = null;
+            var project = workspaceService?.ActiveProject;
+            if (project?.floors == null)
+            {
+                return false;
+            }
+
+            foreach (var candidateFloor in project.floors)
+            {
+                door = candidateFloor.doors.FirstOrDefault(candidate => string.Equals(candidate.doorId, objectId, StringComparison.Ordinal));
+                if (door == null)
+                {
+                    continue;
+                }
+
+                floor = candidateFloor;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryFindWindow(string objectId, out FloorData floor, out WindowData window)
+        {
+            floor = null;
+            window = null;
+            var project = workspaceService?.ActiveProject;
+            if (project?.floors == null)
+            {
+                return false;
+            }
+
+            foreach (var candidateFloor in project.floors)
+            {
+                window = candidateFloor.windows.FirstOrDefault(candidate => string.Equals(candidate.windowId, objectId, StringComparison.Ordinal));
+                if (window == null)
+                {
+                    continue;
+                }
+
+                floor = candidateFloor;
+                return true;
+            }
+
+            return false;
+        }
+
         private void EvaluateWalls(FloorData floor, Vector2 worldPoint, ref SandboxHitResult bestHit)
         {
             foreach (var wall in floor.wallSegments)
@@ -1991,6 +2248,23 @@ namespace EvacLogix.Sandbox.UI.Overlays
             draggedHitKind = SandboxHitKind.None;
             selectionDragStartWorldPoint = Vector2.zero;
             selectionDragCurrentWorldPoint = Vector2.zero;
+            hasOpeningDragPreview = false;
+            draggedOpeningPreview = default;
+        }
+
+        private static bool IsOpeningHit(SandboxHitKind hitKind)
+        {
+            return hitKind == SandboxHitKind.Door || hitKind == SandboxHitKind.Window;
+        }
+
+        private float GetDraggedOpeningWidth()
+        {
+            return draggedHitKind switch
+            {
+                SandboxHitKind.Door when TryFindDoor(draggedObjectId, out _, out var door) => door.width,
+                SandboxHitKind.Window when TryFindWindow(draggedObjectId, out _, out var window) => window.width,
+                _ => 0f,
+            };
         }
     }
 }

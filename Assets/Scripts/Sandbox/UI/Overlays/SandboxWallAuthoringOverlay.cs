@@ -133,7 +133,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     CommitJunctionDrag();
                 }
 
-                if (SandboxInputAdapter.GetMouseButtonDown(1))
+                if (SandboxInputAdapter.WasRightMouseClickReleasedThisFrame())
                 {
                     CancelJunctionDrag();
                 }
@@ -152,7 +152,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return;
             }
 
-            if (SandboxInputAdapter.GetMouseButtonDown(1))
+            if (SandboxInputAdapter.WasRightMouseClickReleasedThisFrame())
             {
                 var hadPendingSegment = wallAuthoringService.HasPendingLineStart;
                 wallAuthoringService.CancelLinePlacement();

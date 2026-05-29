@@ -661,6 +661,9 @@ namespace EvacLogix.Sandbox.Infrastructure
                 return false;
             }
 
+            floor.doors.RemoveAll(candidate => wallIds.Contains(candidate.wallSegmentId));
+            floor.windows.RemoveAll(candidate => wallIds.Contains(candidate.wallSegmentId));
+
             for (var i = 0; i < wallIds.Count; i += 1)
             {
                 var wall = floor.wallSegments.FirstOrDefault(candidate =>
