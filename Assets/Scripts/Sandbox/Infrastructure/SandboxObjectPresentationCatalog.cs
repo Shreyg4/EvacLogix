@@ -79,7 +79,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             {
                 objectType = SandboxVisualObjectType.Spawn,
                 label = "Spawns",
-                description = "Intentional occupant start positions and density brushes used for preview setup.",
+                description = "Intentional spawn points used to place runtime agents during preview setup.",
                 advancedFoldoutKey = "spawn.advanced",
                 color = new Color(0.2f, 0.9f, 0.5f, 1f)
             },

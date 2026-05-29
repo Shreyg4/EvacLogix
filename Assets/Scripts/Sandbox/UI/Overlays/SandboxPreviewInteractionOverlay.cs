@@ -41,8 +41,8 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 case SandboxPreviewInteractionMode.PlaceSpawnPoint:
                     HandleSpawnPointPlacement(worldPoint);
                     break;
-                case SandboxPreviewInteractionMode.PaintSpawnBrush:
-                    HandleSpawnBrushPlacement(worldPoint);
+                case SandboxPreviewInteractionMode.PaintSpawnPointBrush:
+                    HandleSpawnPointBrushPlacement(worldPoint);
                     break;
                 case SandboxPreviewInteractionMode.PlaceRegion:
                     HandleRegionPlacement(worldPoint);
@@ -88,23 +88,23 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     previewService.PendingSpawnLayoutName,
                     previewService.PendingSpawnLayoutIsPersistent))
             {
-                UpdateStatus(string.IsNullOrWhiteSpace(failureMessage) ? "Could not place agent." : failureMessage);
+                UpdateStatus(string.IsNullOrWhiteSpace(failureMessage) ? "Could not place spawn point." : failureMessage);
                 return;
             }
 
             previewService.SetActiveSpawnLayout(resolvedLayoutId);
             previewService.ClearInteractionMode();
-            UpdateStatus("Placed agent.");
+            UpdateStatus("Placed spawn point.");
         }
 
-        private void HandleSpawnBrushPlacement(Vector2 worldPoint)
+        private void HandleSpawnPointBrushPlacement(Vector2 worldPoint)
         {
             if (SandboxInputAdapter.GetMouseButtonDown(0))
             {
                 activeBrushPoints.Clear();
                 activeBrushPoints.Add(worldPoint);
                 lastBrushPoint = worldPoint;
-                UpdateStatus("Painting preview spawn brush.");
+                UpdateStatus("Painting spawn point brush.");
                 return;
             }
 
@@ -119,17 +119,17 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
             if (SandboxInputAdapter.GetMouseButtonUp(0) && activeBrushPoints.Count >= 3)
             {
-                if (!previewAuthoringService.PlaceSpawnBrush(
+                if (!previewAuthoringService.PlaceSpawnPointBrush(
                         activeBrushPoints,
                         out _,
                         out var resolvedLayoutId,
                         out var failureMessage,
-                        previewService.PendingSpawnBrushDensity,
+                        previewService.PendingSpawnPointBrushDensity,
                         previewService.PendingSpawnLayoutId,
                         previewService.PendingSpawnLayoutName,
                         previewService.PendingSpawnLayoutIsPersistent))
                 {
-                    UpdateStatus(string.IsNullOrWhiteSpace(failureMessage) ? "Could not commit agent brush." : failureMessage);
+                    UpdateStatus(string.IsNullOrWhiteSpace(failureMessage) ? "Could not commit spawn point brush." : failureMessage);
                     activeBrushPoints.Clear();
                     return;
                 }
@@ -137,7 +137,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 previewService.SetActiveSpawnLayout(resolvedLayoutId);
                 previewService.ClearInteractionMode();
                 activeBrushPoints.Clear();
-                UpdateStatus("Committed agent brush.");
+                UpdateStatus("Committed spawn point brush.");
                 return;
             }
 

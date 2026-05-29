@@ -440,8 +440,8 @@ namespace EvacLogix.Sandbox.UI.Panels
                 {
                     GUILayout.BeginHorizontal();
                     DrawActionButton("Fire Tool", ActivateFirePlacement);
-                    DrawActionButton("Agents", ActivateSpawnPlacement);
-                    DrawActionButton("Agents Brush", ActivateSpawnBrushPlacement);
+                    DrawActionButton("Spawn Point", ActivateSpawnPlacement);
+                    DrawActionButton("Spawn Point Brush", ActivateSpawnPointBrushPlacement);
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
@@ -457,7 +457,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 }
                 else
                 {
-                    GUILayout.Label("Enter preview mode from the top bar to place fire origins, agents, regions, and run diagnostics.", bodyStyle);
+                    GUILayout.Label("Enter preview mode from the top bar to place fire origins, spawn points, regions, and run diagnostics.", bodyStyle);
                 }
             }
 
@@ -1268,15 +1268,15 @@ namespace EvacLogix.Sandbox.UI.Panels
             previewService.SetInteractionMode(SandboxPreviewInteractionMode.PlaceSpawnPoint);
         }
 
-        private void ActivateSpawnBrushPlacement()
+        private void ActivateSpawnPointBrushPlacement()
         {
             if (previewService == null)
             {
                 return;
             }
 
-            previewService.ConfigureSpawnBrush(1f, string.Empty, "Density Brush Layout", true);
-            previewService.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnBrush);
+            previewService.ConfigureSpawnPointBrush(1f, string.Empty, "Spawn Point Brush Layout", true);
+            previewService.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
         }
 
         private void ActivateRegionPlacement()
@@ -1538,8 +1538,8 @@ namespace EvacLogix.Sandbox.UI.Panels
                 SandboxToolMode.WallLine => "Wall Line",
                 SandboxToolMode.WallBrush => "Wall Brush",
                 SandboxToolMode.Teleport => "Teleport",
-                SandboxToolMode.SpawnPoint => "Agents",
-                SandboxToolMode.SpawnBrush => "Agents Brush",
+                SandboxToolMode.SpawnPoint => "Spawn Point",
+                SandboxToolMode.SpawnPointBrush => "Spawn Point Brush",
                 _ => toolMode.ToString()
             };
         }
@@ -1549,8 +1549,8 @@ namespace EvacLogix.Sandbox.UI.Panels
             return interactionMode switch
             {
                 SandboxPreviewInteractionMode.PlaceFireOrigin => "Fire",
-                SandboxPreviewInteractionMode.PlaceSpawnPoint => "Agents",
-                SandboxPreviewInteractionMode.PaintSpawnBrush => "Agents Brush",
+                SandboxPreviewInteractionMode.PlaceSpawnPoint => "Spawn Point",
+                SandboxPreviewInteractionMode.PaintSpawnPointBrush => "Spawn Point Brush",
                 SandboxPreviewInteractionMode.PlaceRegion => "Region",
                 _ => "None"
             };

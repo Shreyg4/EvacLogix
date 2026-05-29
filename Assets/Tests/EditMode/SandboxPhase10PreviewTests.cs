@@ -57,7 +57,7 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
-        public void PreviewAuthoring_CreatesFireOriginsLayoutsBrushesAndNamedRegions()
+        public void PreviewAuthoring_CreatesFireOriginsLayoutsSpawnPointBrushesAndNamedRegions()
         {
             var host = CreatePhase10Host(
                 out var workspaceService,
@@ -75,9 +75,9 @@ namespace EvacLogix.Tests.EditMode
 
             Assert.That(previewAuthoringService.PlaceFireOrigin(new Vector2(3f, 3f), out var fireOriginId, 1.5f, 2f, true), Is.True);
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out var spawnPointId, out var persistentLayoutId, null, "Saved Layout", true), Is.True);
-            Assert.That(previewAuthoringService.PlaceSpawnBrush(
+            Assert.That(previewAuthoringService.PlaceSpawnPointBrush(
                 new[] { new Vector2(0f, 0f), new Vector2(0f, 2f), new Vector2(2f, 2f), new Vector2(2f, 0f) },
-                out var spawnBrushId,
+                out var brushedSpawnPointIds,
                 out var temporaryLayoutId,
                 2f,
                 null,
@@ -90,7 +90,7 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(project.spawnLayouts.Single(layout => layout.spawnLayoutId == persistentLayoutId).isPersistent, Is.True);
             Assert.That(project.spawnLayouts.Single(layout => layout.spawnLayoutId == temporaryLayoutId).isPersistent, Is.False);
             Assert.That(project.spawnLayouts.SelectMany(layout => layout.spawnPoints).Any(point => point.spawnPointId == spawnPointId), Is.True);
-            Assert.That(project.spawnLayouts.SelectMany(layout => layout.spawnBrushStrokes).Any(stroke => stroke.spawnBrushStrokeId == spawnBrushId), Is.True);
+            Assert.That(project.spawnLayouts.SelectMany(layout => layout.spawnPoints).Count(point => brushedSpawnPointIds.Contains(point.spawnPointId)), Is.EqualTo(brushedSpawnPointIds.Count));
             Assert.That(project.floors.Single().regions.Single(region => region.regionId == regionId).name, Is.EqualTo("North Spawn Zone"));
             Assert.That(project.floors.Single().regions.Single(region => region.regionId == regionId).semanticType, Is.EqualTo(RegionSemanticType.SpawnZone));
 
@@ -98,7 +98,7 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
-        public void PreviewAuthoring_RequiresAnEnclosedRoomForAgents()
+        public void PreviewAuthoring_RequiresAnEnclosedRoomForSpawnPoints()
         {
             var host = CreatePhase10Host(
                 out var workspaceService,
@@ -113,8 +113,8 @@ namespace EvacLogix.Tests.EditMode
             workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
 
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out _, out var pointFailure, null, "Layout", true), Is.False);
-            Assert.That(pointFailure, Is.EqualTo("Agents can only be placed inside enclosed rooms."));
-            Assert.That(previewAuthoringService.PlaceSpawnBrush(
+            Assert.That(pointFailure, Is.EqualTo("Spawn points can only be placed inside enclosed rooms."));
+            Assert.That(previewAuthoringService.PlaceSpawnPointBrush(
                 new[] { new Vector2(0f, 0f), new Vector2(0f, 2f), new Vector2(2f, 2f), new Vector2(2f, 0f) },
                 out _,
                 out _,
@@ -123,7 +123,7 @@ namespace EvacLogix.Tests.EditMode
                 null,
                 "Layout",
                 false), Is.False);
-            Assert.That(brushFailure, Is.EqualTo("Agent brushes must stay inside enclosed rooms."));
+            Assert.That(brushFailure, Is.EqualTo("Spawn point brushes must stay inside enclosed rooms."));
 
             CreateEnclosedRoom(wallAuthoringService);
 

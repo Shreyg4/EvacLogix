@@ -101,6 +101,21 @@ namespace EvacLogix.Sandbox.Rendering
                     RenderCross($"FireOrigin_{fireOrigin.fireOriginId}", fireOrigin.position, fireOriginColor, markerRadius * 1.25f);
                     RenderCircle($"FireOriginHeat_{fireOrigin.fireOriginId}", fireOrigin.position, markerRadius * (1.1f + fireOrigin.spreadIntensity * 0.3f), fireOriginColor);
                 }
+
+                foreach (var layout in project.spawnLayouts)
+                {
+                    foreach (var spawnPoint in layout.spawnPoints.Where(point => point.floorId == floor.floorId))
+                    {
+                        RenderCross($"SpawnPoint_{spawnPoint.spawnPointId}", spawnPoint.position, agentColor, markerRadius * 0.9f);
+                        RenderCircle($"SpawnPointHalo_{spawnPoint.spawnPointId}", spawnPoint.position, markerRadius * 1.35f, new Color(agentColor.r, agentColor.g, agentColor.b, 0.25f));
+                    }
+
+                    foreach (var spawnBrushStroke in layout.spawnBrushStrokes.Where(stroke => stroke.floorId == floor.floorId))
+                    {
+                        var centroid = CalculateCentroid(spawnBrushStroke.polygonPoints);
+                        RenderCircle($"LegacySpawnBrush_{spawnBrushStroke.spawnBrushStrokeId}", centroid, markerRadius * 1.1f, new Color(agentColor.r, agentColor.g, agentColor.b, 0.2f));
+                    }
+                }
             }
 
             if (fireSimulationService != null && fireSimulationService.SimulationActive)
@@ -295,6 +310,22 @@ namespace EvacLogix.Sandbox.Rendering
             }
 
             renderedObjects.Clear();
+        }
+
+        private static Vector2 CalculateCentroid(IReadOnlyList<Vector2> points)
+        {
+            if (points == null || points.Count == 0)
+            {
+                return Vector2.zero;
+            }
+
+            var sum = Vector2.zero;
+            for (var i = 0; i < points.Count; i += 1)
+            {
+                sum += points[i];
+            }
+
+            return sum / points.Count;
         }
     }
 }

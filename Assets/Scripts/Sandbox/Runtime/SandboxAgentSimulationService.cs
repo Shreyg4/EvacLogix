@@ -143,7 +143,7 @@ namespace EvacLogix.Sandbox.Runtime
             BuildAgentRoot();
             ClearAgents();
 
-            var samples = ExpandSpawnSamples(spawnLayouts, previewParameters?.previewAgentCap ?? 250);
+            var samples = ExpandSpawnSamples(spawnLayouts);
             for (var i = 0; i < samples.Count; i += 1)
             {
                 var sample = samples[i];
@@ -152,14 +152,14 @@ namespace EvacLogix.Sandbox.Runtime
                     continue;
                 }
 
-                var agentObject = new GameObject($"Agent-{i + 1:D3}");
+                var agentObject = new GameObject($"Agent-{sample.spawnPointId}");
                 agentObject.transform.SetParent(agentRoot.transform, false);
 
                 var spriteRenderer = agentObject.AddComponent<SpriteRenderer>();
                 spriteRenderer.sprite = GetAgentSprite();
 
                 var agent = agentObject.AddComponent<SandboxEvacueeAgent>();
-                agent.Configure(GetProfile(), $"agent-{i + 1:D3}", sample.floorId, sample.position);
+                agent.Configure(GetProfile(), sample.spawnPointId, sample.floorId, sample.position);
                 activeAgents.Add(agent);
 
                 var destination = ChooseExitDestination(project, sample.floorId, sample.position, fireOrigins, fireCells, out var exitId);
@@ -354,7 +354,7 @@ namespace EvacLogix.Sandbox.Runtime
             return penalty;
         }
 
-        private List<SpawnSample> ExpandSpawnSamples(IReadOnlyList<SpawnLayoutData> spawnLayouts, int cap)
+        private List<SpawnSample> ExpandSpawnSamples(IReadOnlyList<SpawnLayoutData> spawnLayouts)
         {
             var samples = new List<SpawnSample>();
             for (var layoutIndex = 0; layoutIndex < spawnLayouts.Count; layoutIndex += 1)
@@ -365,119 +365,13 @@ namespace EvacLogix.Sandbox.Runtime
                     continue;
                 }
 
-                for (var i = 0; i < layout.spawnPoints.Count && samples.Count < cap; i += 1)
+                for (var i = 0; i < layout.spawnPoints.Count; i += 1)
                 {
-                    samples.Add(new SpawnSample(layout.spawnPoints[i].floorId, layout.spawnPoints[i].position));
-                }
-
-                for (var i = 0; i < layout.spawnBrushStrokes.Count && samples.Count < cap; i += 1)
-                {
-                    var brush = layout.spawnBrushStrokes[i];
-                    var desiredCount = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(1f, brush.density) * Mathf.Max(1f, PolygonArea(brush.polygonPoints))), 1, 20);
-                    var brushSamples = SampleBrushStroke(brush, desiredCount);
-                    for (var sampleIndex = 0; sampleIndex < brushSamples.Count && samples.Count < cap; sampleIndex += 1)
-                    {
-                        samples.Add(new SpawnSample(brush.floorId, brushSamples[sampleIndex]));
-                    }
+                    samples.Add(new SpawnSample(layout.spawnPoints[i].spawnPointId, layout.spawnPoints[i].floorId, layout.spawnPoints[i].position));
                 }
             }
 
             return samples;
-        }
-
-        private List<Vector2> SampleBrushStroke(SpawnBrushStrokeData brush, int desiredCount)
-        {
-            var samples = new List<Vector2>();
-            if (brush == null || brush.polygonPoints == null || brush.polygonPoints.Count < 3)
-            {
-                return samples;
-            }
-
-            var bounds = CalculateBounds(brush.polygonPoints);
-            var attempts = 0;
-            while (samples.Count < desiredCount && attempts < desiredCount * 25)
-            {
-                attempts += 1;
-                var candidate = new Vector2(
-                    UnityEngine.Random.Range(bounds.min.x, bounds.max.x),
-                    UnityEngine.Random.Range(bounds.min.y, bounds.max.y));
-                if (PointInPolygon(candidate, brush.polygonPoints))
-                {
-                    samples.Add(candidate);
-                }
-            }
-
-            if (samples.Count == 0)
-            {
-                samples.Add(CalculateCentroid(brush.polygonPoints));
-            }
-
-            return samples;
-        }
-
-        private static Rect CalculateBounds(IReadOnlyList<Vector2> points)
-        {
-            var min = points[0];
-            var max = points[0];
-            for (var i = 1; i < points.Count; i += 1)
-            {
-                min = Vector2.Min(min, points[i]);
-                max = Vector2.Max(max, points[i]);
-            }
-
-            return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
-        }
-
-        private static Vector2 CalculateCentroid(IReadOnlyList<Vector2> points)
-        {
-            if (points == null || points.Count == 0)
-            {
-                return Vector2.zero;
-            }
-
-            var sum = Vector2.zero;
-            for (var i = 0; i < points.Count; i += 1)
-            {
-                sum += points[i];
-            }
-
-            return sum / points.Count;
-        }
-
-        private static float PolygonArea(IReadOnlyList<Vector2> points)
-        {
-            if (points == null || points.Count < 3)
-            {
-                return 0f;
-            }
-
-            var area = 0f;
-            for (var i = 0; i < points.Count; i += 1)
-            {
-                var next = (i + 1) % points.Count;
-                area += points[i].x * points[next].y - points[next].x * points[i].y;
-            }
-
-            return Mathf.Abs(area) * 0.5f;
-        }
-
-        private static bool PointInPolygon(Vector2 point, IReadOnlyList<Vector2> polygon)
-        {
-            var isInside = false;
-            for (var i = 0; i < polygon.Count; i += 1)
-            {
-                var j = i == 0 ? polygon.Count - 1 : i - 1;
-                var left = polygon[i];
-                var right = polygon[j];
-                var intersects = ((left.y > point.y) != (right.y > point.y)) &&
-                                 (point.x < (right.x - left.x) * (point.y - left.y) / Mathf.Max(0.0001f, right.y - left.y) + left.x);
-                if (intersects)
-                {
-                    isInside = !isInside;
-                }
-            }
-
-            return isInside;
         }
 
         private void ClearAgents()
@@ -663,12 +557,14 @@ namespace EvacLogix.Sandbox.Runtime
 
         private readonly struct SpawnSample
         {
-            public SpawnSample(string floorId, Vector2 position)
+            public SpawnSample(string spawnPointId, string floorId, Vector2 position)
             {
+                this.spawnPointId = spawnPointId;
                 this.floorId = floorId;
                 this.position = position;
             }
 
+            public readonly string spawnPointId;
             public readonly string floorId;
             public readonly Vector2 position;
         }

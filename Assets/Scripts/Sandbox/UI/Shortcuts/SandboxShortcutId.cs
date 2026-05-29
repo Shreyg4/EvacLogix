@@ -14,7 +14,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
         ObstacleTool = 9,
         TeleportTool = 11,
         SpawnPointTool = 12,
-        SpawnBrushTool = 13,
+        SpawnPointBrushTool = 13,
         RegionTool = 14,
         Undo = 15,
         Redo = 16,

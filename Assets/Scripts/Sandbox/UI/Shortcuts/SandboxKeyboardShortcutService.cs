@@ -162,7 +162,8 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
 
             if (previewService != null &&
                 previewService.IsPreviewModeActive &&
-                shortcutId != SandboxShortcutId.ResetCamera)
+                shortcutId != SandboxShortcutId.ResetCamera &&
+                !IsPreviewAuthoringShortcut(shortcutId))
             {
                 return;
             }
@@ -204,9 +205,15 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                     break;
                 case SandboxShortcutId.SpawnPointTool:
                     toolStateService?.RequestToolModeChange(SandboxToolMode.SpawnPoint, commandHistory);
+                    previewService?.EnterPreviewMode();
+                    previewService?.ConfigureSpawnPlacement(string.Empty, "Main Preview Layout", true);
+                    previewService?.SetInteractionMode(SandboxPreviewInteractionMode.PlaceSpawnPoint);
                     break;
-                case SandboxShortcutId.SpawnBrushTool:
-                    toolStateService?.RequestToolModeChange(SandboxToolMode.SpawnBrush, commandHistory);
+                case SandboxShortcutId.SpawnPointBrushTool:
+                    toolStateService?.RequestToolModeChange(SandboxToolMode.SpawnPointBrush, commandHistory);
+                    previewService?.EnterPreviewMode();
+                    previewService?.ConfigureSpawnPointBrush(1f, string.Empty, "Spawn Point Brush Layout", true);
+                    previewService?.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
                     break;
                 case SandboxShortcutId.RegionTool:
                     toolStateService?.RequestToolModeChange(SandboxToolMode.Region, commandHistory);
@@ -264,6 +271,12 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 && binding.requiresAlt == altPressed;
         }
 
+        private static bool IsPreviewAuthoringShortcut(SandboxShortcutId shortcutId)
+        {
+            return shortcutId == SandboxShortcutId.SpawnPointTool ||
+                   shortcutId == SandboxShortcutId.SpawnPointBrushTool;
+        }
+
         private static List<SandboxShortcutBinding> CreateDefaultBindings()
         {
             return new List<SandboxShortcutBinding>
@@ -280,7 +293,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 CreateBinding(SandboxShortcutId.ObstacleTool, KeyCode.O),
                 CreateBinding(SandboxShortcutId.TeleportTool, KeyCode.Y),
                 CreateBinding(SandboxShortcutId.SpawnPointTool, KeyCode.Alpha1),
-                CreateBinding(SandboxShortcutId.SpawnBrushTool, KeyCode.Alpha2),
+                CreateBinding(SandboxShortcutId.SpawnPointBrushTool, KeyCode.Alpha2),
                 CreateBinding(SandboxShortcutId.RegionTool, KeyCode.R),
                 CreateBinding(SandboxShortcutId.Undo, KeyCode.Z, requiresCommandOrControl: true),
                 CreateBinding(SandboxShortcutId.Redo, KeyCode.Z, requiresCommandOrControl: true, requiresShift: true),
@@ -311,8 +324,8 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 SandboxShortcutId.ExitTool => ("Tools", "Exit Tool", "Place named exit zones with width and priority inputs."),
                 SandboxShortcutId.ObstacleTool => ("Tools", "Obstacle Tool", "Place blocking or slowing obstacle geometry."),
                 SandboxShortcutId.TeleportTool => ("Tools", "Teleport Tool", "Place paired stair, elevator, or escalator transitions across floors."),
-                SandboxShortcutId.SpawnPointTool => ("Agents", "Agents Tool", "Place individual agents inside enclosed rooms for preview."),
-                SandboxShortcutId.SpawnBrushTool => ("Agents", "Agents Brush Tool", "Paint density-based agent groups inside enclosed rooms for preview."),
+                SandboxShortcutId.SpawnPointTool => ("Spawn", "Spawn Point Tool", "Place individual spawn points inside enclosed rooms for preview."),
+                SandboxShortcutId.SpawnPointBrushTool => ("Spawn", "Spawn Point Brush Tool", "Paint spawn points inside enclosed rooms for preview."),
                 SandboxShortcutId.RegionTool => ("Preview", "Region Tool", "Draw named semantic regions for preview semantics."),
                 SandboxShortcutId.Undo => ("Editing", "Undo", "Revert the most recent editor command."),
                 SandboxShortcutId.Redo => ("Editing", "Redo", "Reapply the most recently undone editor command."),

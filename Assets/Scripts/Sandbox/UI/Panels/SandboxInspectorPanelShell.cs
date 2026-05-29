@@ -1116,7 +1116,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             return UpdateVisualActionStatus(true, "Click to place a preview spawn point.");
         }
 
-        public bool BeginSpawnBrushPlacement(float density = 1f, string spawnLayoutName = "", bool isPersistent = false, string spawnLayoutId = null)
+        public bool BeginSpawnPointBrushPlacement(float density = 1f, string spawnLayoutName = "", bool isPersistent = false, string spawnLayoutId = null)
         {
             if (previewService == null)
             {
@@ -1124,9 +1124,14 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             previewService.EnterPreviewMode();
-            previewService.ConfigureSpawnBrush(density, spawnLayoutId, spawnLayoutName, isPersistent);
-            previewService.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnBrush);
-            return UpdateVisualActionStatus(true, "Drag to paint a preview spawn brush.");
+            previewService.ConfigureSpawnPointBrush(density, spawnLayoutId, spawnLayoutName, isPersistent);
+            previewService.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
+            return UpdateVisualActionStatus(true, "Drag to paint preview spawn points.");
+        }
+
+        public bool BeginSpawnBrushPlacement(float density = 1f, string spawnLayoutName = "", bool isPersistent = false, string spawnLayoutId = null)
+        {
+            return BeginSpawnPointBrushPlacement(density, spawnLayoutName, isPersistent, spawnLayoutId);
         }
 
         public bool BeginRegionPlacement(string regionName, RegionSemanticType semanticType)

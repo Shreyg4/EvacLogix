@@ -90,7 +90,7 @@ namespace EvacLogix.Tests.PlayMode
             CreateEnclosedRoom(harness.wallAuthoringService);
 
             Assert.That(harness.semanticObjectAuthoringService.PlaceExit(new Vector2(3f, 3f), out _, new Vector2(1.5f, 1.5f), 0f, 1.5f, 0f, 1f, "Main Exit"), Is.True);
-            Assert.That(harness.previewAuthoringService.PlaceSpawnPoint(new Vector2(0f, 3f), out _, out _, null, "Play Layout", true), Is.True);
+            Assert.That(harness.previewAuthoringService.PlaceSpawnPoint(new Vector2(0f, 3f), out var spawnPointId, out _, null, "Play Layout", true), Is.True);
             Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(1f, 1f), out _, 1.2f, 2f, true), Is.True);
             yield return null;
 
@@ -99,7 +99,8 @@ namespace EvacLogix.Tests.PlayMode
             yield return null;
 
             Assert.That(harness.agentSimulationService.SimulationActive, Is.True);
-            Assert.That(harness.agentSimulationService.ActiveAgents.Count, Is.GreaterThan(0));
+            Assert.That(harness.agentSimulationService.ActiveAgents.Count, Is.EqualTo(1));
+            Assert.That(harness.agentSimulationService.ActiveAgents[0].AgentId, Is.EqualTo(spawnPointId));
 
             harness.Destroy();
         }
