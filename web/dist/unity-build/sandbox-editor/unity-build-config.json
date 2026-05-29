@@ -1,0 +1,7 @@
+{
+  "loaderUrl": "/unity-build/sandbox-editor/EvacLogixSandbox0.010.loader.js",
+  "dataUrl": "/unity-build/sandbox-editor/EvacLogixSandbox0.010.data",
+  "frameworkUrl": "/unity-build/sandbox-editor/EvacLogixSandbox0.010.framework.js",
+  "codeUrl": "/unity-build/sandbox-editor/EvacLogixSandbox0.010.wasm",
+  "productName": "Sandbox Editor"
+}

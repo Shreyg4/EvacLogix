@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import {
   createUnityInstanceBridge,
   fetchUnityBuildConfig,
+  fetchUnityBuildConfigFromPath,
   loadUnityLoader,
   validateUnityBuildConfig
 } from "../../utils/unity";
 import { UnityFallback } from "./UnityFallback";
 import { UnityLaunchOverlay } from "./UnityLaunchOverlay";
 import type { UnityEmbedProps, UnityEmbedState } from "./unity.types";
+import type { UnityBrowserBridgeApi } from "../../types/unityBridge";
 
 export function UnityEmbed({
   title,
@@ -17,11 +19,40 @@ export function UnityEmbed({
   backupHref,
   backupLabel = "Open Unity Play backup",
   launchLabel = "Play Simulation",
+  buildConfigPath,
   buildConfig,
+  allowedBridgeCommands = [],
   launchTimeoutMs = 4000
 }: UnityEmbedProps) {
   const [state, setState] = useState<UnityEmbedState>("idle");
+  const [showReadyOverlay, setShowReadyOverlay] = useState(false);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const bridge = window.EvacLogixSandboxBridge as UnityBrowserBridgeApi | undefined;
+    bridge?.setAllowedCommands(allowedBridgeCommands);
+
+    return () => {
+      bridge?.setAllowedCommands([]);
+    };
+  }, [allowedBridgeCommands]);
+
+  useEffect(() => {
+    if (state !== "ready") {
+      setShowReadyOverlay(false);
+      return;
+    }
+
+    setShowReadyOverlay(true);
+    const timeoutId = window.setTimeout(() => {
+      setShowReadyOverlay(false);
+    }, 1200);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [state]);
 
   useEffect(() => {
     if (state !== "launching") {
@@ -38,7 +69,20 @@ export function UnityEmbed({
         return;
       }
 
-      const resolvedBuildConfig = buildConfig ?? (await fetchUnityBuildConfig());
+      if (!canvasRef.current) {
+        const canvas = document.createElement("canvas");
+        canvas.id = "evaclogix-unity-canvas";
+        canvas.className = "unity-canvas";
+        canvasHostRef.current.innerHTML = "";
+        canvasHostRef.current.appendChild(canvas);
+        canvasRef.current = canvas;
+      }
+
+      const resolvedBuildConfig =
+        buildConfig ??
+        (buildConfigPath
+          ? await fetchUnityBuildConfigFromPath(buildConfigPath)
+          : await fetchUnityBuildConfig());
 
       if (!validateUnityBuildConfig(resolvedBuildConfig)) {
         if (!cancelled) {
@@ -50,7 +94,7 @@ export function UnityEmbed({
       try {
         await loadUnityLoader(resolvedBuildConfig.loaderUrl);
 
-        const readyPromise = createUnityInstanceBridge(canvasHostRef.current, resolvedBuildConfig);
+        const readyPromise = createUnityInstanceBridge(canvasRef.current, resolvedBuildConfig);
         const timeoutPromise = new Promise<never>((_, reject) => {
           window.setTimeout(() => reject(new Error("Unity launch timed out.")), launchTimeoutMs);
         });
@@ -72,7 +116,7 @@ export function UnityEmbed({
     return () => {
       cancelled = true;
     };
-  }, [buildConfig, launchTimeoutMs, state]);
+  }, [buildConfig, buildConfigPath, launchTimeoutMs, state]);
 
   return (
     <section className="page-card unity-section" aria-labelledby="unity-embed-title">
@@ -114,7 +158,7 @@ export function UnityEmbed({
           />
         ) : null}
 
-        {state === "ready" ? (
+        {state === "ready" && showReadyOverlay ? (
           <div className="unity-overlay unity-overlay-ready" role="status">
             <h3>Simulation Ready</h3>
           </div>
