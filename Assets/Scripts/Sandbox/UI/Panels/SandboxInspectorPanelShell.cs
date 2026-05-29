@@ -82,6 +82,8 @@ namespace EvacLogix.Sandbox.UI.Panels
             statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
         }
 
+        public bool SnappingEnabled => workspaceStateService != null && workspaceStateService.SnappingEnabled;
+
         public IReadOnlyList<string> GetMissingDependencies()
         {
             RefreshDependencies();
@@ -478,14 +480,26 @@ namespace EvacLogix.Sandbox.UI.Panels
         public bool UpdateDoor(
             string doorId,
             float width,
+            string wallSegmentId,
             float offsetAlongWall,
             DoorState state,
             IEnumerable<string> tags,
             IEnumerable<MetadataFieldData> metadataFields)
         {
             return UpdateSemanticActionStatus(
-                semanticObjectAuthoringService != null && semanticObjectAuthoringService.UpdateDoor(doorId, width, offsetAlongWall, state, tags, metadataFields),
+                semanticObjectAuthoringService != null && semanticObjectAuthoringService.UpdateDoor(doorId, width, wallSegmentId, offsetAlongWall, state, tags, metadataFields),
                 "Updated door metadata.");
+        }
+
+        public bool UpdateDoor(
+            string doorId,
+            float width,
+            float offsetAlongWall,
+            DoorState state,
+            IEnumerable<string> tags,
+            IEnumerable<MetadataFieldData> metadataFields)
+        {
+            return UpdateDoor(doorId, width, string.Empty, offsetAlongWall, state, tags, metadataFields);
         }
 
         public bool PlaceWindow(
@@ -503,6 +517,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         public bool UpdateWindow(
             string windowId,
             float width,
+            string wallSegmentId,
             float offsetAlongWall,
             bool canBeUsedForEscape,
             float escapeCost,
@@ -511,8 +526,21 @@ namespace EvacLogix.Sandbox.UI.Panels
             IEnumerable<MetadataFieldData> metadataFields)
         {
             return UpdateSemanticActionStatus(
-                semanticObjectAuthoringService != null && semanticObjectAuthoringService.UpdateWindow(windowId, width, offsetAlongWall, canBeUsedForEscape, escapeCost, escapeRiskMultiplier, tags, metadataFields),
+                semanticObjectAuthoringService != null && semanticObjectAuthoringService.UpdateWindow(windowId, width, wallSegmentId, offsetAlongWall, canBeUsedForEscape, escapeCost, escapeRiskMultiplier, tags, metadataFields),
                 "Updated window metadata.");
+        }
+
+        public bool UpdateWindow(
+            string windowId,
+            float width,
+            float offsetAlongWall,
+            bool canBeUsedForEscape,
+            float escapeCost,
+            float escapeRiskMultiplier,
+            IEnumerable<string> tags,
+            IEnumerable<MetadataFieldData> metadataFields)
+        {
+            return UpdateWindow(windowId, width, string.Empty, offsetAlongWall, canBeUsedForEscape, escapeCost, escapeRiskMultiplier, tags, metadataFields);
         }
 
         public bool PlaceExit(

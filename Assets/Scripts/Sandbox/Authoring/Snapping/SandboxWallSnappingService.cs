@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Rendering;
 using UnityEngine;
 
 namespace EvacLogix.Sandbox.Authoring.Snapping
@@ -13,6 +14,7 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
         Endpoint = 2,
         Segment = 3,
         Angle = 4,
+        Intersection = 5,
     }
 
     public readonly struct SandboxWallSnapResult
@@ -34,6 +36,7 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
         [SerializeField] private float gridSize = 0.5f;
         [SerializeField] private float gridSnapDistance = 0.2f;
         [SerializeField] private float endpointSnapDistance = 0.35f;
+        [SerializeField] private float endpointSnapPixelTolerance = 26f;
         [SerializeField] private float segmentSnapDistance = 0.25f;
         [SerializeField] private float angleIncrementDegrees = 45f;
         [SerializeField] private float angleSnapToleranceDegrees = 10f;
@@ -88,8 +91,13 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
 
             if (endpointSnappingEnabled)
             {
+                // Use a zoom-aware (screen-space) reach so off-grid intersections snap from a
+                // consistent on-screen distance, not just the small fixed world radius.
+                var effectiveEndpointDistance = Mathf.Max(
+                    endpointSnapDistance,
+                    SandboxAlignmentGuideUtility.PixelToleranceToWorld(Camera.main, endpointSnapPixelTolerance));
                 var snappedEndpoint = floor.wallJunctions
-                    .Where(junction => Vector2.Distance(junction.position, rawPoint) <= endpointSnapDistance)
+                    .Where(junction => Vector2.Distance(junction.position, rawPoint) <= effectiveEndpointDistance)
                     .OrderBy(junction => Vector2.Distance(junction.position, rawPoint))
                     .FirstOrDefault();
 
@@ -99,6 +107,13 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
                         snappedEndpoint.position,
                         SandboxWallSnapTargetKind.Endpoint,
                         snappedEndpoint.wallJunctionId);
+                }
+
+                // Snap to where two wall segments cross (not just shared junctions), with priority
+                // over grid/angle so real intersections win.
+                if (SandboxAlignmentGuideUtility.TryFindNearestIntersectionPoint(floor, rawPoint, effectiveEndpointDistance, out var crossing))
+                {
+                    return new SandboxWallSnapResult(crossing, SandboxWallSnapTargetKind.Intersection, string.Empty);
                 }
             }
 

@@ -7,7 +7,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
 {
     public sealed class SandboxMeasurementOverlay : MonoBehaviour
     {
-        private static readonly Color BackdropColor = new(0.05f, 0.08f, 0.12f, 0.82f);
+        private static readonly Color BackdropColor = new(0.05f, 0.08f, 0.12f, 1f);
         private static readonly Color AccentColor = new(0.33f, 0.88f, 0.59f, 0.95f);
         private static readonly Color SecondaryAccentColor = new(0.99f, 0.84f, 0.28f, 0.95f);
         private static readonly Color TextColor = new(0.94f, 0.97f, 1f, 1f);

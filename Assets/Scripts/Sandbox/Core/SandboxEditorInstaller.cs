@@ -99,6 +99,7 @@ namespace EvacLogix.Sandbox.Core
             EnsureComponent<SandboxObjectInteractionOverlay>(overlayRoot);
             EnsureComponent<SandboxSemanticObjectAuthoringOverlay>(overlayRoot);
             EnsureComponent<SandboxMeasurementOverlay>(overlayRoot);
+            EnsureComponent<SandboxAlignmentGuideOverlay>(overlayRoot);
             EnsureComponent<SandboxPreviewInteractionOverlay>(overlayRoot);
             EnsureComponent<SandboxBlueprintOverlayRenderer>(FindRequiredNestedRoot(WorldRootName, BlueprintRootName));
             EnsureComponent<SandboxGridOverlayRenderer>(FindRequiredNestedRoot(WorldRootName, GridRootName));

@@ -49,6 +49,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
         private SandboxClipboardService clipboardService;
         private SandboxCameraController cameraController;
         private SandboxPreviewService previewService;
+        private SandboxToolMode lastNonPanToolMode = SandboxToolMode.Select;
 
         public IReadOnlyList<SandboxShortcutBinding> Bindings => bindings;
         public bool HasBindingConflicts => GetBindingConflicts().Count > 0;
@@ -72,6 +73,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
             if (bindings.Count == 0)
             {
                 bindings = CreateDefaultBindings();
+                UpgradePanBindingIfNeeded();
                 return;
             }
 
@@ -86,6 +88,8 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                     bindings.Add(defaultBinding);
                 }
             }
+
+            UpgradePanBindingIfNeeded();
         }
 
         public IReadOnlyList<SandboxShortcutCatalogEntry> GetShortcutCatalogEntries()
@@ -173,7 +177,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                     toolStateService?.RequestToolModeChange(SandboxToolMode.Select, commandHistory);
                     break;
                 case SandboxShortcutId.PanTool:
-                    toolStateService?.RequestToolModeChange(SandboxToolMode.Pan, commandHistory);
+                    TogglePanTool();
                     break;
                 case SandboxShortcutId.MeasureTool:
                     toolStateService?.RequestToolModeChange(SandboxToolMode.Measure, commandHistory);
@@ -269,7 +273,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
             return new List<SandboxShortcutBinding>
             {
                 CreateBinding(SandboxShortcutId.SelectTool, KeyCode.Q),
-                CreateBinding(SandboxShortcutId.PanTool, KeyCode.H),
+                CreateBinding(SandboxShortcutId.PanTool, KeyCode.P),
                 CreateBinding(SandboxShortcutId.MeasureTool, KeyCode.M),
                 CreateBinding(SandboxShortcutId.WallLineTool, KeyCode.L),
                 CreateBinding(SandboxShortcutId.WallBrushTool, KeyCode.B),
@@ -370,6 +374,44 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 requiresShift = requiresShift,
                 requiresAlt = requiresAlt,
             };
+        }
+
+        private void TogglePanTool()
+        {
+            if (toolStateService == null)
+            {
+                return;
+            }
+
+            var currentToolMode = toolStateService.CurrentToolMode;
+            if (currentToolMode == SandboxToolMode.Pan)
+            {
+                var nextToolMode = lastNonPanToolMode == SandboxToolMode.Pan
+                    ? toolStateService.DefaultToolMode
+                    : lastNonPanToolMode;
+                toolStateService.RequestToolModeChange(nextToolMode, commandHistory);
+                return;
+            }
+
+            lastNonPanToolMode = currentToolMode;
+            toolStateService.RequestToolModeChange(SandboxToolMode.Pan, commandHistory);
+        }
+
+        private void UpgradePanBindingIfNeeded()
+        {
+            var panBinding = bindings.FirstOrDefault(binding => binding.shortcutId == SandboxShortcutId.PanTool);
+            if (panBinding == null)
+            {
+                return;
+            }
+
+            if (panBinding.keyCode == KeyCode.H &&
+                !panBinding.requiresCommandOrControl &&
+                !panBinding.requiresShift &&
+                !panBinding.requiresAlt)
+            {
+                panBinding.keyCode = KeyCode.P;
+            }
         }
     }
 }
