@@ -128,6 +128,9 @@ namespace EvacLogix.Sandbox.Runtime
 
             var spawnLayouts = ResolveSpawnLayouts(project, activeSpawnLayoutIds);
             var fireOrigins = ResolveFireOrigins(project, activeFireOriginIds);
+            var fireCells = fireSimulationService != null && fireSimulationService.SimulationActive
+                ? fireSimulationService.ActiveFireCells
+                : Array.Empty<SandboxFireCellData>();
             if (spawnLayouts.Count == 0)
             {
                 StopSimulation();
@@ -156,7 +159,7 @@ namespace EvacLogix.Sandbox.Runtime
                 agent.Configure(GetProfile(), $"agent-{i + 1:D3}", sample.floorId, sample.position);
                 activeAgents.Add(agent);
 
-                var destination = ChooseExitDestination(project, sample.floorId, sample.position, fireOrigins, out var exitId);
+                var destination = ChooseExitDestination(project, sample.floorId, sample.position, fireOrigins, fireCells, out var exitId);
                 if (!string.IsNullOrWhiteSpace(exitId))
                 {
                     agent.SetDestination(exitId, destination);
@@ -456,8 +459,9 @@ namespace EvacLogix.Sandbox.Runtime
         private static bool PointInPolygon(Vector2 point, IReadOnlyList<Vector2> polygon)
         {
             var isInside = false;
-            for (var i = 0, j = polygon.Count - 1; i < polygon.Count; j = i++)
+            for (var i = 0; i < polygon.Count; i += 1)
             {
+                var j = i == 0 ? polygon.Count - 1 : i - 1;
                 var left = polygon[i];
                 var right = polygon[j];
                 var intersects = ((left.y > point.y) != (right.y > point.y)) &&

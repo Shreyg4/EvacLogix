@@ -703,8 +703,9 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             var inside = false;
-            for (var index = 0, previousIndex = polygon.Count - 1; index < polygon.Count; previousIndex = index, index += 1)
+            for (var index = 0; index < polygon.Count; index += 1)
             {
+                var previousIndex = index == 0 ? polygon.Count - 1 : index - 1;
                 var current = polygon[index];
                 var previous = polygon[previousIndex];
                 var deltaY = previous.y - current.y;
