@@ -45,8 +45,18 @@ namespace EvacLogix.Sandbox.Authoring
         [SerializeField] private Vector2 defaultExitZoneSize = new(1.5f, 1.5f);
         [SerializeField] private Vector2 defaultObstacleSize = Vector2.one;
         [SerializeField] private Vector2 defaultStairPortalSize = Vector2.one;
+        [SerializeField] private Vector2 defaultTeleportPortalSize = Vector2.one;
         [SerializeField] private float defaultExitWidth = 1.5f;
         [SerializeField] private float obstacleRotationStepDegrees = 15f;
+        [SerializeField] private Color[] teleportPairPalette =
+        {
+            new(0.18f, 0.85f, 0.92f, 1f),
+            new(0.96f, 0.58f, 0.22f, 1f),
+            new(0.84f, 0.36f, 0.95f, 1f),
+            new(0.28f, 0.88f, 0.5f, 1f),
+            new(0.96f, 0.85f, 0.24f, 1f),
+            new(0.95f, 0.42f, 0.56f, 1f),
+        };
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxCommandHistory commandHistory;
@@ -64,6 +74,8 @@ namespace EvacLogix.Sandbox.Authoring
         public float WallAttachDistance => wallAttachDistance;
         public float DefaultOpeningWidth => defaultOpeningWidth;
         public float ObstacleRotationStepDegrees => obstacleRotationStepDegrees;
+        public Vector2 DefaultTeleportPortalSize => defaultTeleportPortalSize;
+        public IReadOnlyList<Color> TeleportPairPalette => teleportPairPalette;
 
         private void Awake()
         {
@@ -473,8 +485,8 @@ namespace EvacLogix.Sandbox.Authoring
             out string obstacleId,
             Vector2? size = null,
             float rotationDegrees = 0f,
-            ObstacleSemanticType semanticType = ObstacleSemanticType.HardBlocking,
-            float traversalCostMultiplier = 1f,
+            float discourageWeight = 1f,
+            float movementSpeedPenalty = 0f,
             string name = "")
         {
             obstacleId = string.Empty;
@@ -508,8 +520,8 @@ namespace EvacLogix.Sandbox.Authoring
                         center = center,
                         size = resolvedSize,
                         rotationDegrees = NormalizeObstacleRotation(rotationDegrees),
-                        semanticType = semanticType,
-                        traversalCostMultiplier = traversalCostMultiplier
+                        discourageWeight = Mathf.Clamp01(discourageWeight),
+                        movementSpeedPenalty = Mathf.Clamp01(movementSpeedPenalty)
                     });
                     return true;
                 },
@@ -528,8 +540,8 @@ namespace EvacLogix.Sandbox.Authoring
             Vector2 center,
             Vector2 size,
             float rotationDegrees,
-            ObstacleSemanticType semanticType,
-            float traversalCostMultiplier,
+            float discourageWeight,
+            float movementSpeedPenalty,
             string name,
             IEnumerable<string> tags,
             IEnumerable<MetadataFieldData> metadataFields)
@@ -556,8 +568,8 @@ namespace EvacLogix.Sandbox.Authoring
                     obstacle.center = center;
                     obstacle.size = size;
                     obstacle.rotationDegrees = NormalizeObstacleRotation(rotationDegrees);
-                    obstacle.semanticType = semanticType;
-                    obstacle.traversalCostMultiplier = Mathf.Max(0f, traversalCostMultiplier);
+                    obstacle.discourageWeight = Mathf.Clamp01(discourageWeight);
+                    obstacle.movementSpeedPenalty = Mathf.Clamp01(movementSpeedPenalty);
                     obstacle.name = name ?? string.Empty;
                     obstacle.tags = NormalizeTags(tags);
                     obstacle.metadataFields = CloneMetadataFields(metadataFields);
@@ -620,6 +632,239 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             return didPlaceStairPortal;
+        }
+
+        public bool PlaceTeleportPortal(
+            Vector2 localPosition,
+            out string teleportPortalId,
+            string pairId,
+            int pairColorIndex,
+            Vector2? size = null,
+            float rotationDegrees = 0f,
+            string name = "",
+            TeleportPortalKind kind = TeleportPortalKind.Stair,
+            float travelCost = 1f,
+            bool isPairEnabled = true,
+            string targetFloorId = "",
+            string targetTeleportPortalId = "")
+        {
+            teleportPortalId = string.Empty;
+            var resolvedSize = size ?? defaultTeleportPortalSize;
+            if (workspaceService?.ActiveFloor == null ||
+                resolvedSize.x <= 0f ||
+                resolvedSize.y <= 0f ||
+                string.IsNullOrWhiteSpace(pairId))
+            {
+                return false;
+            }
+
+            if (IsLocked(SandboxVisualObjectType.Teleport))
+            {
+                return false;
+            }
+
+            var activeFloorId = workspaceService.ActiveFloor.floorId;
+            var createdTeleportPortalId = SandboxId.NewId();
+            var didPlaceTeleportPortal = ExecuteProjectMutation(
+                "Place Teleport Portal",
+                project =>
+                {
+                    var floor = FindFloor(project, activeFloorId);
+                    if (floor == null)
+                    {
+                        return false;
+                    }
+
+                    floor.teleportPortals.Add(new TeleportPortalData
+                    {
+                        teleportPortalId = createdTeleportPortalId,
+                        pairId = pairId,
+                        pairColorIndex = Mathf.Max(0, pairColorIndex),
+                        sourceFloorId = floor.floorId,
+                        name = name ?? string.Empty,
+                        localPosition = localPosition,
+                        size = resolvedSize,
+                        rotationDegrees = rotationDegrees,
+                        targetFloorId = targetFloorId ?? string.Empty,
+                        targetTeleportPortalId = targetTeleportPortalId ?? string.Empty,
+                        kind = kind,
+                        travelCost = Mathf.Max(0.1f, travelCost),
+                        isPairEnabled = isPairEnabled
+                    });
+                    return true;
+                },
+                new[] { createdTeleportPortalId });
+
+            if (didPlaceTeleportPortal)
+            {
+                teleportPortalId = createdTeleportPortalId;
+            }
+
+            return didPlaceTeleportPortal;
+        }
+
+        public bool UpdateTeleportPortal(
+            string teleportPortalId,
+            Vector2 localPosition,
+            Vector2 size,
+            float rotationDegrees,
+            string name,
+            TeleportPortalKind kind,
+            float travelCost,
+            bool isPairEnabled,
+            IEnumerable<string> tags,
+            IEnumerable<MetadataFieldData> metadataFields)
+        {
+            if (string.IsNullOrWhiteSpace(teleportPortalId) || size.x <= 0f || size.y <= 0f)
+            {
+                return false;
+            }
+
+            if (IsLocked(SandboxVisualObjectType.Teleport, teleportPortalId))
+            {
+                return false;
+            }
+
+            return ExecuteProjectMutation(
+                "Update Teleport Portal",
+                project =>
+                {
+                    if (!TryFindTeleportPortal(project, teleportPortalId, out var floor, out var teleportPortal))
+                    {
+                        return false;
+                    }
+
+                    teleportPortal.sourceFloorId = floor.floorId;
+                    teleportPortal.localPosition = localPosition;
+                    teleportPortal.size = size;
+                    teleportPortal.rotationDegrees = rotationDegrees;
+                    teleportPortal.name = name ?? string.Empty;
+                    teleportPortal.kind = kind;
+                    teleportPortal.travelCost = Mathf.Max(0.1f, travelCost);
+                    teleportPortal.tags = NormalizeTags(tags);
+                    teleportPortal.metadataFields = CloneMetadataFields(metadataFields);
+
+                    foreach (var linkedPortal in project.floors
+                                 .SelectMany(candidate => candidate.teleportPortals)
+                                 .Where(candidate => string.Equals(candidate.pairId, teleportPortal.pairId, StringComparison.Ordinal)))
+                    {
+                        linkedPortal.isPairEnabled = isPairEnabled;
+                        linkedPortal.travelCost = Mathf.Max(0.1f, travelCost);
+                        linkedPortal.kind = kind;
+                    }
+
+                    return true;
+                },
+                new[] { teleportPortalId });
+        }
+
+        public bool LinkTeleportPortals(
+            string sourceFloorId,
+            string sourcePortalId,
+            string targetFloorId,
+            string targetPortalId,
+            TeleportPortalKind kind,
+            float travelCost,
+            bool isPairEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(sourceFloorId) ||
+                string.IsNullOrWhiteSpace(sourcePortalId) ||
+                string.IsNullOrWhiteSpace(targetFloorId) ||
+                string.IsNullOrWhiteSpace(targetPortalId))
+            {
+                return false;
+            }
+
+            if (IsLocked(SandboxVisualObjectType.Teleport, sourcePortalId) ||
+                IsLocked(SandboxVisualObjectType.Teleport, targetPortalId))
+            {
+                return false;
+            }
+
+            return ExecuteProjectMutation(
+                "Link Teleport Portals",
+                project =>
+                {
+                    var sourceFloor = FindFloor(project, sourceFloorId);
+                    var targetFloor = FindFloor(project, targetFloorId);
+                    if (sourceFloor == null || targetFloor == null)
+                    {
+                        return false;
+                    }
+
+                    var sourcePortal = sourceFloor.teleportPortals.FirstOrDefault(candidate =>
+                        string.Equals(candidate.teleportPortalId, sourcePortalId, StringComparison.Ordinal));
+                    var targetPortal = targetFloor.teleportPortals.FirstOrDefault(candidate =>
+                        string.Equals(candidate.teleportPortalId, targetPortalId, StringComparison.Ordinal));
+                    if (sourcePortal == null || targetPortal == null)
+                    {
+                        return false;
+                    }
+
+                    var sharedPairId = string.IsNullOrWhiteSpace(sourcePortal.pairId)
+                        ? string.IsNullOrWhiteSpace(targetPortal.pairId) ? SandboxId.NewId() : targetPortal.pairId
+                        : sourcePortal.pairId;
+                    var colorIndex = sourcePortal.pairColorIndex != 0 || targetPortal.pairColorIndex == 0
+                        ? sourcePortal.pairColorIndex
+                        : targetPortal.pairColorIndex;
+
+                    sourcePortal.pairId = sharedPairId;
+                    sourcePortal.sourceFloorId = sourceFloor.floorId;
+                    sourcePortal.targetFloorId = targetFloor.floorId;
+                    sourcePortal.targetTeleportPortalId = targetPortal.teleportPortalId;
+                    sourcePortal.pairColorIndex = colorIndex;
+                    sourcePortal.kind = kind;
+                    sourcePortal.travelCost = Mathf.Max(0.1f, travelCost);
+                    sourcePortal.isPairEnabled = isPairEnabled;
+
+                    targetPortal.pairId = sharedPairId;
+                    targetPortal.sourceFloorId = targetFloor.floorId;
+                    targetPortal.targetFloorId = sourceFloor.floorId;
+                    targetPortal.targetTeleportPortalId = sourcePortal.teleportPortalId;
+                    targetPortal.pairColorIndex = colorIndex;
+                    targetPortal.kind = kind;
+                    targetPortal.travelCost = Mathf.Max(0.1f, travelCost);
+                    targetPortal.isPairEnabled = isPairEnabled;
+                    return true;
+                },
+                new[] { sourcePortalId, targetPortalId });
+        }
+
+        public int GetNextTeleportPairColorIndex()
+        {
+            var project = workspaceService?.ActiveProject;
+            if (project == null || teleportPairPalette == null || teleportPairPalette.Length == 0)
+            {
+                return 0;
+            }
+
+            var usedIndexes = project.floors
+                .SelectMany(floor => floor.teleportPortals)
+                .Select(portal => Mathf.Max(0, portal.pairColorIndex))
+                .Distinct()
+                .ToHashSet();
+            for (var index = 0; index < teleportPairPalette.Length; index += 1)
+            {
+                if (!usedIndexes.Contains(index))
+                {
+                    return index;
+                }
+            }
+
+            return usedIndexes.Count % teleportPairPalette.Length;
+        }
+
+        public bool TryGetTeleportPairColor(int pairColorIndex, out Color color)
+        {
+            color = Color.white;
+            if (teleportPairPalette == null || teleportPairPalette.Length == 0)
+            {
+                return false;
+            }
+
+            var index = Mathf.Clamp(pairColorIndex, 0, teleportPairPalette.Length - 1);
+            color = teleportPairPalette[index];
+            return true;
         }
 
         public bool UpdateStairPortal(
@@ -1011,6 +1256,26 @@ namespace EvacLogix.Sandbox.Authoring
 
             floor = null;
             stairPortal = null;
+            return false;
+        }
+
+        private static bool TryFindTeleportPortal(BuildingProjectData project, string teleportPortalId, out FloorData floor, out TeleportPortalData teleportPortal)
+        {
+            if (project?.floors != null)
+            {
+                for (var i = 0; i < project.floors.Count; i += 1)
+                {
+                    teleportPortal = project.floors[i].teleportPortals.FirstOrDefault(candidate => string.Equals(candidate.teleportPortalId, teleportPortalId, StringComparison.Ordinal));
+                    if (teleportPortal != null)
+                    {
+                        floor = project.floors[i];
+                        return true;
+                    }
+                }
+            }
+
+            floor = null;
+            teleportPortal = null;
             return false;
         }
 

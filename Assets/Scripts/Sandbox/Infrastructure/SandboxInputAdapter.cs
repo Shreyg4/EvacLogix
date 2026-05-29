@@ -176,6 +176,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                 KeyCode.Home => Key.Home,
                 KeyCode.Backspace => Key.Backspace,
                 KeyCode.Delete => Key.Delete,
+                KeyCode.Escape => Key.Escape,
                 _ => Key.None
             };
 

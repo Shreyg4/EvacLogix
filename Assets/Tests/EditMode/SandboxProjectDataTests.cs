@@ -346,7 +346,8 @@ namespace EvacLogix.Tests.EditMode
                     {
                         obstacleId = "obstacle-1",
                         name = "Front Desk",
-                        semanticType = ObstacleSemanticType.HardBlocking,
+                        discourageWeight = 0.7f,
+                        movementSpeedPenalty = 0.3f,
                         center = new Vector2(5f, 3f),
                         size = new Vector2(2f, 1f),
                         rotationDegrees = 15f
@@ -447,11 +448,11 @@ namespace EvacLogix.Tests.EditMode
                     {
                         obstacleId = "obstacle-2",
                         name = "Display Cases",
-                        semanticType = ObstacleSemanticType.SlowThrough,
+                        discourageWeight = 0.5f,
+                        movementSpeedPenalty = 0.6f,
                         center = new Vector2(3f, 5f),
                         size = new Vector2(3f, 1f),
-                        rotationDegrees = 0f,
-                        traversalCostMultiplier = 1.6f
+                        rotationDegrees = 0f
                     }
                 },
                 stairPortals =

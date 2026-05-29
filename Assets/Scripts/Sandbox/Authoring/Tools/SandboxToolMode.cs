@@ -12,9 +12,9 @@ namespace EvacLogix.Sandbox.Authoring.Tools
         Window = 7,
         Exit = 8,
         Obstacle = 9,
-        Stair = 10,
-        SpawnPoint = 11,
-        SpawnBrush = 12,
-        Region = 13,
+        Teleport = 11,
+        SpawnPoint = 12,
+        SpawnBrush = 13,
+        Region = 14,
     }
 }

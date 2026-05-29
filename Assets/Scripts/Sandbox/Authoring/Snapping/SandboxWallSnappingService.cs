@@ -105,22 +105,6 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
             var bestResult = new SandboxWallSnapResult(rawPoint, SandboxWallSnapTargetKind.None, string.Empty);
             var bestDistance = float.MaxValue;
 
-            if (gridSnappingEnabled)
-            {
-                var activeGridSize = workspaceStateService != null
-                    ? workspaceStateService.GridSize
-                    : gridSize;
-                var gridPoint = new Vector2(
-                    Mathf.Round(rawPoint.x / activeGridSize) * activeGridSize,
-                    Mathf.Round(rawPoint.y / activeGridSize) * activeGridSize);
-                var gridDistance = Vector2.Distance(rawPoint, gridPoint);
-                if (gridDistance <= gridSnapDistance && gridDistance < bestDistance)
-                {
-                    bestDistance = gridDistance;
-                    bestResult = new SandboxWallSnapResult(gridPoint, SandboxWallSnapTargetKind.Grid, string.Empty);
-                }
-            }
-
             if (angleSnappingEnabled && anchorPoint.HasValue)
             {
                     var delta = rawPoint - anchorPoint.Value;
@@ -163,6 +147,22 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
                             SandboxWallSnapTargetKind.Segment,
                             wall.wallSegmentId);
                     }
+                }
+            }
+
+            if (gridSnappingEnabled)
+            {
+                var activeGridSize = workspaceStateService != null
+                    ? workspaceStateService.GridSize
+                    : gridSize;
+                var gridPoint = new Vector2(
+                    Mathf.Round(rawPoint.x / activeGridSize) * activeGridSize,
+                    Mathf.Round(rawPoint.y / activeGridSize) * activeGridSize);
+                var gridDistance = Vector2.Distance(rawPoint, gridPoint);
+                if (gridDistance <= gridSnapDistance && gridDistance < bestDistance)
+                {
+                    bestDistance = gridDistance;
+                    bestResult = new SandboxWallSnapResult(gridPoint, SandboxWallSnapTargetKind.Grid, string.Empty);
                 }
             }
 

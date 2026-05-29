@@ -32,17 +32,32 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         private void Awake()
         {
-            workspaceService = GetComponent<SandboxProjectWorkspaceService>();
-            workspaceStateService = GetComponent<SandboxWorkspaceStateService>();
+            ResolveDependencies();
+        }
+
+        private void Start()
+        {
+            // The installer can add this service before the workspace service exists,
+            // so Awake-time GetComponent calls may resolve to null. Re-resolve once all
+            // sibling services are present.
+            ResolveDependencies();
+        }
+
+        private void ResolveDependencies()
+        {
+            workspaceService ??= GetComponent<SandboxProjectWorkspaceService>();
+            workspaceStateService ??= GetComponent<SandboxWorkspaceStateService>();
         }
 
         public void RequestRebuild()
         {
+            ResolveDependencies();
             RequestRebuild(workspaceService?.ActiveFloorId, false);
         }
 
         public void RequestRebuild(string floorId, bool fullRebuild = false)
         {
+            ResolveDependencies();
             rebuildRequestCount += 1;
             RebuildRequested?.Invoke(rebuildRequestCount);
 
@@ -57,6 +72,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public void RebuildAll()
         {
+            ResolveDependencies();
             var project = workspaceService?.ActiveProject;
             if (project == null)
             {

@@ -157,6 +157,11 @@ namespace EvacLogix.Sandbox.Infrastructure
                 AddRotatedRectPoints(points, stairPortal.localPosition, stairPortal.size, stairPortal.rotationDegrees);
             }
 
+            foreach (var teleportPortal in floor.teleportPortals.Where(portal => selectedIds.Contains(portal.teleportPortalId)))
+            {
+                AddRotatedRectPoints(points, teleportPortal.localPosition, teleportPortal.size, teleportPortal.rotationDegrees);
+            }
+
             foreach (var region in floor.regions.Where(region => selectedIds.Contains(region.regionId)))
             {
                 points.AddRange(region.polygonPoints);

@@ -17,9 +17,12 @@ namespace EvacLogix.Sandbox.Authoring
         [SerializeField] private float brushPointReductionDistance = 0.25f;
         [SerializeField] private int brushSmoothingWindow = 1;
         [SerializeField] private float nearJoinCleanupDistance = 0.3f;
+        [SerializeField] private float topologyNormalizationJunctionTolerance = 0.08f;
         [SerializeField] private float mergeAngleToleranceDegrees = 10f;
         [SerializeField] private bool hasPendingLineStart;
         [SerializeField] private Vector2 pendingLineStart;
+        [SerializeField] private SandboxWallSnapTargetKind pendingLineStartTargetKind;
+        [SerializeField] private string pendingLineStartReferenceId = string.Empty;
         [SerializeField] private bool isBrushCaptureActive;
         [SerializeField] private List<Vector2> activeBrushStrokePoints = new();
         [SerializeField] private List<Vector2> lastCleanedBrushStrokePoints = new();
@@ -39,6 +42,7 @@ namespace EvacLogix.Sandbox.Authoring
         public float BrushPointReductionDistance => brushPointReductionDistance;
         public int BrushSmoothingWindow => brushSmoothingWindow;
         public float NearJoinCleanupDistance => nearJoinCleanupDistance;
+        public float TopologyNormalizationJunctionTolerance => topologyNormalizationJunctionTolerance;
         public bool HasPendingLineStart => hasPendingLineStart;
         public Vector2 PendingLineStart => pendingLineStart;
         public bool IsBrushCaptureActive => isBrushCaptureActive;
@@ -80,32 +84,43 @@ namespace EvacLogix.Sandbox.Authoring
 
             if (!hasPendingLineStart)
             {
-                pendingLineStart = SnapPoint(activeFloor.floorId, worldPoint, null);
+                var firstPointSnapResult = ResolveSnapResult(activeFloor.floorId, worldPoint, null);
+                pendingLineStart = firstPointSnapResult.position;
+                pendingLineStartTargetKind = firstPointSnapResult.targetKind;
+                pendingLineStartReferenceId = firstPointSnapResult.referenceId;
                 hasPendingLineStart = true;
                 RaisePreviewStateChanged();
                 return false;
             }
 
-            var startPoint = pendingLineStart;
-            var endPoint = SnapPoint(activeFloor.floorId, worldPoint, startPoint);
-            hasPendingLineStart = false;
-            pendingLineStart = Vector2.zero;
-            RaisePreviewStateChanged();
+            var startSnapResult = new SandboxWallSnapResult(
+                pendingLineStart,
+                pendingLineStartTargetKind,
+                pendingLineStartReferenceId);
+            var endSnapResult = ResolveSnapResult(activeFloor.floorId, worldPoint, startSnapResult.position);
 
             createdWallSegmentId = SandboxId.NewId();
             var didCreate = CreateLineWallInternal(
-                startPoint,
-                endPoint,
+                startSnapResult,
+                endSnapResult,
                 ResolveThickness(thickness),
                 createdWallSegmentId,
                 SandboxId.NewId(),
                 SandboxId.NewId());
 
-            if (!didCreate)
+            if (didCreate)
+            {
+                pendingLineStart = endSnapResult.position;
+                pendingLineStartTargetKind = endSnapResult.targetKind;
+                pendingLineStartReferenceId = endSnapResult.referenceId;
+                hasPendingLineStart = true;
+            }
+            else
             {
                 createdWallSegmentId = string.Empty;
             }
 
+            RaisePreviewStateChanged();
             return didCreate;
         }
 
@@ -118,6 +133,8 @@ namespace EvacLogix.Sandbox.Authoring
 
             hasPendingLineStart = false;
             pendingLineStart = Vector2.zero;
+            pendingLineStartTargetKind = SandboxWallSnapTargetKind.None;
+            pendingLineStartReferenceId = string.Empty;
             RaisePreviewStateChanged();
         }
 
@@ -129,8 +146,8 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             return CreateLineWallInternal(
-                SnapPoint(workspaceService?.ActiveFloorId, startPoint, null),
-                SnapPoint(workspaceService?.ActiveFloorId, endPoint, startPoint),
+                ResolveSnapResult(workspaceService?.ActiveFloorId, startPoint, null),
+                ResolveSnapResult(workspaceService?.ActiveFloorId, endPoint, startPoint),
                 ResolveThickness(thickness),
                 SandboxId.NewId(),
                 SandboxId.NewId(),
@@ -245,6 +262,13 @@ namespace EvacLogix.Sandbox.Authoring
                         createdWallIds.Add(wallId);
                     }
 
+                    NormalizeFloorWallTopology(
+                        floor,
+                        topologyNormalizationJunctionTolerance);
+                    SimplifyBrushGeneratedWalls(floor, createdWallIds);
+                    createdWallIds.RemoveAll(id =>
+                        floor.wallSegments.All(candidate => !string.Equals(candidate.wallSegmentId, id, StringComparison.Ordinal)));
+
                     return createdWallIds.Count > 0;
                 },
                 createdWallIds);
@@ -262,12 +286,71 @@ namespace EvacLogix.Sandbox.Authoring
 
         public bool MoveWallStartHandle(string wallSegmentId, Vector2 newStartPoint)
         {
-            return MoveWallEndpoint(wallSegmentId, true, newStartPoint);
+            var floor = workspaceService?.ActiveFloor;
+            var wall = floor == null ? null : FindWallSegment(floor, wallSegmentId);
+            return wall != null && MoveWallJunctions(wall.startJunctionId, new[] { wall.startJunctionId }, newStartPoint);
         }
 
         public bool MoveWallEndHandle(string wallSegmentId, Vector2 newEndPoint)
         {
-            return MoveWallEndpoint(wallSegmentId, false, newEndPoint);
+            var floor = workspaceService?.ActiveFloor;
+            var wall = floor == null ? null : FindWallSegment(floor, wallSegmentId);
+            return wall != null && MoveWallJunctions(wall.endJunctionId, new[] { wall.endJunctionId }, newEndPoint);
+        }
+
+        public bool MoveWallJunctions(string primaryJunctionId, IEnumerable<string> selectedJunctionIds, Vector2 targetPoint)
+        {
+            if (string.IsNullOrWhiteSpace(primaryJunctionId) || selectedJunctionIds == null)
+            {
+                return false;
+            }
+
+            var activeFloor = workspaceService?.ActiveFloor;
+            if (activeFloor == null || IsEditingBlocked())
+            {
+                return false;
+            }
+
+            var junctionIds = selectedJunctionIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (junctionIds.Count == 0)
+            {
+                return false;
+            }
+
+            var lockedWallIds = GetConnectedWallIds(activeFloor, junctionIds)
+                .Where(IsWallLocked)
+                .ToList();
+            if (lockedWallIds.Count > 0)
+            {
+                return false;
+            }
+
+            var snapAnchor = ResolveJunctionDragAnchor(activeFloor.floorId, primaryJunctionId, junctionIds);
+            var snappedTarget = ResolveSnapResult(activeFloor.floorId, targetPoint, snapAnchor).position;
+            return ExecuteProjectMutation(
+                junctionIds.Count > 1 ? "Move Wall Nodes" : "Move Wall Node",
+                (_, floor) => TryMoveWallJunctionsInternal(floor, primaryJunctionId, junctionIds, snappedTarget),
+                GetConnectedWallIds(activeFloor, junctionIds));
+        }
+
+        public Vector2? ResolveJunctionDragAnchor(string floorId, string primaryJunctionId, IEnumerable<string> selectedJunctionIds)
+        {
+            var floor = workspaceService?.FindFloor(floorId);
+            if (floor == null)
+            {
+                return null;
+            }
+
+            return ResolveJunctionDragAnchor(
+                floor,
+                primaryJunctionId,
+                selectedJunctionIds?
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList() ?? new List<string>());
         }
 
         public bool SetWallThickness(string wallSegmentId, float thickness)
@@ -405,7 +488,8 @@ namespace EvacLogix.Sandbox.Authoring
                         endJunctionId = originalEndJunctionId,
                         startPoint = midJunction.position,
                         endPoint = originalEndPoint,
-                        thickness = wall.thickness
+                        thickness = wall.thickness,
+                        tags = new List<string>(wall.tags)
                     };
 
                     midJunction.connectedWallSegmentIds.Add(newWallId);
@@ -547,8 +631,8 @@ namespace EvacLogix.Sandbox.Authoring
         }
 
         private bool CreateLineWallInternal(
-            Vector2 startPoint,
-            Vector2 endPoint,
+            SandboxWallSnapResult startSnapResult,
+            SandboxWallSnapResult endSnapResult,
             float thickness,
             string wallSegmentId,
             string startJunctionId,
@@ -556,15 +640,35 @@ namespace EvacLogix.Sandbox.Authoring
         {
             return ExecuteProjectMutation(
                 "Create Line Wall",
-                (_, floor) => AddWallSegment(
-                    floor,
-                    wallSegmentId,
-                    startJunctionId,
-                    endJunctionId,
-                    startPoint,
-                    endPoint,
-                    thickness,
-                    wallSnappingService != null ? wallSnappingService.JunctionReuseDistance : nearJoinCleanupDistance),
+                (_, floor) =>
+                {
+                    var startJunction = EnsureJunctionForSnap(
+                        floor,
+                        startSnapResult,
+                        startJunctionId,
+                        Array.Empty<string>());
+                    if (startJunction == null)
+                    {
+                        return false;
+                    }
+
+                    var endJunction = EnsureJunctionForSnap(
+                        floor,
+                        endSnapResult,
+                        endJunctionId,
+                        new[] { startJunction.wallJunctionId });
+                    if (endJunction == null)
+                    {
+                        return false;
+                    }
+
+                    return AddWallSegmentBetweenJunctions(
+                        floor,
+                        wallSegmentId,
+                        startJunction,
+                        endJunction,
+                        thickness);
+                },
                 new[] { wallSegmentId });
         }
 
@@ -766,19 +870,834 @@ namespace EvacLogix.Sandbox.Authoring
             return reducedPoints;
         }
 
-        private Vector2 SnapPoint(string floorId, Vector2 rawPoint, Vector2? anchorPoint)
+        private SandboxWallSnapResult ResolveSnapResult(string floorId, Vector2 rawPoint, Vector2? anchorPoint)
         {
             if (wallSnappingService == null || string.IsNullOrWhiteSpace(floorId))
             {
-                return rawPoint;
+                return new SandboxWallSnapResult(rawPoint, SandboxWallSnapTargetKind.None, string.Empty);
             }
 
-            return wallSnappingService.SnapPoint(floorId, rawPoint, anchorPoint).position;
+            return wallSnappingService.SnapPoint(floorId, rawPoint, anchorPoint);
+        }
+
+        private bool TryMoveWallJunctionsInternal(
+            FloorData floor,
+            string primaryJunctionId,
+            IReadOnlyList<string> selectedJunctionIds,
+            Vector2 snappedTargetPoint)
+        {
+            var selectedIdSet = new HashSet<string>(selectedJunctionIds, StringComparer.Ordinal);
+            var primaryJunction = FindJunction(floor, primaryJunctionId);
+            if (primaryJunction == null)
+            {
+                return false;
+            }
+
+            var junctions = selectedJunctionIds
+                .Select(id => FindJunction(floor, id))
+                .Where(junction => junction != null)
+                .Distinct()
+                .ToList();
+            if (junctions.Count == 0)
+            {
+                return false;
+            }
+
+            var delta = snappedTargetPoint - primaryJunction.position;
+            if (delta.sqrMagnitude <= 0.0001f)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < junctions.Count; i += 1)
+            {
+                junctions[i].position += delta;
+            }
+
+            SyncWallGeometryFromJunctions(floor);
+            if (!ValidateWallGeometry(floor))
+            {
+                return false;
+            }
+
+            for (var i = 0; i < junctions.Count; i += 1)
+            {
+                var junction = FindJunction(floor, junctions[i].wallJunctionId);
+                if (junction == null)
+                {
+                    continue;
+                }
+
+                var mergeTarget = floor.wallJunctions
+                    .Where(candidate =>
+                        !string.Equals(candidate.wallJunctionId, junction.wallJunctionId, StringComparison.Ordinal) &&
+                        !selectedIdSet.Contains(candidate.wallJunctionId))
+                    .Where(candidate => Vector2.Distance(candidate.position, junction.position) <= (wallSnappingService != null ? wallSnappingService.JunctionReuseDistance : nearJoinCleanupDistance))
+                    .OrderBy(candidate => Vector2.Distance(candidate.position, junction.position))
+                    .FirstOrDefault();
+                if (mergeTarget != null)
+                {
+                    MergeJunctionInto(floor, junction, mergeTarget);
+                    continue;
+                }
+
+                var splitCandidate = FindSegmentSplitCandidate(floor, junction);
+                if (splitCandidate.wall != null)
+                {
+                    SplitWallAtProjectedPointUsingExistingJunction(floor, splitCandidate.wall.wallSegmentId, junction, splitCandidate.projectedPoint);
+                }
+            }
+
+            SyncWallGeometryFromJunctions(floor);
+            PruneOrphanJunctions(floor);
+            return ValidateWallGeometry(floor);
+        }
+
+        private Vector2? ResolveJunctionDragAnchor(FloorData floor, string primaryJunctionId, IReadOnlyCollection<string> selectedJunctionIds)
+        {
+            var primaryJunction = FindJunction(floor, primaryJunctionId);
+            if (primaryJunction == null)
+            {
+                return null;
+            }
+
+            foreach (var connectedWallId in primaryJunction.connectedWallSegmentIds)
+            {
+                var wall = FindWallSegment(floor, connectedWallId);
+                if (wall == null)
+                {
+                    continue;
+                }
+
+                var otherJunctionId = string.Equals(wall.startJunctionId, primaryJunctionId, StringComparison.Ordinal)
+                    ? wall.endJunctionId
+                    : wall.startJunctionId;
+                if (selectedJunctionIds.Contains(otherJunctionId))
+                {
+                    continue;
+                }
+
+                var otherJunction = FindJunction(floor, otherJunctionId);
+                if (otherJunction != null)
+                {
+                    return otherJunction.position;
+                }
+            }
+
+            return null;
+        }
+
+        private WallJunctionData EnsureJunctionForSnap(
+            FloorData floor,
+            SandboxWallSnapResult snapResult,
+            string preferredJunctionId,
+            IReadOnlyCollection<string> excludedJunctionIds)
+        {
+            var exclusions = excludedJunctionIds?.ToArray() ?? Array.Empty<string>();
+            switch (snapResult.targetKind)
+            {
+                case SandboxWallSnapTargetKind.Endpoint:
+                {
+                    var endpointJunction = FindJunction(floor, snapResult.referenceId);
+                    if (endpointJunction != null)
+                    {
+                        return endpointJunction;
+                    }
+
+                    break;
+                }
+                case SandboxWallSnapTargetKind.Segment:
+                {
+                    var reusableSegmentJunction = FindReusableJunction(
+                        floor,
+                        snapResult.position,
+                        wallSnappingService != null ? wallSnappingService.JunctionReuseDistance : nearJoinCleanupDistance,
+                        exclusions);
+                    if (reusableSegmentJunction != null)
+                    {
+                        return reusableSegmentJunction;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(snapResult.referenceId))
+                    {
+                        return SplitWallAtProjectedPoint(
+                            floor,
+                            snapResult.referenceId,
+                            snapResult.position,
+                            preferredJunctionId);
+                    }
+
+                    break;
+                }
+            }
+
+            return FindOrCreateJunction(
+                floor,
+                snapResult.position,
+                wallSnappingService != null ? wallSnappingService.JunctionReuseDistance : nearJoinCleanupDistance,
+                preferredJunctionId,
+                exclusions);
+        }
+
+        private WallJunctionData SplitWallAtProjectedPoint(
+            FloorData floor,
+            string wallSegmentId,
+            Vector2 splitPoint,
+            string preferredJunctionId)
+        {
+            var wall = FindWallSegment(floor, wallSegmentId);
+            if (wall == null)
+            {
+                return null;
+            }
+
+            var projectedPoint = ProjectPointOntoSegment(splitPoint, wall.startPoint, wall.endPoint);
+            if (Vector2.Distance(projectedPoint, wall.startPoint) <= 0.05f)
+            {
+                return FindJunction(floor, wall.startJunctionId);
+            }
+
+            if (Vector2.Distance(projectedPoint, wall.endPoint) <= 0.05f)
+            {
+                return FindJunction(floor, wall.endJunctionId);
+            }
+
+            var existingJunction = FindReusableJunction(
+                floor,
+                projectedPoint,
+                wallSnappingService != null ? wallSnappingService.JunctionReuseDistance : nearJoinCleanupDistance,
+                wall.startJunctionId,
+                wall.endJunctionId);
+            if (existingJunction != null)
+            {
+                return existingJunction;
+            }
+
+            var originalEndJunctionId = wall.endJunctionId;
+            var originalEndPoint = wall.endPoint;
+            var originalEndJunction = FindJunction(floor, originalEndJunctionId);
+            var midJunction = new WallJunctionData
+            {
+                wallJunctionId = preferredJunctionId,
+                position = projectedPoint
+            };
+            floor.wallJunctions.Add(midJunction);
+
+            if (originalEndJunction != null)
+            {
+                RemoveConnection(originalEndJunction, wall.wallSegmentId);
+            }
+
+            wall.endPoint = midJunction.position;
+            wall.endJunctionId = midJunction.wallJunctionId;
+            AddConnection(midJunction, wall.wallSegmentId);
+
+            var splitWallId = SandboxId.NewId();
+            if (originalEndJunction != null)
+            {
+                AddConnection(originalEndJunction, splitWallId);
+            }
+
+            floor.wallSegments.Add(new WallSegmentData
+            {
+                wallSegmentId = splitWallId,
+                startJunctionId = midJunction.wallJunctionId,
+                endJunctionId = originalEndJunctionId,
+                startPoint = midJunction.position,
+                endPoint = originalEndPoint,
+                thickness = wall.thickness,
+                tags = new List<string>(wall.tags)
+            });
+            AddConnection(midJunction, splitWallId);
+            return midJunction;
+        }
+
+        private void SplitWallAtProjectedPointUsingExistingJunction(
+            FloorData floor,
+            string wallSegmentId,
+            WallJunctionData existingJunction,
+            Vector2 projectedPoint)
+        {
+            var wall = FindWallSegment(floor, wallSegmentId);
+            if (wall == null || existingJunction == null)
+            {
+                return;
+            }
+
+            if (string.Equals(wall.startJunctionId, existingJunction.wallJunctionId, StringComparison.Ordinal) ||
+                string.Equals(wall.endJunctionId, existingJunction.wallJunctionId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (Vector2.Distance(projectedPoint, wall.startPoint) <= 0.05f ||
+                Vector2.Distance(projectedPoint, wall.endPoint) <= 0.05f)
+            {
+                return;
+            }
+
+            var originalEndJunctionId = wall.endJunctionId;
+            var originalEndPoint = wall.endPoint;
+            var originalEndJunction = FindJunction(floor, originalEndJunctionId);
+            if (originalEndJunction != null)
+            {
+                RemoveConnection(originalEndJunction, wall.wallSegmentId);
+            }
+
+            existingJunction.position = projectedPoint;
+            wall.endPoint = projectedPoint;
+            wall.endJunctionId = existingJunction.wallJunctionId;
+            AddConnection(existingJunction, wall.wallSegmentId);
+
+            var splitWallId = SandboxId.NewId();
+            if (originalEndJunction != null)
+            {
+                AddConnection(originalEndJunction, splitWallId);
+            }
+
+            floor.wallSegments.Add(new WallSegmentData
+            {
+                wallSegmentId = splitWallId,
+                startJunctionId = existingJunction.wallJunctionId,
+                endJunctionId = originalEndJunctionId,
+                startPoint = projectedPoint,
+                endPoint = originalEndPoint,
+                thickness = wall.thickness,
+                tags = new List<string>(wall.tags)
+            });
+            AddConnection(existingJunction, splitWallId);
+        }
+
+        private (WallSegmentData wall, Vector2 projectedPoint) FindSegmentSplitCandidate(FloorData floor, WallJunctionData movedJunction)
+        {
+            if (movedJunction == null)
+            {
+                return default;
+            }
+
+            var bestDistance = float.MaxValue;
+            WallSegmentData bestWall = null;
+            var bestPoint = Vector2.zero;
+            for (var i = 0; i < floor.wallSegments.Count; i += 1)
+            {
+                var wall = floor.wallSegments[i];
+                if (movedJunction.connectedWallSegmentIds.Contains(wall.wallSegmentId))
+                {
+                    continue;
+                }
+
+                var projectedPoint = ProjectPointOntoSegment(movedJunction.position, wall.startPoint, wall.endPoint);
+                if (Vector2.Distance(projectedPoint, wall.startPoint) <= 0.05f ||
+                    Vector2.Distance(projectedPoint, wall.endPoint) <= 0.05f)
+                {
+                    continue;
+                }
+
+                var distance = Vector2.Distance(movedJunction.position, projectedPoint);
+                if (distance > (wallSnappingService != null ? wallSnappingService.SegmentSnappingEnabled ? 0.25f : float.MaxValue : 0.25f))
+                {
+                    continue;
+                }
+
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    bestWall = wall;
+                    bestPoint = projectedPoint;
+                }
+            }
+
+            return (bestWall, bestPoint);
+        }
+
+        private static void MergeJunctionInto(FloorData floor, WallJunctionData sourceJunction, WallJunctionData targetJunction)
+        {
+            if (floor == null || sourceJunction == null || targetJunction == null ||
+                string.Equals(sourceJunction.wallJunctionId, targetJunction.wallJunctionId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var connectedWallIds = sourceJunction.connectedWallSegmentIds.ToList();
+            for (var i = 0; i < connectedWallIds.Count; i += 1)
+            {
+                var wall = FindWallSegment(floor, connectedWallIds[i]);
+                if (wall == null)
+                {
+                    continue;
+                }
+
+                if (string.Equals(wall.startJunctionId, sourceJunction.wallJunctionId, StringComparison.Ordinal))
+                {
+                    wall.startJunctionId = targetJunction.wallJunctionId;
+                    wall.startPoint = targetJunction.position;
+                }
+
+                if (string.Equals(wall.endJunctionId, sourceJunction.wallJunctionId, StringComparison.Ordinal))
+                {
+                    wall.endJunctionId = targetJunction.wallJunctionId;
+                    wall.endPoint = targetJunction.position;
+                }
+
+                AddConnection(targetJunction, wall.wallSegmentId);
+            }
+
+            sourceJunction.connectedWallSegmentIds.Clear();
+            floor.wallJunctions.Remove(sourceJunction);
+        }
+
+        private static void SyncWallGeometryFromJunctions(FloorData floor)
+        {
+            if (floor == null)
+            {
+                return;
+            }
+
+            for (var i = 0; i < floor.wallSegments.Count; i += 1)
+            {
+                var wall = floor.wallSegments[i];
+                var startJunction = FindJunction(floor, wall.startJunctionId);
+                var endJunction = FindJunction(floor, wall.endJunctionId);
+                if (startJunction != null)
+                {
+                    wall.startPoint = startJunction.position;
+                }
+
+                if (endJunction != null)
+                {
+                    wall.endPoint = endJunction.position;
+                }
+            }
+        }
+
+        private static bool ValidateWallGeometry(FloorData floor)
+        {
+            if (floor == null)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < floor.wallSegments.Count; i += 1)
+            {
+                var wall = floor.wallSegments[i];
+                if (string.Equals(wall.startJunctionId, wall.endJunctionId, StringComparison.Ordinal) ||
+                    Vector2.Distance(wall.startPoint, wall.endPoint) <= 0.02f)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static void PruneOrphanJunctions(FloorData floor)
+        {
+            if (floor == null)
+            {
+                return;
+            }
+
+            floor.wallJunctions.RemoveAll(junction => junction == null || junction.connectedWallSegmentIds.Count == 0);
+        }
+
+        private void NormalizeFloorWallTopology(FloorData floor, float junctionTolerance)
+        {
+            if (floor == null)
+            {
+                return;
+            }
+
+            junctionTolerance = Mathf.Max(0.01f, junctionTolerance);
+            var iterationBudget = Mathf.Max(32, floor.wallSegments.Count * 8);
+            for (var iteration = 0; iteration < iterationBudget; iteration += 1)
+            {
+                SyncWallGeometryFromJunctions(floor);
+
+                if (MergeNearbyJunctions(floor, junctionTolerance))
+                {
+                    continue;
+                }
+
+                if (SplitWallsAtExistingJunctions(floor, junctionTolerance))
+                {
+                    continue;
+                }
+
+                if (SplitIntersectingWalls(floor, junctionTolerance))
+                {
+                    continue;
+                }
+
+                break;
+            }
+
+            SyncWallGeometryFromJunctions(floor);
+            PruneOrphanJunctions(floor);
+        }
+
+        private void SimplifyBrushGeneratedWalls(FloorData floor, IReadOnlyCollection<string> createdWallIds)
+        {
+            if (floor == null || createdWallIds == null || createdWallIds.Count == 0)
+            {
+                return;
+            }
+
+            var createdSet = new HashSet<string>(createdWallIds, StringComparer.Ordinal);
+            var iterationBudget = Mathf.Max(16, floor.wallSegments.Count * 4);
+            for (var iteration = 0; iteration < iterationBudget; iteration += 1)
+            {
+                SyncWallGeometryFromJunctions(floor);
+
+                if (RemoveDuplicateBrushWalls(floor, createdSet))
+                {
+                    continue;
+                }
+
+                if (MergeCollinearBrushWalls(floor, createdSet))
+                {
+                    continue;
+                }
+
+                if (PruneShortBrushStubs(floor, createdSet))
+                {
+                    continue;
+                }
+
+                break;
+            }
+
+            SyncWallGeometryFromJunctions(floor);
+            PruneOrphanJunctions(floor);
+        }
+
+        private bool RemoveDuplicateBrushWalls(FloorData floor, ISet<string> createdWallIds)
+        {
+            for (var i = 0; i < floor.wallSegments.Count; i += 1)
+            {
+                var first = floor.wallSegments[i];
+                if (first == null || !createdWallIds.Contains(first.wallSegmentId) || HasAttachedOpenings(floor, first.wallSegmentId))
+                {
+                    continue;
+                }
+
+                for (var j = i + 1; j < floor.wallSegments.Count; j += 1)
+                {
+                    var second = floor.wallSegments[j];
+                    if (second == null || HasAttachedOpenings(floor, second.wallSegmentId))
+                    {
+                        continue;
+                    }
+
+                    if (!AreWallsDuplicate(first, second))
+                    {
+                        continue;
+                    }
+
+                    var wallToRemove = createdWallIds.Contains(second.wallSegmentId) ? second : first;
+                    if (RemoveWallInternal(floor, wallToRemove))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private bool MergeCollinearBrushWalls(FloorData floor, ISet<string> createdWallIds)
+        {
+            foreach (var junction in floor.wallJunctions.ToList())
+            {
+                if (junction == null || junction.connectedWallSegmentIds.Count != 2)
+                {
+                    continue;
+                }
+
+                var firstWall = FindWallSegment(floor, junction.connectedWallSegmentIds[0]);
+                var secondWall = FindWallSegment(floor, junction.connectedWallSegmentIds[1]);
+                if (firstWall == null || secondWall == null)
+                {
+                    continue;
+                }
+
+                if (!createdWallIds.Contains(firstWall.wallSegmentId) && !createdWallIds.Contains(secondWall.wallSegmentId))
+                {
+                    continue;
+                }
+
+                if (HasAttachedOpenings(floor, firstWall.wallSegmentId) || HasAttachedOpenings(floor, secondWall.wallSegmentId))
+                {
+                    continue;
+                }
+
+                if (TryMergeConnectedWallsInternal(floor, firstWall.wallSegmentId, secondWall.wallSegmentId))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool PruneShortBrushStubs(FloorData floor, ISet<string> createdWallIds)
+        {
+            const float maximumStubLength = 0.2f;
+            foreach (var wall in floor.wallSegments.ToList())
+            {
+                if (wall == null || !createdWallIds.Contains(wall.wallSegmentId) || HasAttachedOpenings(floor, wall.wallSegmentId))
+                {
+                    continue;
+                }
+
+                var length = Vector2.Distance(wall.startPoint, wall.endPoint);
+                if (length > maximumStubLength)
+                {
+                    continue;
+                }
+
+                var startJunction = FindJunction(floor, wall.startJunctionId);
+                var endJunction = FindJunction(floor, wall.endJunctionId);
+                var hasDanglingEndpoint = (startJunction?.connectedWallSegmentIds.Count ?? 0) <= 1 ||
+                    (endJunction?.connectedWallSegmentIds.Count ?? 0) <= 1;
+                if (!hasDanglingEndpoint)
+                {
+                    continue;
+                }
+
+                if (RemoveWallInternal(floor, wall))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool MergeNearbyJunctions(FloorData floor, float junctionTolerance)
+        {
+            for (var i = 0; i < floor.wallJunctions.Count; i += 1)
+            {
+                var first = floor.wallJunctions[i];
+                if (first == null)
+                {
+                    continue;
+                }
+
+                for (var j = i + 1; j < floor.wallJunctions.Count; j += 1)
+                {
+                    var second = floor.wallJunctions[j];
+                    if (second == null)
+                    {
+                        continue;
+                    }
+
+                    if (Vector2.Distance(first.position, second.position) > junctionTolerance)
+                    {
+                        continue;
+                    }
+
+                    MergeJunctionInto(floor, second, first);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool SplitWallsAtExistingJunctions(FloorData floor, float junctionTolerance)
+        {
+            for (var i = 0; i < floor.wallJunctions.Count; i += 1)
+            {
+                var junction = floor.wallJunctions[i];
+                if (junction == null)
+                {
+                    continue;
+                }
+
+                for (var wallIndex = 0; wallIndex < floor.wallSegments.Count; wallIndex += 1)
+                {
+                    var wall = floor.wallSegments[wallIndex];
+                    if (wall == null || junction.connectedWallSegmentIds.Contains(wall.wallSegmentId))
+                    {
+                        continue;
+                    }
+
+                    var projectedPoint = ProjectPointOntoSegment(junction.position, wall.startPoint, wall.endPoint);
+                    if (!IsPointNear(junction.position, projectedPoint, junctionTolerance) ||
+                        IsPointNear(projectedPoint, wall.startPoint, 0.05f) ||
+                        IsPointNear(projectedPoint, wall.endPoint, 0.05f))
+                    {
+                        continue;
+                    }
+
+                    SplitWallAtProjectedPointUsingExistingJunction(floor, wall.wallSegmentId, junction, projectedPoint);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool SplitIntersectingWalls(FloorData floor, float junctionTolerance)
+        {
+            for (var i = 0; i < floor.wallSegments.Count; i += 1)
+            {
+                var first = floor.wallSegments[i];
+                if (first == null)
+                {
+                    continue;
+                }
+
+                for (var j = i + 1; j < floor.wallSegments.Count; j += 1)
+                {
+                    var second = floor.wallSegments[j];
+                    if (second == null)
+                    {
+                        continue;
+                    }
+
+                    if (!TryGetSegmentIntersection(first.startPoint, first.endPoint, second.startPoint, second.endPoint, out var intersectionPoint))
+                    {
+                        continue;
+                    }
+
+                    var firstStart = IsPointNear(intersectionPoint, first.startPoint, 0.05f);
+                    var firstEnd = IsPointNear(intersectionPoint, first.endPoint, 0.05f);
+                    var secondStart = IsPointNear(intersectionPoint, second.startPoint, 0.05f);
+                    var secondEnd = IsPointNear(intersectionPoint, second.endPoint, 0.05f);
+                    var firstAtEndpoint = firstStart || firstEnd;
+                    var secondAtEndpoint = secondStart || secondEnd;
+
+                    if (firstAtEndpoint && secondAtEndpoint)
+                    {
+                        var firstJunction = FindJunction(
+                            floor,
+                            firstStart ? first.startJunctionId : first.endJunctionId);
+                        var secondJunction = FindJunction(
+                            floor,
+                            secondStart ? second.startJunctionId : second.endJunctionId);
+                        if (firstJunction != null &&
+                            secondJunction != null &&
+                            !string.Equals(firstJunction.wallJunctionId, secondJunction.wallJunctionId, StringComparison.Ordinal) &&
+                            Vector2.Distance(firstJunction.position, secondJunction.position) <= junctionTolerance)
+                        {
+                            MergeJunctionInto(floor, secondJunction, firstJunction);
+                            return true;
+                        }
+
+                        continue;
+                    }
+
+                    if (firstAtEndpoint && !secondAtEndpoint)
+                    {
+                        var firstJunction = FindJunction(
+                            floor,
+                            firstStart ? first.startJunctionId : first.endJunctionId);
+                        if (firstJunction != null)
+                        {
+                            SplitWallAtProjectedPointUsingExistingJunction(
+                                floor,
+                                second.wallSegmentId,
+                                firstJunction,
+                                intersectionPoint);
+                            return true;
+                        }
+
+                        continue;
+                    }
+
+                    if (!firstAtEndpoint && secondAtEndpoint)
+                    {
+                        var secondJunction = FindJunction(
+                            floor,
+                            secondStart ? second.startJunctionId : second.endJunctionId);
+                        if (secondJunction != null)
+                        {
+                            SplitWallAtProjectedPointUsingExistingJunction(
+                                floor,
+                                first.wallSegmentId,
+                                secondJunction,
+                                intersectionPoint);
+                            return true;
+                        }
+
+                        continue;
+                    }
+
+                    var intersectionJunction = SplitWallAtProjectedPoint(
+                        floor,
+                        first.wallSegmentId,
+                        intersectionPoint,
+                        SandboxId.NewId());
+                    if (intersectionJunction != null)
+                    {
+                        SplitWallAtProjectedPointUsingExistingJunction(
+                            floor,
+                            second.wallSegmentId,
+                            intersectionJunction,
+                            intersectionPoint);
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static List<string> GetConnectedWallIds(FloorData floor, IEnumerable<string> junctionIds)
+        {
+            if (floor == null || junctionIds == null)
+            {
+                return new List<string>();
+            }
+
+            return junctionIds
+                .Select(id => FindJunction(floor, id))
+                .Where(junction => junction != null)
+                .SelectMany(junction => junction.connectedWallSegmentIds)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+        }
+
+        private Vector2 SnapPoint(string floorId, Vector2 rawPoint, Vector2? anchorPoint)
+        {
+            return ResolveSnapResult(floorId, rawPoint, anchorPoint).position;
         }
 
         private float ResolveThickness(float thickness)
         {
             return thickness > 0f ? thickness : defaultWallThickness;
+        }
+
+        private static bool AddWallSegmentBetweenJunctions(
+            FloorData floor,
+            string wallSegmentId,
+            WallJunctionData startJunction,
+            WallJunctionData endJunction,
+            float thickness)
+        {
+            if (floor == null ||
+                startJunction == null ||
+                endJunction == null ||
+                string.IsNullOrWhiteSpace(wallSegmentId) ||
+                string.Equals(startJunction.wallJunctionId, endJunction.wallJunctionId, StringComparison.Ordinal) ||
+                Vector2.Distance(startJunction.position, endJunction.position) <= 0.02f)
+            {
+                return false;
+            }
+
+            floor.wallSegments.Add(new WallSegmentData
+            {
+                wallSegmentId = wallSegmentId,
+                startJunctionId = startJunction.wallJunctionId,
+                endJunctionId = endJunction.wallJunctionId,
+                startPoint = startJunction.position,
+                endPoint = endJunction.position,
+                thickness = thickness
+            });
+            AddConnection(startJunction, wallSegmentId);
+            AddConnection(endJunction, wallSegmentId);
+            return true;
         }
 
         private static bool AddWallSegment(
@@ -809,20 +1728,12 @@ namespace EvacLogix.Sandbox.Authoring
                 return false;
             }
 
-            var wall = new WallSegmentData
-            {
-                wallSegmentId = wallSegmentId,
-                startJunctionId = startJunction.wallJunctionId,
-                endJunctionId = endJunction.wallJunctionId,
-                startPoint = startJunction.position,
-                endPoint = endJunction.position,
-                thickness = thickness
-            };
-
-            AddConnection(startJunction, wall.wallSegmentId);
-            AddConnection(endJunction, wall.wallSegmentId);
-            floor.wallSegments.Add(wall);
-            return true;
+            return AddWallSegmentBetweenJunctions(
+                floor,
+                wallSegmentId,
+                startJunction,
+                endJunction,
+                thickness);
         }
 
         private static bool UpdateWallEndpointPosition(
@@ -892,10 +1803,101 @@ namespace EvacLogix.Sandbox.Authoring
                 string.Equals(wall.wallSegmentId, wallSegmentId, StringComparison.Ordinal));
         }
 
+        private bool TryMergeConnectedWallsInternal(FloorData floor, string firstWallSegmentId, string secondWallSegmentId)
+        {
+            var firstWall = FindWallSegment(floor, firstWallSegmentId);
+            var secondWall = FindWallSegment(floor, secondWallSegmentId);
+            if (firstWall == null || secondWall == null)
+            {
+                return false;
+            }
+
+            var sharedJunctionId = FindSharedJunctionId(firstWall, secondWall);
+            if (string.IsNullOrWhiteSpace(sharedJunctionId))
+            {
+                return false;
+            }
+
+            var firstFarPoint = GetFarEndpoint(firstWall, sharedJunctionId);
+            var secondFarPoint = GetFarEndpoint(secondWall, sharedJunctionId);
+            var sharedPoint = FindJunction(floor, sharedJunctionId)?.position ?? firstFarPoint;
+            var firstDirection = (firstFarPoint - sharedPoint).normalized;
+            var secondDirection = (secondFarPoint - sharedPoint).normalized;
+            var angle = Vector2.Angle(firstDirection, secondDirection);
+            if (Mathf.Abs(180f - angle) > mergeAngleToleranceDegrees)
+            {
+                return false;
+            }
+
+            var mergedStartJunctionId = GetFarJunctionId(firstWall, sharedJunctionId);
+            var mergedEndJunctionId = GetFarJunctionId(secondWall, sharedJunctionId);
+            if (string.Equals(mergedStartJunctionId, mergedEndJunctionId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var mergedStartJunction = FindJunction(floor, mergedStartJunctionId);
+            var mergedEndJunction = FindJunction(floor, mergedEndJunctionId);
+            var sharedJunction = FindJunction(floor, sharedJunctionId);
+            if (mergedStartJunction == null || mergedEndJunction == null || sharedJunction == null)
+            {
+                return false;
+            }
+
+            RemoveConnection(mergedStartJunction, firstWall.wallSegmentId);
+            RemoveConnection(mergedEndJunction, secondWall.wallSegmentId);
+            RemoveConnection(sharedJunction, firstWall.wallSegmentId);
+            RemoveConnection(sharedJunction, secondWall.wallSegmentId);
+
+            firstWall.startJunctionId = mergedStartJunctionId;
+            firstWall.endJunctionId = mergedEndJunctionId;
+            firstWall.startPoint = mergedStartJunction.position;
+            firstWall.endPoint = mergedEndJunction.position;
+            firstWall.thickness = Mathf.Max(firstWall.thickness, secondWall.thickness);
+            firstWall.tags = firstWall.tags
+                .Concat(secondWall.tags ?? Enumerable.Empty<string>())
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            AddConnection(mergedStartJunction, firstWall.wallSegmentId);
+            AddConnection(mergedEndJunction, firstWall.wallSegmentId);
+
+            floor.wallSegments.Remove(secondWall);
+            PruneJunctionIfOrphan(floor, sharedJunctionId);
+            return true;
+        }
+
         private static WallJunctionData FindJunction(FloorData floor, string wallJunctionId)
         {
             return floor?.wallJunctions.FirstOrDefault(junction =>
                 string.Equals(junction.wallJunctionId, wallJunctionId, StringComparison.Ordinal));
+        }
+
+        private static bool RemoveWallInternal(FloorData floor, WallSegmentData wall)
+        {
+            if (floor == null || wall == null)
+            {
+                return false;
+            }
+
+            var startJunctionId = wall.startJunctionId;
+            var endJunctionId = wall.endJunctionId;
+            var startJunction = FindJunction(floor, startJunctionId);
+            var endJunction = FindJunction(floor, endJunctionId);
+            if (startJunction != null)
+            {
+                RemoveConnection(startJunction, wall.wallSegmentId);
+            }
+
+            if (endJunction != null)
+            {
+                RemoveConnection(endJunction, wall.wallSegmentId);
+            }
+
+            floor.wallSegments.Remove(wall);
+            PruneJunctionIfOrphan(floor, startJunctionId);
+            PruneJunctionIfOrphan(floor, endJunctionId);
+            return true;
         }
 
         private static WallJunctionData FindOrCreateJunction(
@@ -998,6 +2000,30 @@ namespace EvacLogix.Sandbox.Authoring
                 : wall.startJunctionId;
         }
 
+        private static bool HasAttachedOpenings(FloorData floor, string wallSegmentId)
+        {
+            return (floor?.doors?.Any(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal)) ?? false) ||
+                (floor?.windows?.Any(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal)) ?? false);
+        }
+
+        private static bool AreWallsDuplicate(WallSegmentData first, WallSegmentData second)
+        {
+            if (first == null || second == null)
+            {
+                return false;
+            }
+
+            return
+                (string.Equals(first.startJunctionId, second.startJunctionId, StringComparison.Ordinal) &&
+                 string.Equals(first.endJunctionId, second.endJunctionId, StringComparison.Ordinal)) ||
+                (string.Equals(first.startJunctionId, second.endJunctionId, StringComparison.Ordinal) &&
+                 string.Equals(first.endJunctionId, second.startJunctionId, StringComparison.Ordinal)) ||
+                ((IsPointNear(first.startPoint, second.startPoint, 0.02f) &&
+                  IsPointNear(first.endPoint, second.endPoint, 0.02f)) ||
+                 (IsPointNear(first.startPoint, second.endPoint, 0.02f) &&
+                  IsPointNear(first.endPoint, second.startPoint, 0.02f)));
+        }
+
         private static Vector2 ProjectPointOntoSegment(Vector2 point, Vector2 segmentStart, Vector2 segmentEnd)
         {
             var segment = segmentEnd - segmentStart;
@@ -1010,6 +2036,44 @@ namespace EvacLogix.Sandbox.Authoring
             var t = Vector2.Dot(point - segmentStart, segment) / segmentLengthSquared;
             t = Mathf.Clamp01(t);
             return segmentStart + segment * t;
+        }
+
+        private static bool TryGetSegmentIntersection(
+            Vector2 firstStart,
+            Vector2 firstEnd,
+            Vector2 secondStart,
+            Vector2 secondEnd,
+            out Vector2 intersectionPoint)
+        {
+            intersectionPoint = Vector2.zero;
+            var r = firstEnd - firstStart;
+            var s = secondEnd - secondStart;
+            var denominator = Cross(r, s);
+            if (Mathf.Abs(denominator) <= 0.0001f)
+            {
+                return false;
+            }
+
+            var delta = secondStart - firstStart;
+            var t = Cross(delta, s) / denominator;
+            var u = Cross(delta, r) / denominator;
+            if (t < -0.0001f || t > 1.0001f || u < -0.0001f || u > 1.0001f)
+            {
+                return false;
+            }
+
+            intersectionPoint = firstStart + (r * t);
+            return true;
+        }
+
+        private static float Cross(Vector2 first, Vector2 second)
+        {
+            return (first.x * second.y) - (first.y * second.x);
+        }
+
+        private static bool IsPointNear(Vector2 first, Vector2 second, float tolerance)
+        {
+            return Vector2.Distance(first, second) <= Mathf.Max(0.0001f, tolerance);
         }
 
         private static BuildingProjectData CloneProject(BuildingProjectData project)

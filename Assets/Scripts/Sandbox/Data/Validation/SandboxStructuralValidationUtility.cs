@@ -22,6 +22,7 @@ namespace EvacLogix.Sandbox.Data.Validation
             ValidateProjectLevelDuplicates(project, issues);
             ValidateProjectLevelConflicts(project, issues);
             ValidateProjectReferenceIntegrity(project, issues);
+            ValidateExitsDefined(project, issues);
 
             for (var i = 0; i < project.floors.Count; i += 1)
             {
@@ -33,6 +34,7 @@ namespace EvacLogix.Sandbox.Data.Validation
                 ValidateDisconnectedWallStructures(floor, issues);
                 ValidateOpenings(project, floor, issues, gridSize);
                 ValidateStairs(project, floor, issues);
+                ValidateTeleports(project, floor, issues);
                 ValidateExits(floor, issues);
                 ValidateOverlappingExits(floor, issues);
                 ValidateObstacleOverlaps(floor, floorColliders, issues);
@@ -64,6 +66,7 @@ namespace EvacLogix.Sandbox.Data.Validation
                 AddDuplicateIdIssues(floor.exits.Select(exitZone => (exitZone.exitZoneId, exitZone.exitZoneId, floor.floorId, "Exit")), issues);
                 AddDuplicateIdIssues(floor.obstacles.Select(obstacle => (obstacle.obstacleId, obstacle.obstacleId, floor.floorId, "Obstacle")), issues);
                 AddDuplicateIdIssues(floor.stairPortals.Select(portal => (portal.stairPortalId, portal.stairPortalId, floor.floorId, "Stair portal")), issues);
+                AddDuplicateIdIssues(floor.teleportPortals.Select(portal => (portal.teleportPortalId, portal.teleportPortalId, floor.floorId, "Teleport portal")), issues);
                 AddDuplicateIdIssues(floor.regions.Select(region => (region.regionId, region.regionId, floor.floorId, "Region")), issues);
             }
         }
@@ -100,6 +103,22 @@ namespace EvacLogix.Sandbox.Data.Validation
                     $"Floor order conflict: {duplicateGroup.Key}",
                     "Multiple floors share the same floor order."));
             }
+        }
+
+        private static void ValidateExitsDefined(BuildingProjectData project, ICollection<ValidationIssueData> issues)
+        {
+            if (project.floors.Any(floor => floor.exits.Count > 0))
+            {
+                return;
+            }
+
+            issues.Add(CreateIssue(
+                ValidationIssueSeverity.Warning,
+                ValidationIssueType.Structural,
+                string.Empty,
+                string.Empty,
+                "No exit zones defined",
+                "This building has no exit zones. Add at least one exit so evacuating agents have a goal to reach."));
         }
 
         private static void ValidateProjectReferenceIntegrity(BuildingProjectData project, ICollection<ValidationIssueData> issues)
@@ -418,6 +437,52 @@ namespace EvacLogix.Sandbox.Data.Validation
             }
         }
 
+        private static void ValidateTeleports(BuildingProjectData project, FloorData floor, ICollection<ValidationIssueData> issues)
+        {
+            for (var i = 0; i < floor.teleportPortals.Count; i += 1)
+            {
+                var portal = floor.teleportPortals[i];
+                if (portal.size.x <= 0f || portal.size.y <= 0f)
+                {
+                    issues.Add(CreateIssue(
+                        ValidationIssueSeverity.BlockingError,
+                        ValidationIssueType.Structural,
+                        floor.floorId,
+                        portal.teleportPortalId,
+                        "Invalid teleporter geometry",
+                        "Teleport endpoint size must be positive."));
+                }
+
+                var targetFloor = project.floors.FirstOrDefault(candidate =>
+                    string.Equals(candidate.floorId, portal.targetFloorId, StringComparison.Ordinal));
+                var targetPortal = targetFloor?.teleportPortals.FirstOrDefault(candidate =>
+                    string.Equals(candidate.teleportPortalId, portal.targetTeleportPortalId, StringComparison.Ordinal));
+                if (targetFloor == null || targetPortal == null)
+                {
+                    issues.Add(CreateIssue(
+                        ValidationIssueSeverity.Warning,
+                        ValidationIssueType.Reference,
+                        floor.floorId,
+                        portal.teleportPortalId,
+                        "Broken teleporter pair",
+                        "This teleporter endpoint is missing its linked partner."));
+                    continue;
+                }
+
+                if (!string.Equals(targetPortal.targetFloorId, floor.floorId, StringComparison.Ordinal) ||
+                    !string.Equals(targetPortal.targetTeleportPortalId, portal.teleportPortalId, StringComparison.Ordinal))
+                {
+                    issues.Add(CreateIssue(
+                        ValidationIssueSeverity.Warning,
+                        ValidationIssueType.Connectivity,
+                        floor.floorId,
+                        portal.teleportPortalId,
+                        "Teleporter pair does not point back",
+                        "Linked teleporter endpoint does not point back to this endpoint."));
+                }
+            }
+        }
+
         private static void ValidateOverlappingExits(FloorData floor, ICollection<ValidationIssueData> issues)
         {
             for (var leftIndex = 0; leftIndex < floor.exits.Count; leftIndex += 1)
@@ -460,6 +525,12 @@ namespace EvacLogix.Sandbox.Data.Validation
                     continue;
                 }
 
+                // Only a fully impassable obstacle (weight 1) hard-blocks an exit/stair/wall.
+                // A passable, merely-discouraged obstacle overlapping these is a warning.
+                var isImpassable = obstacle.discourageWeight >= 1f;
+                var overlapSeverity = isImpassable ? ValidationIssueSeverity.BlockingError : ValidationIssueSeverity.Warning;
+                var overlapNote = isImpassable ? string.Empty : " (passable obstacle — review placement)";
+
                 for (var exitIndex = 0; exitIndex < floor.exits.Count; exitIndex += 1)
                 {
                     if (!RectsOverlap(obstacle.center, obstacle.size, floor.exits[exitIndex].center, floor.exits[exitIndex].size))
@@ -468,12 +539,12 @@ namespace EvacLogix.Sandbox.Data.Validation
                     }
 
                     issues.Add(CreateIssue(
-                        ValidationIssueSeverity.BlockingError,
+                        overlapSeverity,
                         ValidationIssueType.Conflict,
                         floor.floorId,
                         obstacle.obstacleId,
-                        "Invalid obstacle overlap",
-                        "Obstacle overlaps an exit zone."));
+                        "Obstacle overlaps exit",
+                        $"Obstacle overlaps an exit zone.{overlapNote}"));
                 }
 
                 for (var stairIndex = 0; stairIndex < floor.stairPortals.Count; stairIndex += 1)
@@ -484,12 +555,12 @@ namespace EvacLogix.Sandbox.Data.Validation
                     }
 
                     issues.Add(CreateIssue(
-                        ValidationIssueSeverity.BlockingError,
+                        overlapSeverity,
                         ValidationIssueType.Conflict,
                         floor.floorId,
                         obstacle.obstacleId,
-                        "Invalid obstacle overlap",
-                        "Obstacle overlaps a stair endpoint."));
+                        "Obstacle overlaps stair",
+                        $"Obstacle overlaps a stair endpoint.{overlapNote}"));
                 }
 
                 for (var colliderIndex = 0; colliderIndex < generatedColliders.Count; colliderIndex += 1)
@@ -500,12 +571,12 @@ namespace EvacLogix.Sandbox.Data.Validation
                     }
 
                     issues.Add(CreateIssue(
-                        ValidationIssueSeverity.BlockingError,
+                        overlapSeverity,
                         ValidationIssueType.Structural,
                         floor.floorId,
                         obstacle.obstacleId,
-                        "Invalid obstacle overlap",
-                        "Obstacle overlaps generated wall collider geometry."));
+                        "Obstacle overlaps wall",
+                        $"Obstacle overlaps generated wall collider geometry.{overlapNote}"));
                 }
             }
         }
@@ -525,8 +596,8 @@ namespace EvacLogix.Sandbox.Data.Validation
                         continue;
                     }
 
-                    if (floor.obstacles[leftIndex].semanticType == floor.obstacles[rightIndex].semanticType &&
-                        Mathf.Approximately(floor.obstacles[leftIndex].traversalCostMultiplier, floor.obstacles[rightIndex].traversalCostMultiplier))
+                    if (Mathf.Approximately(floor.obstacles[leftIndex].discourageWeight, floor.obstacles[rightIndex].discourageWeight) &&
+                        Mathf.Approximately(floor.obstacles[leftIndex].movementSpeedPenalty, floor.obstacles[rightIndex].movementSpeedPenalty))
                     {
                         continue;
                     }
@@ -537,7 +608,7 @@ namespace EvacLogix.Sandbox.Data.Validation
                         floor.floorId,
                         floor.obstacles[leftIndex].obstacleId,
                         "Conflicting obstacles",
-                        "Overlapping obstacles have conflicting semantics or traversal costs."));
+                        "Overlapping obstacles have different discourage weights or speed penalties."));
                 }
             }
         }

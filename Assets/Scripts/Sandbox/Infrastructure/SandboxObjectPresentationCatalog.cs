@@ -61,11 +61,19 @@ namespace EvacLogix.Sandbox.Infrastructure
             },
             new()
             {
+                objectType = SandboxVisualObjectType.Teleport,
+                label = "Teleporters",
+                description = "Paired stair, elevator, escalator, and other transitions that link rectangles across floors.",
+                advancedFoldoutKey = "teleport.advanced",
+                color = new Color(0.3f, 0.95f, 0.95f, 1f)
+            },
+            new()
+            {
                 objectType = SandboxVisualObjectType.Obstacle,
                 label = "Obstacles",
                 description = "Blocking or slowing objects that shape traversable areas during validation and preview.",
                 advancedFoldoutKey = "obstacle.advanced",
-                color = new Color(0.5f, 0.35f, 0.2f, 1f)
+                color = new Color(0.85f, 0.25f, 0.2f, 1f)
             },
             new()
             {

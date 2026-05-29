@@ -64,7 +64,7 @@ namespace EvacLogix.Tests.PlayMode
 
             Assert.That(harness.semanticObjectAuthoringService.PlaceDoor(new Vector2(2f, 0.05f), out _), Is.True);
             Assert.That(harness.semanticObjectAuthoringService.PlaceExit(new Vector2(7f, 0f), out _, new Vector2(2f, 1.5f), 0f, 1.5f, 30f, 1f, "Main Exit"), Is.True);
-            Assert.That(harness.semanticObjectAuthoringService.PlaceObstacle(new Vector2(3f, 2f), out _, new Vector2(1f, 1f), 0f, ObstacleSemanticType.SlowThrough, 1.2f, "Chair Cluster"), Is.True);
+            Assert.That(harness.semanticObjectAuthoringService.PlaceObstacle(new Vector2(3f, 2f), out _, new Vector2(1f, 1f), 0f, 0.5f, 0.5f, "Chair Cluster"), Is.True);
             Assert.That(harness.previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out _, null, "Play Layout", true), Is.True);
             Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(-2f, -2f), out _, 1.2f, 2f, true), Is.True);
             yield return null;
@@ -85,7 +85,7 @@ namespace EvacLogix.Tests.PlayMode
             yield return null;
 
             harness.workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
-            Assert.That(harness.semanticObjectAuthoringService.PlaceObstacle(new Vector2(2f, 2f), out var obstacleId, new Vector2(1f, 1f), 0f, ObstacleSemanticType.HardBlocking, 1f, "Bench"), Is.True);
+            Assert.That(harness.semanticObjectAuthoringService.PlaceObstacle(new Vector2(2f, 2f), out var obstacleId, new Vector2(1f, 1f), 0f, 1f, 0f, "Bench"), Is.True);
             harness.selectionService.ReplaceSelection(new[] { obstacleId });
             yield return null;
 

@@ -575,7 +575,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                 {
                     var exitZone = floor.exits[exitIndex];
                     if (!floor.obstacles.Any(obstacle =>
-                            obstacle.semanticType == ObstacleSemanticType.HardBlocking &&
+                            obstacle.discourageWeight >= 1f &&
                             RectsOverlap(obstacle.center, obstacle.size, exitZone.center, exitZone.size)))
                     {
                         continue;
@@ -588,7 +588,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                         floor.floorId,
                         exitZone.exitZoneId,
                         "Blocked exit",
-                        "A hard-blocking obstacle overlaps this exit zone and will distort preview routes.",
+                        "An impassable obstacle overlaps this exit zone and will distort preview routes.",
                         exitZone.center));
                 }
             }
@@ -636,6 +636,24 @@ namespace EvacLogix.Sandbox.Infrastructure
                             ? string.Empty
                             : $"stair:{stairPortal.targetStairPortalId}",
                         travelCost = Mathf.Max(0.1f, stairPortal.travelCost),
+                        isBlocked = false
+                    });
+                }
+
+                for (var teleportIndex = 0; teleportIndex < floor.teleportPortals.Count; teleportIndex += 1)
+                {
+                    var teleportPortal = floor.teleportPortals[teleportIndex];
+                    nodes.Add(new PreviewNode
+                    {
+                        nodeId = $"teleport:{teleportPortal.teleportPortalId}",
+                        floorId = floor.floorId,
+                        position = teleportPortal.localPosition,
+                        isStairPortal = true,
+                        objectId = teleportPortal.teleportPortalId,
+                        linkedNodeId = string.IsNullOrWhiteSpace(teleportPortal.targetTeleportPortalId) || !teleportPortal.isPairEnabled
+                            ? string.Empty
+                            : $"teleport:{teleportPortal.targetTeleportPortalId}",
+                        travelCost = Mathf.Max(0.1f, teleportPortal.travelCost),
                         isBlocked = false
                     });
                 }
@@ -877,7 +895,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                     floorId = leftNode.floorId,
                     start = leftNode.position,
                     end = rightNode.position,
-                    label = rightNode.isExit ? "Exit Route" : (rightNode.isStairPortal ? "Stair Transition" : "Route"),
+                    label = rightNode.isExit ? "Exit Route" : (rightNode.isStairPortal ? "Portal Transition" : "Route"),
                     traversalCount = 1
                 });
             }
@@ -986,10 +1004,10 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             if (floor.obstacles.Any(obstacle =>
-                    obstacle.semanticType == ObstacleSemanticType.HardBlocking &&
+                    obstacle.discourageWeight >= 1f &&
                     PointInsideRect(position, obstacle.center, obstacle.size)))
             {
-                blockedMessage = "Preview sample starts inside a hard-blocking obstacle.";
+                blockedMessage = "Preview sample starts inside an impassable obstacle.";
                 return true;
             }
 
@@ -1029,7 +1047,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             for (var obstacleIndex = 0; obstacleIndex < floor.obstacles.Count; obstacleIndex += 1)
             {
                 var obstacle = floor.obstacles[obstacleIndex];
-                if (obstacle.semanticType != ObstacleSemanticType.HardBlocking)
+                if (obstacle.discourageWeight < 1f)
                 {
                     continue;
                 }

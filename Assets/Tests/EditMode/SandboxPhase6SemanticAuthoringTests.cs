@@ -99,7 +99,7 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(semanticObjectAuthoringService.PlaceDoor(new Vector2(1f, 0.1f), out var doorId, 1f, DoorState.Normal), Is.True);
             Assert.That(semanticObjectAuthoringService.PlaceWindow(new Vector2(2.5f, 0.1f), out var windowId, 1f), Is.True);
             Assert.That(semanticObjectAuthoringService.PlaceExit(new Vector2(6f, 1.5f), out var exitZoneId, new Vector2(2f, 1.5f), 10f, 1.5f, 20f, 1f, "North Exit"), Is.True);
-            Assert.That(semanticObjectAuthoringService.PlaceObstacle(new Vector2(8.5f, 1.5f), out var obstacleId, new Vector2(1f, 2f), 0f, ObstacleSemanticType.HardBlocking, 1f, "Stacked Chairs"), Is.True);
+            Assert.That(semanticObjectAuthoringService.PlaceObstacle(new Vector2(8.5f, 1.5f), out var obstacleId, new Vector2(1f, 2f), 0f, 1f, 0f, "Stacked Chairs"), Is.True);
             Assert.That(semanticObjectAuthoringService.PlaceStairPortal(new Vector2(10f, 1.5f), out var lowerStairPortalId), Is.True);
 
             workspaceService.SetActiveFloor("floor-2");
@@ -157,8 +157,8 @@ namespace EvacLogix.Tests.EditMode
                     new Vector2(8.75f, 1.5f),
                     new Vector2(1.5f, 2f),
                     17f,
-                    ObstacleSemanticType.SlowThrough,
-                    2.5f,
+                    0.5f,
+                    0.5f,
                     "Movable Chairs",
                     new[] { "temporary" },
                     new[] { new MetadataFieldData { key = "hazard_link", value = "smoke-control" } }),
@@ -204,7 +204,8 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(exitZone.capacity, Is.EqualTo(80f).Within(0.001f));
             Assert.That(exitZone.priority, Is.EqualTo(3f).Within(0.001f));
             Assert.That(exitZone.name, Is.EqualTo("Main Lobby Exit"));
-            Assert.That(obstacle.semanticType, Is.EqualTo(ObstacleSemanticType.SlowThrough));
+            Assert.That(obstacle.discourageWeight, Is.EqualTo(0.5f).Within(0.001f));
+            Assert.That(obstacle.movementSpeedPenalty, Is.EqualTo(0.5f).Within(0.001f));
             Assert.That(obstacle.rotationDegrees, Is.EqualTo(15f).Within(0.001f));
             Assert.That(obstacle.metadataFields.Any(field => field.key == "hazard_link" && field.value == "smoke-control"), Is.True);
             Assert.That(lowerPortal.sourceFloorId, Is.EqualTo(project.floors[0].floorId));
@@ -238,7 +239,8 @@ namespace EvacLogix.Tests.EditMode
                 Assert.That(reloadedWindow.escapeCost, Is.EqualTo(4f).Within(0.001f));
                 Assert.That(reloadedExit.name, Is.EqualTo("Main Lobby Exit"));
                 Assert.That(reloadedExit.capacity, Is.EqualTo(80f).Within(0.001f));
-                Assert.That(reloadedObstacle.semanticType, Is.EqualTo(ObstacleSemanticType.SlowThrough));
+                Assert.That(reloadedObstacle.discourageWeight, Is.EqualTo(0.5f).Within(0.001f));
+                Assert.That(reloadedObstacle.movementSpeedPenalty, Is.EqualTo(0.5f).Within(0.001f));
                 Assert.That(reloadedObstacle.rotationDegrees, Is.EqualTo(15f).Within(0.001f));
                 Assert.That(reloadedLowerPortal.sourceFloorId, Is.EqualTo(project.floors[0].floorId));
                 Assert.That(reloadedLowerPortal.targetFloorId, Is.EqualTo("floor-2"));

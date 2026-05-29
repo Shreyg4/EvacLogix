@@ -277,7 +277,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                 SandboxToolMode.Window => "Place windows on existing walls and capture escape-risk metadata.",
                 SandboxToolMode.Exit => "Define exits as zones, not points, so capacity and orientation stay explicit.",
                 SandboxToolMode.Obstacle => "Drop obstacles with limited rotation and name the important ones for review.",
-                SandboxToolMode.Stair => "Place stair endpoints floor-by-floor, then link them after both portals exist.",
+                SandboxToolMode.Teleport => "Place paired stair, elevator, or escalator transitions and switch floors before placing the second endpoint when needed.",
                 SandboxToolMode.SpawnPoint => "Place intentional occupant start points before running preview diagnostics.",
                 SandboxToolMode.SpawnBrush => "Paint a density-based spawn area to approximate crowd pockets quickly.",
                 SandboxToolMode.Region => "Draw named regions only when they help preview semantics, restrictions, or annotations.",

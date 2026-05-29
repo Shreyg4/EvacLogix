@@ -550,12 +550,12 @@ namespace EvacLogix.Sandbox.UI.Panels
             Vector2 center,
             Vector2 size,
             float rotationDegrees = 0f,
-            ObstacleSemanticType semanticType = ObstacleSemanticType.HardBlocking,
-            float traversalCostMultiplier = 1f,
+            float discourageWeight = 1f,
+            float movementSpeedPenalty = 0f,
             string name = "")
         {
             return UpdateSemanticActionStatus(
-                semanticObjectAuthoringService != null && semanticObjectAuthoringService.PlaceObstacle(center, out _, size, rotationDegrees, semanticType, traversalCostMultiplier, name),
+                semanticObjectAuthoringService != null && semanticObjectAuthoringService.PlaceObstacle(center, out _, size, rotationDegrees, discourageWeight, movementSpeedPenalty, name),
                 "Placed obstacle.");
         }
 
@@ -564,14 +564,14 @@ namespace EvacLogix.Sandbox.UI.Panels
             Vector2 center,
             Vector2 size,
             float rotationDegrees,
-            ObstacleSemanticType semanticType,
-            float traversalCostMultiplier,
+            float discourageWeight,
+            float movementSpeedPenalty,
             string name,
             IEnumerable<string> tags,
             IEnumerable<MetadataFieldData> metadataFields)
         {
             return UpdateSemanticActionStatus(
-                semanticObjectAuthoringService != null && semanticObjectAuthoringService.UpdateObstacle(obstacleId, center, size, rotationDegrees, semanticType, traversalCostMultiplier, name, tags, metadataFields),
+                semanticObjectAuthoringService != null && semanticObjectAuthoringService.UpdateObstacle(obstacleId, center, size, rotationDegrees, discourageWeight, movementSpeedPenalty, name, tags, metadataFields),
                 "Updated obstacle metadata.");
         }
 
@@ -586,6 +586,36 @@ namespace EvacLogix.Sandbox.UI.Panels
             return UpdateSemanticActionStatus(
                 semanticObjectAuthoringService != null && semanticObjectAuthoringService.PlaceStairPortal(localPosition, out _, size, rotationDegrees, name, direction, travelCost),
                 "Placed stair endpoint.");
+        }
+
+        public bool PlaceTeleportPortal(
+            Vector2 localPosition,
+            string pairId,
+            int pairColorIndex,
+            Vector2? size = null,
+            float rotationDegrees = 0f,
+            string name = "",
+            TeleportPortalKind kind = TeleportPortalKind.Stair,
+            float travelCost = 1f,
+            bool isPairEnabled = true,
+            string targetFloorId = "",
+            string targetTeleportPortalId = "")
+        {
+            return UpdateSemanticActionStatus(
+                semanticObjectAuthoringService != null && semanticObjectAuthoringService.PlaceTeleportPortal(
+                    localPosition,
+                    out _,
+                    pairId,
+                    pairColorIndex,
+                    size,
+                    rotationDegrees,
+                    name,
+                    kind,
+                    travelCost,
+                    isPairEnabled,
+                    targetFloorId,
+                    targetTeleportPortalId),
+                "Placed teleport endpoint.");
         }
 
         public bool UpdateStairPortal(
@@ -615,6 +645,54 @@ namespace EvacLogix.Sandbox.UI.Panels
             return UpdateSemanticActionStatus(
                 semanticObjectAuthoringService != null && semanticObjectAuthoringService.LinkStairPortals(sourceFloorId, sourcePortalId, targetFloorId, targetPortalId, direction, travelCost),
                 "Linked stair endpoints.");
+        }
+
+        public bool UpdateTeleportPortal(
+            string teleportPortalId,
+            Vector2 localPosition,
+            Vector2 size,
+            float rotationDegrees,
+            string name,
+            TeleportPortalKind kind,
+            float travelCost,
+            bool isPairEnabled,
+            IEnumerable<string> tags,
+            IEnumerable<MetadataFieldData> metadataFields)
+        {
+            return UpdateSemanticActionStatus(
+                semanticObjectAuthoringService != null && semanticObjectAuthoringService.UpdateTeleportPortal(
+                    teleportPortalId,
+                    localPosition,
+                    size,
+                    rotationDegrees,
+                    name,
+                    kind,
+                    travelCost,
+                    isPairEnabled,
+                    tags,
+                    metadataFields),
+                "Updated teleporter metadata.");
+        }
+
+        public bool LinkTeleportPortals(
+            string sourceFloorId,
+            string sourcePortalId,
+            string targetFloorId,
+            string targetPortalId,
+            TeleportPortalKind kind,
+            float travelCost,
+            bool isPairEnabled)
+        {
+            return UpdateSemanticActionStatus(
+                semanticObjectAuthoringService != null && semanticObjectAuthoringService.LinkTeleportPortals(
+                    sourceFloorId,
+                    sourcePortalId,
+                    targetFloorId,
+                    targetPortalId,
+                    kind,
+                    travelCost,
+                    isPairEnabled),
+                "Linked teleport endpoints.");
         }
 
         public bool AddFloor(string name = "", float elevation = 0f)

@@ -472,6 +472,40 @@ namespace EvacLogix.Sandbox.Infrastructure
                         message = $"Stair portal '{stairPortal.stairPortalId}' links to floor '{stairPortal.targetFloorId}', which is outside the selected floor import set."
                     });
                 }
+
+                foreach (var teleportPortal in floor.teleportPortals)
+                {
+                    if (string.IsNullOrWhiteSpace(teleportPortal.targetFloorId) || string.IsNullOrWhiteSpace(teleportPortal.targetTeleportPortalId))
+                    {
+                        continue;
+                    }
+
+                    if (selectedFloorIdSet.Contains(teleportPortal.targetFloorId))
+                    {
+                        var targetFloor = selectedFloors.FirstOrDefault(candidate =>
+                            string.Equals(candidate.floorId, teleportPortal.targetFloorId, StringComparison.Ordinal));
+                        var targetExists = targetFloor != null && targetFloor.teleportPortals.Any(candidate =>
+                            string.Equals(candidate.teleportPortalId, teleportPortal.targetTeleportPortalId, StringComparison.Ordinal));
+                        if (!targetExists)
+                        {
+                            analysis.conflicts.Add(new SandboxFloorImportConflict
+                            {
+                                conflictType = SandboxFloorImportConflictType.BrokenStairLink,
+                                floorId = floor.floorId,
+                                message = $"Teleporter '{teleportPortal.teleportPortalId}' references missing imported endpoint '{teleportPortal.targetTeleportPortalId}'."
+                            });
+                        }
+
+                        continue;
+                    }
+
+                    analysis.conflicts.Add(new SandboxFloorImportConflict
+                    {
+                        conflictType = SandboxFloorImportConflictType.CrossFloorReference,
+                        floorId = floor.floorId,
+                        message = $"Teleporter '{teleportPortal.teleportPortalId}' links to floor '{teleportPortal.targetFloorId}', which is outside the selected floor import set."
+                    });
+                }
             }
 
             if (HasCrossFloorReferences(sourceProject, selectedFloorIdSet))
@@ -626,6 +660,14 @@ namespace EvacLogix.Sandbox.Infrastructure
                     if (!string.IsNullOrWhiteSpace(stairPortal.stairPortalId))
                     {
                         yield return stairPortal.stairPortalId;
+                    }
+                }
+
+                foreach (var teleportPortal in floor.teleportPortals)
+                {
+                    if (!string.IsNullOrWhiteSpace(teleportPortal.teleportPortalId))
+                    {
+                        yield return teleportPortal.teleportPortalId;
                     }
                 }
 

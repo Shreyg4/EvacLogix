@@ -13,9 +13,10 @@ namespace EvacLogix.Sandbox.Infrastructure
         Window = 2,
         Exit = 3,
         Stair = 4,
-        Obstacle = 5,
-        Spawn = 6,
-        Region = 7,
+        Teleport = 5,
+        Obstacle = 6,
+        Spawn = 7,
+        Region = 8,
     }
 
     [Serializable]

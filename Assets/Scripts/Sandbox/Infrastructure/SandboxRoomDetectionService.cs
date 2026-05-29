@@ -11,6 +11,9 @@ namespace EvacLogix.Sandbox.Infrastructure
     {
         private const float MinimumRoomArea = 0.05f;
         private const float GeometryTolerance = 0.001f;
+        private const float MinimumRoomCompactness = 0.04f;
+        private const float MinimumMeaningfulEdgeLength = 0.12f;
+        private const float SliverAreaThreshold = 0.9f;
 
         [SerializeField] private bool showCompleteRooms;
         [SerializeField] private List<SandboxDetectedRoomData> detectedRooms = new();
@@ -159,10 +162,23 @@ namespace EvacLogix.Sandbox.Infrastructure
                 yield break;
             }
 
-            var graph = BuildVirtualWallGraph(floor.wallSegments);
+            var authoredRooms = DetectRoomsFromGraph(floor, BuildAuthoredWallGraph(floor));
+            var rooms = authoredRooms.Count > 0
+                ? authoredRooms
+                : DetectRoomsFromGraph(floor, BuildVirtualWallGraph(floor.wallSegments));
+            for (var i = 0; i < rooms.Count; i += 1)
+            {
+                rooms[i].roomId = $"room-{floor.floorId}-{(i + 1):D3}";
+                yield return rooms[i];
+            }
+        }
+
+        private static List<SandboxDetectedRoomData> DetectRoomsFromGraph(FloorData floor, VirtualWallGraph graph)
+        {
+            var rooms = new List<SandboxDetectedRoomData>();
             if (graph.neighbors.Count < 3)
             {
-                yield break;
+                return rooms;
             }
 
             foreach (var entry in graph.neighbors)
@@ -185,7 +201,9 @@ namespace EvacLogix.Sandbox.Infrastructure
                     }
 
                     var area = SignedArea(loop.points);
-                    if (area <= MinimumRoomArea || !IsSimplePolygon(loop.points))
+                    if (area <= MinimumRoomArea ||
+                        !IsSimplePolygon(loop.points) ||
+                        !IsMeaningfulRoom(loop.points, area))
                     {
                         continue;
                     }
@@ -198,9 +216,8 @@ namespace EvacLogix.Sandbox.Infrastructure
 
                     var boundaryWallIds = loop.wallIds.Distinct(StringComparer.Ordinal).ToList();
                     var openings = FindOpeningsOnWalls(floor, boundaryWallIds);
-                    yield return new SandboxDetectedRoomData
+                    rooms.Add(new SandboxDetectedRoomData
                     {
-                        roomId = $"room-{floor.floorId}-{emittedCycles.Count:D3}",
                         floorId = floor.floorId,
                         polygonPoints = loop.points,
                         boundaryWallSegmentIds = boundaryWallIds,
@@ -208,9 +225,11 @@ namespace EvacLogix.Sandbox.Infrastructure
                         openingPositions = openings.Select(opening => opening.position).ToList(),
                         hasIntentionalOpenings = openings.Count > 0,
                         area = area
-                    };
+                    });
                 }
             }
+
+            return rooms;
         }
 
         private void RefreshDependencies()
@@ -318,6 +337,55 @@ namespace EvacLogix.Sandbox.Infrastructure
             return new VirtualWallGraph(nodePositions, neighbors, wallsByEndpoint);
         }
 
+        private static VirtualWallGraph BuildAuthoredWallGraph(FloorData floor)
+        {
+            var nodePositions = new Dictionary<string, Vector2>(StringComparer.Ordinal);
+            var neighbors = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            var wallsByEndpoint = new Dictionary<(string from, string to), WallSegmentData>();
+
+            if (floor?.wallSegments == null || floor.wallSegments.Count == 0)
+            {
+                return new VirtualWallGraph(nodePositions, neighbors, wallsByEndpoint);
+            }
+
+            var junctionLookup = (floor.wallJunctions ?? new List<WallJunctionData>())
+                .Where(junction => junction != null && !string.IsNullOrWhiteSpace(junction.wallJunctionId))
+                .GroupBy(junction => junction.wallJunctionId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+
+            foreach (var wall in floor.wallSegments)
+            {
+                if (wall == null ||
+                    string.IsNullOrWhiteSpace(wall.wallSegmentId) ||
+                    string.IsNullOrWhiteSpace(wall.startJunctionId) ||
+                    string.IsNullOrWhiteSpace(wall.endJunctionId) ||
+                    string.Equals(wall.startJunctionId, wall.endJunctionId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!junctionLookup.TryGetValue(wall.startJunctionId, out var startJunction) ||
+                    !junctionLookup.TryGetValue(wall.endJunctionId, out var endJunction))
+                {
+                    continue;
+                }
+
+                if ((endJunction.position - startJunction.position).sqrMagnitude <= GeometryTolerance * GeometryTolerance)
+                {
+                    continue;
+                }
+
+                nodePositions[startJunction.wallJunctionId] = startJunction.position;
+                nodePositions[endJunction.wallJunctionId] = endJunction.position;
+                AddNeighbor(neighbors, startJunction.wallJunctionId, endJunction.wallJunctionId);
+                AddNeighbor(neighbors, endJunction.wallJunctionId, startJunction.wallJunctionId);
+                wallsByEndpoint[(startJunction.wallJunctionId, endJunction.wallJunctionId)] = wall;
+                wallsByEndpoint[(endJunction.wallJunctionId, startJunction.wallJunctionId)] = wall;
+            }
+
+            return new VirtualWallGraph(nodePositions, neighbors, wallsByEndpoint);
+        }
+
         private static void AddDistinctPoint(ICollection<Vector2> points, Vector2 point)
         {
             if (points.Any(existing => Vector2.Distance(existing, point) <= GeometryTolerance))
@@ -400,7 +468,45 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         private static string CreateCycleKey(IReadOnlyList<string> junctionIds)
         {
-            return string.Join("|", junctionIds.OrderBy(id => id, StringComparer.Ordinal));
+            if (junctionIds == null || junctionIds.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            return string.CompareOrdinal(
+                CreateCanonicalCycleKey(junctionIds, reverse: false),
+                CreateCanonicalCycleKey(junctionIds, reverse: true)) <= 0
+                ? CreateCanonicalCycleKey(junctionIds, reverse: false)
+                : CreateCanonicalCycleKey(junctionIds, reverse: true);
+        }
+
+        private static string CreateCanonicalCycleKey(IReadOnlyList<string> junctionIds, bool reverse)
+        {
+            var ordered = reverse
+                ? junctionIds.Reverse().ToArray()
+                : junctionIds.ToArray();
+            if (ordered.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            var best = string.Empty;
+            for (var offset = 0; offset < ordered.Length; offset += 1)
+            {
+                var rotated = new string[ordered.Length];
+                for (var index = 0; index < ordered.Length; index += 1)
+                {
+                    rotated[index] = ordered[(offset + index) % ordered.Length];
+                }
+
+                var key = string.Join("|", rotated);
+                if (string.IsNullOrEmpty(best) || string.CompareOrdinal(key, best) < 0)
+                {
+                    best = key;
+                }
+            }
+
+            return best;
         }
 
         private static float SignedArea(IReadOnlyList<Vector2> points)
@@ -414,6 +520,37 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             return area * 0.5f;
+        }
+
+        private static bool IsMeaningfulRoom(IReadOnlyList<Vector2> points, float signedArea)
+        {
+            if (points == null || points.Count < 3)
+            {
+                return false;
+            }
+
+            var area = Mathf.Abs(signedArea);
+            var perimeter = 0f;
+            var minimumEdgeLength = float.MaxValue;
+            for (var i = 0; i < points.Count; i += 1)
+            {
+                var edgeLength = Vector2.Distance(points[i], points[(i + 1) % points.Count]);
+                perimeter += edgeLength;
+                minimumEdgeLength = Mathf.Min(minimumEdgeLength, edgeLength);
+            }
+
+            if (perimeter <= GeometryTolerance || minimumEdgeLength <= GeometryTolerance)
+            {
+                return false;
+            }
+
+            var compactness = (4f * Mathf.PI * area) / Mathf.Max(GeometryTolerance, perimeter * perimeter);
+            if (compactness >= MinimumRoomCompactness)
+            {
+                return true;
+            }
+
+            return !(area <= SliverAreaThreshold && minimumEdgeLength <= MinimumMeaningfulEdgeLength);
         }
 
         private static bool IsSimplePolygon(IReadOnlyList<Vector2> points)

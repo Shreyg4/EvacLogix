@@ -229,7 +229,7 @@ namespace EvacLogix.Tests.EditMode
             for (var index = 0; index < 20; index += 1)
             {
                 var center = new Vector2(xOffset + 0.75f + (index % 5) * 1.6f, 0.75f + (index / 5) * 2.6f);
-                Assert.That(harness.semanticObjectAuthoringService.PlaceObstacle(center, out _, new Vector2(0.5f, 0.5f), 0f, ObstacleSemanticType.SlowThrough, 1.25f, $"Obstacle {floorId}-{index}"), Is.True);
+                Assert.That(harness.semanticObjectAuthoringService.PlaceObstacle(center, out _, new Vector2(0.5f, 0.5f), 0f, 0.5f, 0.5f, $"Obstacle {floorId}-{index}"), Is.True);
             }
 
             Assert.That(harness.semanticObjectAuthoringService.PlaceExit(new Vector2(xOffset + 11f, 8f), out _, new Vector2(1.5f, 3f), 0f, 2f, 75f, 1f, $"Exit {floorId}"), Is.True);

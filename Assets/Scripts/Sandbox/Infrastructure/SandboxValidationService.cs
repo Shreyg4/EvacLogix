@@ -25,24 +25,58 @@ namespace EvacLogix.Sandbox.Infrastructure
         public bool HasBlockingIssues => hasBlockingIssues;
         public string LastValidatedUtc => lastValidatedUtc;
 
+        private bool subscribedToColliders;
+        private bool subscribedToProjectChanges;
+
         private void Awake()
         {
-            workspaceService = GetComponent<SandboxProjectWorkspaceService>();
-            colliderRebuildService = GetComponent<SandboxColliderRebuildService>();
-            workspaceStateService = GetComponent<SandboxWorkspaceStateService>();
+            ResolveDependenciesAndSubscribe();
+        }
 
-            if (colliderRebuildService != null)
-            {
-                colliderRebuildService.CollidersRebuilt += HandleCollidersRebuilt;
-            }
+        private void Start()
+        {
+            // The installer adds this service before the workspace/collider services exist,
+            // so Awake-time GetComponent calls can resolve to null. Re-resolve here once all
+            // sibling services are present, then surface validation for the current project.
+            ResolveDependenciesAndSubscribe();
+            ValidateActiveProject();
         }
 
         private void OnDestroy()
         {
-            if (colliderRebuildService != null)
+            if (subscribedToColliders && colliderRebuildService != null)
             {
                 colliderRebuildService.CollidersRebuilt -= HandleCollidersRebuilt;
             }
+
+            if (subscribedToProjectChanges && workspaceService != null)
+            {
+                workspaceService.ActiveProjectChanged -= HandleActiveProjectChanged;
+            }
+        }
+
+        private void ResolveDependenciesAndSubscribe()
+        {
+            workspaceService ??= GetComponent<SandboxProjectWorkspaceService>();
+            colliderRebuildService ??= GetComponent<SandboxColliderRebuildService>();
+            workspaceStateService ??= GetComponent<SandboxWorkspaceStateService>();
+
+            if (!subscribedToColliders && colliderRebuildService != null)
+            {
+                colliderRebuildService.CollidersRebuilt += HandleCollidersRebuilt;
+                subscribedToColliders = true;
+            }
+
+            if (!subscribedToProjectChanges && workspaceService != null)
+            {
+                workspaceService.ActiveProjectChanged += HandleActiveProjectChanged;
+                subscribedToProjectChanges = true;
+            }
+        }
+
+        private void HandleActiveProjectChanged(BuildingProjectData project)
+        {
+            ValidateActiveProject();
         }
 
         public void ReplaceIssues(IEnumerable<ValidationIssueData> nextIssues)
@@ -65,6 +99,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public IReadOnlyList<ValidationIssueData> ValidateActiveProject()
         {
+            ResolveDependenciesAndSubscribe();
             var project = workspaceService?.ActiveProject;
             if (project == null)
             {

@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using EvacLogix.Sandbox.Authoring;
-using EvacLogix.Sandbox.Authoring.Snapping;
 using EvacLogix.Sandbox.Authoring.Selection;
+using EvacLogix.Sandbox.Authoring.Snapping;
 using EvacLogix.Sandbox.Authoring.Tools;
+using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
 using EvacLogix.Sandbox.Rendering;
 using EvacLogix.Sandbox.UI.Panels;
@@ -14,6 +17,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
     {
         [SerializeField] private float minimumBrushSampleDistance = 0.1f;
         [SerializeField] private float handleHitRadius = 0.35f;
+        [SerializeField] private List<string> selectedJunctionIds = new();
 
         private SandboxToolStateService toolStateService;
         private SandboxWallAuthoringService wallAuthoringService;
@@ -26,16 +30,26 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxEditorQoLService editorQoLService;
         private SandboxPreviewService previewService;
+
         private Vector2 lastBrushPoint;
-        private bool isHandleDragActive;
+        private Vector2 currentPointerWorldPoint;
+        private Vector2 currentLinePreviewPoint;
+        private bool isJunctionDragActive;
+        private string draggedPrimaryJunctionId = string.Empty;
         private string draggedWallSegmentId = string.Empty;
         private bool draggedHandleIsStart;
-        private Vector2 draggedHandlePreviewPoint;
+        private Vector2 draggedPrimaryJunctionStartPoint;
+        private Vector2 draggedPrimaryJunctionPreviewPoint;
+        private SandboxWallSnapResult dragPreviewSnapResult;
 
-        public bool IsHandleDragActive => isHandleDragActive;
+        public bool IsJunctionDragActive => isJunctionDragActive;
+        public bool IsHandleDragActive => isJunctionDragActive;
         public string DraggedWallSegmentId => draggedWallSegmentId;
         public bool DraggedHandleIsStart => draggedHandleIsStart;
-        public Vector2 DraggedHandlePreviewPoint => draggedHandlePreviewPoint;
+        public Vector2 DraggedHandlePreviewPoint => draggedPrimaryJunctionPreviewPoint;
+        public Vector2 CurrentLinePreviewPoint => currentLinePreviewPoint;
+        public IReadOnlyList<string> SelectedJunctionIds => selectedJunctionIds;
+        public SandboxWallSnapResult DragPreviewSnapResult => dragPreviewSnapResult;
 
         private void Awake()
         {
@@ -50,6 +64,22 @@ namespace EvacLogix.Sandbox.UI.Overlays
             visualOrganizationService = FindAnyObjectByType<SandboxVisualOrganizationService>();
             editorQoLService = FindAnyObjectByType<SandboxEditorQoLService>();
             previewService = FindAnyObjectByType<SandboxPreviewService>();
+
+            if (toolStateService != null)
+            {
+                toolStateService.ToolModeChanged += HandleToolModeChanged;
+            }
+        }
+
+        private void HandleToolModeChanged(SandboxToolMode toolMode)
+        {
+            if (toolMode == SandboxToolMode.WallLine || toolMode == SandboxToolMode.WallBrush || wallAuthoringService == null)
+            {
+                return;
+            }
+
+            wallAuthoringService.CancelLinePlacement();
+            wallAuthoringService.CancelBrushStroke();
         }
 
         private void Update()
@@ -66,12 +96,15 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return;
             }
 
+            currentPointerWorldPoint = ScreenToWorldPoint(SandboxInputAdapter.PointerScreenPosition);
+            UpdateLinePreviewPoint();
+
             var currentToolMode = toolStateService.CurrentToolMode;
-            if (!SupportsWallHandleEditing(currentToolMode))
+            if (!SupportsWallEditing(currentToolMode))
             {
-                if (isHandleDragActive)
+                if (isJunctionDragActive)
                 {
-                    CancelHandleDrag();
+                    CancelJunctionDrag();
                 }
 
                 wallSnappingService?.SetTemporarySnappingBypass(false);
@@ -82,28 +115,27 @@ namespace EvacLogix.Sandbox.UI.Overlays
             var isFineAdjustmentActive = SandboxInputAdapter.GetKey(KeyCode.LeftAlt) || SandboxInputAdapter.GetKey(KeyCode.RightAlt);
             wallSnappingService?.SetTemporarySnappingBypass(isFineAdjustmentActive);
 
-            var worldPoint = ScreenToWorldPoint(SandboxInputAdapter.PointerScreenPosition);
-            var isHoveringHandle = TryGetNearestHandle(worldPoint, out var hoveredWallId, out var hoveredIsStartHandle);
-            if (!isHandleDragActive)
+            var isHoveringHandle = TryGetNearestHandle(currentPointerWorldPoint, out var hoveredJunctionId);
+            if (!isJunctionDragActive)
             {
                 inputRouter?.SetPointerOverHandle(isHoveringHandle);
             }
 
-            if (isHandleDragActive)
+            if (isJunctionDragActive)
             {
                 if (SandboxInputAdapter.GetMouseButton(0))
                 {
-                    UpdateHandleDragPreview(worldPoint);
+                    UpdateJunctionDragPreview(currentPointerWorldPoint);
                 }
 
                 if (SandboxInputAdapter.GetMouseButtonUp(0))
                 {
-                    CommitHandleDrag();
+                    CommitJunctionDrag();
                 }
 
                 if (SandboxInputAdapter.GetMouseButtonDown(1))
                 {
-                    CancelHandleDrag();
+                    CancelJunctionDrag();
                 }
 
                 return;
@@ -111,15 +143,21 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
             if (SandboxInputAdapter.GetMouseButtonDown(0) && isHoveringHandle)
             {
-                TryBeginHandleDrag(worldPoint, hoveredWallId, hoveredIsStartHandle);
+                TryBeginJunctionDrag(hoveredJunctionId, currentPointerWorldPoint);
+                return;
+            }
+
+            if (currentToolMode == SandboxToolMode.Select)
+            {
                 return;
             }
 
             if (SandboxInputAdapter.GetMouseButtonDown(1))
             {
+                var hadPendingSegment = wallAuthoringService.HasPendingLineStart;
                 wallAuthoringService.CancelLinePlacement();
                 wallAuthoringService.CancelBrushStroke();
-                UpdateStatus("Cancelled wall authoring preview.");
+                UpdateStatus(hadPendingSegment ? "Ended wall chain." : "Cancelled wall authoring preview.");
                 return;
             }
 
@@ -136,7 +174,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return;
             }
 
-            switch (toolStateService.CurrentToolMode)
+            switch (currentToolMode)
             {
                 case SandboxToolMode.WallLine:
                     HandleLineTool();
@@ -147,59 +185,55 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
         }
 
-        private static bool SupportsWallHandleEditing(SandboxToolMode toolMode)
+        private static bool SupportsWallEditing(SandboxToolMode toolMode)
         {
-            return toolMode == SandboxToolMode.WallLine || toolMode == SandboxToolMode.WallBrush;
+            return toolMode == SandboxToolMode.Select ||
+                   toolMode == SandboxToolMode.WallLine ||
+                   toolMode == SandboxToolMode.WallBrush;
         }
 
-        public bool TryBeginHandleDrag(Vector2 worldPoint)
+        public bool TryGetPreviewJunctionPosition(string junctionId, out Vector2 previewPosition)
         {
-            return TryGetNearestHandle(worldPoint, out var wallSegmentId, out var isStartHandle) &&
-                   TryBeginHandleDrag(worldPoint, wallSegmentId, isStartHandle);
-        }
-
-        public void UpdateHandleDragPreview(Vector2 worldPoint)
-        {
-            if (!isHandleDragActive)
-            {
-                return;
-            }
-
-            draggedHandlePreviewPoint = worldPoint;
-            inputRouter?.SetPointerOverHandle(true);
-            wallOverlayRenderer ??= FindAnyObjectByType<SandboxWallOverlayRenderer>();
-            wallOverlayRenderer?.Refresh();
-        }
-
-        public bool CommitHandleDrag()
-        {
-            if (!isHandleDragActive)
+            previewPosition = Vector2.zero;
+            if (!isJunctionDragActive ||
+                string.IsNullOrWhiteSpace(junctionId) ||
+                !selectedJunctionIds.Contains(junctionId, StringComparer.Ordinal))
             {
                 return false;
             }
 
-            var didCommit = draggedHandleIsStart
-                ? wallAuthoringService.MoveWallStartHandle(draggedWallSegmentId, draggedHandlePreviewPoint)
-                : wallAuthoringService.MoveWallEndHandle(draggedWallSegmentId, draggedHandlePreviewPoint);
-
-            if (didCommit)
+            var floor = workspaceService?.ActiveFloor;
+            var junction = floor?.wallJunctions.FirstOrDefault(candidate =>
+                string.Equals(candidate.wallJunctionId, junctionId, StringComparison.Ordinal));
+            if (junction == null)
             {
-                UpdateStatus("Moved wall handle.");
+                return false;
             }
 
-            ClearHandleDragState();
-            return didCommit;
+            var delta = draggedPrimaryJunctionPreviewPoint - draggedPrimaryJunctionStartPoint;
+            previewPosition = junction.position + delta;
+            return true;
+        }
+
+        public bool TryBeginHandleDrag(Vector2 worldPoint)
+        {
+            return TryGetNearestHandle(worldPoint, out var junctionId) &&
+                   TryBeginJunctionDrag(junctionId, worldPoint);
+        }
+
+        public void UpdateHandleDragPreview(Vector2 worldPoint)
+        {
+            UpdateJunctionDragPreview(worldPoint);
+        }
+
+        public bool CommitHandleDrag()
+        {
+            return CommitJunctionDrag();
         }
 
         public void CancelHandleDrag()
         {
-            if (!isHandleDragActive)
-            {
-                return;
-            }
-
-            ClearHandleDragState();
-            UpdateStatus("Cancelled wall handle drag.");
+            CancelJunctionDrag();
         }
 
         private void HandleLineTool()
@@ -209,36 +243,34 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return;
             }
 
-            var worldPoint = ScreenToWorldPoint(SandboxInputAdapter.PointerScreenPosition);
-            var didCreate = wallAuthoringService.TryRegisterLinePoint(worldPoint, out _);
+            var didCreate = wallAuthoringService.TryRegisterLinePoint(currentPointerWorldPoint, out _);
             if (didCreate)
             {
-                UpdateStatus("Created wall centerline segment.");
+                UpdateStatus("Created wall segment. Click to continue chaining or right-click to end.");
             }
             else if (wallAuthoringService.HasPendingLineStart)
             {
-                UpdateStatus("Placed wall start point. Click again to finish the segment.");
+                UpdateStatus("Placed wall start point. Move the cursor to preview the segment, then click to commit.");
             }
         }
 
         private void HandleBrushTool()
         {
-            var worldPoint = ScreenToWorldPoint(SandboxInputAdapter.PointerScreenPosition);
             if (SandboxInputAdapter.GetMouseButtonDown(0))
             {
-                if (wallAuthoringService.BeginBrushStrokeCapture(worldPoint))
+                if (wallAuthoringService.BeginBrushStrokeCapture(currentPointerWorldPoint))
                 {
-                    lastBrushPoint = worldPoint;
+                    lastBrushPoint = currentPointerWorldPoint;
                     UpdateStatus("Recording wall brush stroke.");
                 }
             }
 
             if (SandboxInputAdapter.GetMouseButton(0) && wallAuthoringService.IsBrushCaptureActive)
             {
-                if (Vector2.Distance(lastBrushPoint, worldPoint) >= minimumBrushSampleDistance &&
-                    wallAuthoringService.AppendBrushStrokePoint(worldPoint))
+                if (Vector2.Distance(lastBrushPoint, currentPointerWorldPoint) >= minimumBrushSampleDistance &&
+                    wallAuthoringService.AppendBrushStrokePoint(currentPointerWorldPoint))
                 {
-                    lastBrushPoint = worldPoint;
+                    lastBrushPoint = currentPointerWorldPoint;
                 }
             }
 
@@ -249,84 +281,207 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
         }
 
-        private bool TryBeginHandleDrag(Vector2 worldPoint, string wallSegmentId, bool isStartHandle)
+        private bool TryBeginJunctionDrag(string junctionId, Vector2 worldPoint)
         {
-            if (string.IsNullOrWhiteSpace(wallSegmentId))
+            if (string.IsNullOrWhiteSpace(junctionId))
             {
                 return false;
             }
 
-            isHandleDragActive = true;
-            draggedWallSegmentId = wallSegmentId;
-            draggedHandleIsStart = isStartHandle;
-            draggedHandlePreviewPoint = worldPoint;
-            selectionService?.ReplaceSelection(new[] { wallSegmentId });
+            var floor = workspaceService?.ActiveFloor;
+            var junction = floor?.wallJunctions.FirstOrDefault(candidate =>
+                string.Equals(candidate.wallJunctionId, junctionId, StringComparison.Ordinal));
+            if (junction == null)
+            {
+                return false;
+            }
+
+            var isAdditive = SandboxInputAdapter.GetKey(KeyCode.LeftShift) || SandboxInputAdapter.GetKey(KeyCode.RightShift);
+            if (!isAdditive)
+            {
+                selectedJunctionIds = new List<string> { junctionId };
+            }
+            else if (!selectedJunctionIds.Contains(junctionId, StringComparer.Ordinal))
+            {
+                selectedJunctionIds.Add(junctionId);
+            }
+
+            selectedJunctionIds = selectedJunctionIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            selectionService?.ClearSelection();
+
+            isJunctionDragActive = true;
+            draggedPrimaryJunctionId = junctionId;
+            draggedPrimaryJunctionStartPoint = junction.position;
+            draggedPrimaryJunctionPreviewPoint = junction.position;
+            dragPreviewSnapResult = new SandboxWallSnapResult(junction.position, SandboxWallSnapTargetKind.None, string.Empty);
+            ResolveLegacyDraggedHandleInfo(floor, junctionId, out draggedWallSegmentId, out draggedHandleIsStart);
             inputRouter?.SetPointerOverHandle(true);
             wallOverlayRenderer ??= FindAnyObjectByType<SandboxWallOverlayRenderer>();
             wallOverlayRenderer?.Refresh();
-            UpdateStatus("Dragging wall handle. Release to commit the new endpoint.");
+            UpdateStatus(selectedJunctionIds.Count > 1
+                ? "Dragging selected wall nodes. Release to move the full set."
+                : "Dragging wall node. Release to commit the corner move.");
             return true;
         }
 
-        private bool TryGetNearestHandle(Vector2 worldPoint, out string wallSegmentId, out bool isStartHandle)
+        private void UpdateJunctionDragPreview(Vector2 worldPoint)
         {
-            wallSegmentId = string.Empty;
-            isStartHandle = false;
+            if (!isJunctionDragActive || wallAuthoringService == null || workspaceService == null)
+            {
+                return;
+            }
 
+            var anchorPoint = wallAuthoringService.ResolveJunctionDragAnchor(
+                workspaceService.ActiveFloorId,
+                draggedPrimaryJunctionId,
+                selectedJunctionIds);
+            dragPreviewSnapResult = wallSnappingService != null
+                ? wallSnappingService.SnapPoint(workspaceService.ActiveFloorId, worldPoint, anchorPoint)
+                : new SandboxWallSnapResult(worldPoint, SandboxWallSnapTargetKind.None, string.Empty);
+            draggedPrimaryJunctionPreviewPoint = dragPreviewSnapResult.position;
+            inputRouter?.SetPointerOverHandle(true);
+            wallOverlayRenderer ??= FindAnyObjectByType<SandboxWallOverlayRenderer>();
+            wallOverlayRenderer?.Refresh();
+        }
+
+        private bool CommitJunctionDrag()
+        {
+            if (!isJunctionDragActive || wallAuthoringService == null)
+            {
+                return false;
+            }
+
+            var didCommit = wallAuthoringService.MoveWallJunctions(
+                draggedPrimaryJunctionId,
+                selectedJunctionIds,
+                draggedPrimaryJunctionPreviewPoint);
+            if (didCommit)
+            {
+                UpdateStatus(selectedJunctionIds.Count > 1 ? "Moved wall nodes." : "Moved wall node.");
+            }
+
+            ClearJunctionDragState();
+            return didCommit;
+        }
+
+        private void CancelJunctionDrag()
+        {
+            if (!isJunctionDragActive)
+            {
+                return;
+            }
+
+            ClearJunctionDragState();
+            UpdateStatus("Cancelled wall node drag.");
+        }
+
+        private bool TryGetNearestHandle(Vector2 worldPoint, out string junctionId)
+        {
+            junctionId = string.Empty;
             var floor = workspaceService?.ActiveFloor;
             if (floor == null)
             {
                 return false;
             }
 
+            var visibleJunctionIds = GetVisibleHandleJunctionIds(floor);
             var bestDistance = float.MaxValue;
-            for (var i = 0; i < floor.wallSegments.Count; i += 1)
+            foreach (var candidateJunctionId in visibleJunctionIds)
             {
-                var wall = floor.wallSegments[i];
-                if (visualOrganizationService != null &&
-                    (!visualOrganizationService.IsTypeVisible(SandboxVisualObjectType.Wall) ||
-                     visualOrganizationService.IsObjectHidden(wall.wallSegmentId) ||
-                     visualOrganizationService.IsObjectLocked(wall.wallSegmentId) ||
-                     visualOrganizationService.IsTypeLocked(SandboxVisualObjectType.Wall)))
+                var junction = floor.wallJunctions.FirstOrDefault(candidate =>
+                    string.Equals(candidate.wallJunctionId, candidateJunctionId, StringComparison.Ordinal));
+                if (junction == null)
                 {
                     continue;
                 }
 
-                if (editorQoLService != null &&
-                    !editorQoLService.IsObjectVisibleForIsolation(wall.wallSegmentId, SandboxVisualObjectType.Wall))
+                var distance = Vector2.Distance(worldPoint, junction.position);
+                if (distance <= handleHitRadius && distance < bestDistance)
                 {
-                    continue;
-                }
-
-                var startDistance = Vector2.Distance(worldPoint, wall.startPoint);
-                if (startDistance <= handleHitRadius && startDistance < bestDistance)
-                {
-                    bestDistance = startDistance;
-                    wallSegmentId = wall.wallSegmentId;
-                    isStartHandle = true;
-                }
-
-                var endDistance = Vector2.Distance(worldPoint, wall.endPoint);
-                if (endDistance <= handleHitRadius && endDistance < bestDistance)
-                {
-                    bestDistance = endDistance;
-                    wallSegmentId = wall.wallSegmentId;
-                    isStartHandle = false;
+                    bestDistance = distance;
+                    junctionId = junction.wallJunctionId;
                 }
             }
 
-            return !string.IsNullOrWhiteSpace(wallSegmentId);
+            return !string.IsNullOrWhiteSpace(junctionId);
         }
 
-        private void ClearHandleDragState()
+        private IReadOnlyCollection<string> GetVisibleHandleJunctionIds(FloorData floor)
         {
-            isHandleDragActive = false;
+            var visibleIds = new HashSet<string>(selectedJunctionIds, StringComparer.Ordinal);
+            if (selectionService == null)
+            {
+                return visibleIds;
+            }
+
+            for (var i = 0; i < selectionService.SelectedObjectIds.Count; i += 1)
+            {
+                var wall = floor.wallSegments.FirstOrDefault(candidate =>
+                    string.Equals(candidate.wallSegmentId, selectionService.SelectedObjectIds[i], StringComparison.Ordinal));
+                if (wall == null)
+                {
+                    continue;
+                }
+
+                visibleIds.Add(wall.startJunctionId);
+                visibleIds.Add(wall.endJunctionId);
+            }
+
+            return visibleIds;
+        }
+
+        private void UpdateLinePreviewPoint()
+        {
+            currentLinePreviewPoint = currentPointerWorldPoint;
+            if (workspaceService?.ActiveFloor == null || !wallAuthoringService.HasPendingLineStart)
+            {
+                return;
+            }
+
+            currentLinePreviewPoint = wallSnappingService != null
+                ? wallSnappingService.SnapPoint(
+                    workspaceService.ActiveFloorId,
+                    currentPointerWorldPoint,
+                    wallAuthoringService.PendingLineStart).position
+                : currentPointerWorldPoint;
+        }
+
+        private void ClearJunctionDragState()
+        {
+            isJunctionDragActive = false;
+            draggedPrimaryJunctionId = string.Empty;
             draggedWallSegmentId = string.Empty;
             draggedHandleIsStart = false;
-            draggedHandlePreviewPoint = Vector2.zero;
+            draggedPrimaryJunctionStartPoint = Vector2.zero;
+            draggedPrimaryJunctionPreviewPoint = Vector2.zero;
+            dragPreviewSnapResult = new SandboxWallSnapResult(Vector2.zero, SandboxWallSnapTargetKind.None, string.Empty);
             inputRouter?.SetPointerOverHandle(false);
             wallOverlayRenderer ??= FindAnyObjectByType<SandboxWallOverlayRenderer>();
             wallOverlayRenderer?.Refresh();
+        }
+
+        private static void ResolveLegacyDraggedHandleInfo(FloorData floor, string junctionId, out string wallSegmentId, out bool isStartHandle)
+        {
+            wallSegmentId = string.Empty;
+            isStartHandle = false;
+            if (floor == null || string.IsNullOrWhiteSpace(junctionId))
+            {
+                return;
+            }
+
+            var wall = floor.wallSegments.FirstOrDefault(candidate =>
+                string.Equals(candidate.startJunctionId, junctionId, StringComparison.Ordinal) ||
+                string.Equals(candidate.endJunctionId, junctionId, StringComparison.Ordinal));
+            if (wall == null)
+            {
+                return;
+            }
+
+            wallSegmentId = wall.wallSegmentId;
+            isStartHandle = string.Equals(wall.startJunctionId, junctionId, StringComparison.Ordinal);
         }
 
         private void OnDisable()
@@ -336,6 +491,11 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void OnDestroy()
         {
+            if (toolStateService != null)
+            {
+                toolStateService.ToolModeChanged -= HandleToolModeChanged;
+            }
+
             wallSnappingService?.SetTemporarySnappingBypass(false);
         }
 

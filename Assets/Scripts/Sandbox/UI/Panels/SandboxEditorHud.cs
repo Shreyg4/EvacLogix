@@ -6,6 +6,7 @@ using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.UI.Overlays;
 using UnityEngine;
 
 namespace EvacLogix.Sandbox.UI.Panels
@@ -18,8 +19,9 @@ namespace EvacLogix.Sandbox.UI.Panels
             Exit = 1,
             Obstacle = 2,
             Stair = 3,
-            Door = 4,
-            Window = 5,
+            Teleport = 4,
+            Door = 5,
+            Window = 6,
         }
 
         [SerializeField] private string blueprintImportPath = string.Empty;
@@ -28,7 +30,12 @@ namespace EvacLogix.Sandbox.UI.Panels
         [SerializeField] private string selectionSizeXText = string.Empty;
         [SerializeField] private string selectionSizeYText = string.Empty;
         [SerializeField] private bool showLegend = true;
-        [SerializeField] private bool showValidation = true;
+        [SerializeField] private bool topBarCollapsed;
+        [SerializeField] private bool toolPaletteCollapsed;
+        [SerializeField] private bool floorTabsCollapsed;
+        [SerializeField] private bool inspectorCollapsed;
+        [SerializeField] private bool validationCollapsed;
+        [SerializeField] private bool statusBarCollapsed;
         [SerializeField] private Vector2 toolScrollPosition;
         [SerializeField] private Vector2 inspectorScrollPosition;
         [SerializeField] private Vector2 validationScrollPosition;
@@ -47,12 +54,16 @@ namespace EvacLogix.Sandbox.UI.Panels
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxInputRouter inputRouter;
         private SandboxWallAuthoringService wallAuthoringService;
+        private SandboxSemanticObjectAuthoringOverlay semanticObjectAuthoringOverlay;
 
         private GUIStyle headerStyle;
         private GUIStyle subheaderStyle;
         private GUIStyle bodyStyle;
         private GUIStyle activeToolButtonStyle;
+        private GUIStyle collapseToggleStyle;
         private RectOffset buttonPadding;
+
+        private const float CollapsedPanelHeight = 30f;
 
         private Rect topBarRect;
         private Rect toolPaletteRect;
@@ -63,6 +74,9 @@ namespace EvacLogix.Sandbox.UI.Panels
         private Rect modalRect;
         private string selectionEditorTargetId = string.Empty;
         private SelectionEditableKind selectionEditorKind = SelectionEditableKind.None;
+        private string obstacleBehaviorSyncedId = string.Empty;
+        private float selectionObstacleWeight = 1f;
+        private float selectionObstacleSpeedPenalty;
         private bool hasLoggedGuiException;
         private string lastGuiExceptionMessage = string.Empty;
         private bool hasLoggedWebGlDependencyStatus;
@@ -111,6 +125,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             visualOrganizationService = FindAnyObjectByType<SandboxVisualOrganizationService>();
             inputRouter = FindAnyObjectByType<SandboxInputRouter>();
             wallAuthoringService = FindAnyObjectByType<SandboxWallAuthoringService>();
+            semanticObjectAuthoringOverlay = FindAnyObjectByType<SandboxSemanticObjectAuthoringOverlay>();
         }
 
         private void OnDisable()
@@ -155,7 +170,13 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void DrawTopBar()
         {
             GUILayout.BeginArea(topBarRect, GUIContent.none, GUI.skin.box);
+            topBarCollapsed = DrawCollapseToggle(topBarRect.width, topBarCollapsed);
             GUILayout.Label(topBarShell?.Title ?? "Sandbox Editor", headerStyle);
+            if (topBarCollapsed)
+            {
+                GUILayout.EndArea();
+                return;
+            }
 
             var projectName = workspaceService?.ActiveProject?.metadata.buildingName;
             if (string.IsNullOrWhiteSpace(projectName))
@@ -217,7 +238,13 @@ namespace EvacLogix.Sandbox.UI.Panels
             var boxStyle = GUI.skin?.box ?? GUIStyle.none;
             GUI.BeginGroup(toolPaletteRect, GUIContent.none, boxStyle);
 
-            GUI.Label(new Rect(12f, 10f, toolPaletteRect.width - 24f, 22f), "Tools", headerStyle);
+            GUI.Label(new Rect(12f, 10f, toolPaletteRect.width - 44f, 22f), "Tools", headerStyle);
+            toolPaletteCollapsed = DrawCollapseToggle(toolPaletteRect.width, toolPaletteCollapsed);
+            if (toolPaletteCollapsed)
+            {
+                GUI.EndGroup();
+                return;
+            }
 
             if (workspaceService?.ActiveProject == null)
             {
@@ -259,6 +286,14 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void DrawFloorTabs()
         {
             GUILayout.BeginArea(floorTabsRect, GUIContent.none, GUI.skin.box);
+            floorTabsCollapsed = DrawCollapseToggle(floorTabsRect.width, floorTabsCollapsed);
+            if (floorTabsCollapsed)
+            {
+                GUILayout.Label("Floors", subheaderStyle);
+                GUILayout.EndArea();
+                return;
+            }
+
             GUILayout.BeginHorizontal();
             GUILayout.Label("Floors", subheaderStyle, GUILayout.Width(50f));
 
@@ -286,6 +321,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 DrawActionButton("Confirm Delete", () => { floorTabsBarShell.ConfirmDeleteFloor(); });
                 DrawActionButton("Cancel", () => floorTabsBarShell.CancelDeleteFloor());
             }
+            GUILayout.Space(30f);
             GUILayout.EndHorizontal();
 
             if (floorTabsBarShell != null && floorTabsBarShell.HasPendingDeleteConfirmation)
@@ -299,11 +335,19 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void DrawInspector()
         {
             GUILayout.BeginArea(inspectorRect, GUIContent.none, GUI.skin.box);
+            inspectorCollapsed = DrawCollapseToggle(inspectorRect.width, inspectorCollapsed);
             GUILayout.Label("Inspector", headerStyle);
+            if (inspectorCollapsed)
+            {
+                GUILayout.EndArea();
+                return;
+            }
 
             DrawBrushActionBanner();
 
-            inspectorScrollPosition = GUILayout.BeginScrollView(inspectorScrollPosition);
+            // Disable the horizontal scrollbar so content is constrained to the panel width
+            // (rows wrap/share width instead of overflowing and forcing a horizontal bar).
+            inspectorScrollPosition = GUILayout.BeginScrollView(inspectorScrollPosition, GUIStyle.none, GUI.skin.verticalScrollbar);
 
             DrawInspectorSection("Workspace");
             var activeFloor = workspaceService?.ActiveFloor;
@@ -321,6 +365,8 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUILayout.BeginHorizontal();
             DrawActionButton("Use Feet", () => inspectorPanelShell?.SetProjectDistanceUnit(DistanceUnit.Feet), activeProject != null);
             DrawActionButton("Use Meters", () => inspectorPanelShell?.SetProjectDistanceUnit(DistanceUnit.Meters), activeProject != null);
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
             DrawActionButton("Use Inches", () => inspectorPanelShell?.SetProjectDistanceUnit(DistanceUnit.Inches), activeProject != null);
             DrawActionButton("Use Centimeters", () => inspectorPanelShell?.SetProjectDistanceUnit(DistanceUnit.Centimeters), activeProject != null);
             GUILayout.EndHorizontal();
@@ -530,13 +576,10 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void DrawValidationPanel()
         {
             GUILayout.BeginArea(validationRect, GUIContent.none, GUI.skin.box);
-            GUILayout.BeginHorizontal();
+            validationCollapsed = DrawCollapseToggle(validationRect.width, validationCollapsed);
             GUILayout.Label("Validation", headerStyle);
-            GUILayout.FlexibleSpace();
-            showValidation = GUILayout.Toggle(showValidation, "Expanded");
-            GUILayout.EndHorizontal();
 
-            if (!showValidation)
+            if (validationCollapsed)
             {
                 GUILayout.EndArea();
                 return;
@@ -609,10 +652,18 @@ namespace EvacLogix.Sandbox.UI.Panels
             if (TryFindSelectedObstacle(selectedId, out var obstacle))
             {
                 SyncSelectionEditorState(selectedId, SelectionEditableKind.Obstacle, obstacle.size);
+                if (!string.Equals(obstacleBehaviorSyncedId, selectedId, StringComparison.Ordinal))
+                {
+                    obstacleBehaviorSyncedId = selectedId;
+                    selectionObstacleWeight = obstacle.discourageWeight;
+                    selectionObstacleSpeedPenalty = obstacle.movementSpeedPenalty;
+                }
+
                 DrawEditableSelectionSizeFields(
                     "Obstacle",
                     string.IsNullOrWhiteSpace(obstacle.name) ? selectedId : obstacle.name,
                     () => TryApplyObstacleSize(obstacle));
+                DrawObstacleBehaviorFields(obstacle);
                 return;
             }
 
@@ -623,6 +674,13 @@ namespace EvacLogix.Sandbox.UI.Panels
                     "Stair Portal",
                     string.IsNullOrWhiteSpace(stairPortal.name) ? selectedId : stairPortal.name,
                     () => TryApplyStairSize(stairPortal));
+                return;
+            }
+
+            if (TryFindSelectedTeleport(selectedId, out var teleportPortal))
+            {
+                SyncSelectionEditorState(selectedId, SelectionEditableKind.Teleport, teleportPortal.size);
+                DrawTeleportFields(teleportPortal);
                 return;
             }
 
@@ -686,6 +744,59 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUILayout.Label("Only escape-usable windows create passable collider gaps.", bodyStyle);
         }
 
+        private void DrawTeleportFields(TeleportPortalData teleportPortal)
+        {
+            GUILayout.Label($"Teleport: {teleportPortal.teleportPortalId}", bodyStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Width", bodyStyle, GUILayout.Width(42f));
+            selectionSizeXText = GUILayout.TextField(selectionSizeXText, GUILayout.Width(64f));
+            GUILayout.Label("Height", bodyStyle, GUILayout.Width(48f));
+            selectionSizeYText = GUILayout.TextField(selectionSizeYText, GUILayout.Width(64f));
+            GUILayout.EndHorizontal();
+
+            var pairStateLabel = IsBrokenTeleport(teleportPortal) ? "Broken Pair" : (teleportPortal.isPairEnabled ? "On" : "Off");
+            GUILayout.Label($"Pair State: {pairStateLabel}", bodyStyle);
+
+            GUILayout.Label("Type", bodyStyle);
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Stair", () => TryApplyTeleport(teleportPortal, TeleportPortalKind.Stair, teleportPortal.isPairEnabled), teleportPortal.kind != TeleportPortalKind.Stair);
+            DrawActionButton("Elevator", () => TryApplyTeleport(teleportPortal, TeleportPortalKind.Elevator, teleportPortal.isPairEnabled), teleportPortal.kind != TeleportPortalKind.Elevator);
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Escalator", () => TryApplyTeleport(teleportPortal, TeleportPortalKind.Escalator, teleportPortal.isPairEnabled), teleportPortal.kind != TeleportPortalKind.Escalator);
+            DrawActionButton("Other", () => TryApplyTeleport(teleportPortal, TeleportPortalKind.Other, teleportPortal.isPairEnabled), teleportPortal.kind != TeleportPortalKind.Other);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            DrawActionButton("On", () => TryApplyTeleport(teleportPortal, teleportPortal.kind, true), !teleportPortal.isPairEnabled);
+            DrawActionButton("Off", () => TryApplyTeleport(teleportPortal, teleportPortal.kind, false), teleportPortal.isPairEnabled);
+            GUILayout.EndHorizontal();
+
+            var canApplySize = inspectorPanelShell != null && TryParseSelectionSize(out _);
+            DrawActionButton("Apply Teleport Size", () => TryApplyTeleport(teleportPortal, teleportPortal.kind, teleportPortal.isPairEnabled), canApplySize);
+
+            if (IsBrokenTeleport(teleportPortal))
+            {
+                DrawActionButton(
+                    "Place Missing Pair Endpoint",
+                    () =>
+                    {
+                        var didBegin = semanticObjectAuthoringOverlay != null &&
+                                       semanticObjectAuthoringOverlay.BeginMissingTeleportPairPlacement(teleportPortal.teleportPortalId);
+                        if (didBegin)
+                        {
+                            toolPaletteShell?.SelectTool(SandboxToolMode.Teleport);
+                        }
+                    },
+                    semanticObjectAuthoringOverlay != null);
+                GUILayout.Label("Broken pairs stay in the project until you place the missing endpoint.", bodyStyle);
+            }
+            else
+            {
+                GUILayout.Label($"Linked floor: {teleportPortal.targetFloorId}", bodyStyle);
+            }
+        }
+
         private void DrawEditableSelectionSizeFields(string objectTypeLabel, string objectLabel, Action applyAction)
         {
             GUILayout.Label($"{objectTypeLabel}: {objectLabel}", bodyStyle);
@@ -738,8 +849,8 @@ namespace EvacLogix.Sandbox.UI.Panels
                 obstacle.center,
                 nextSize,
                 obstacle.rotationDegrees,
-                obstacle.semanticType,
-                obstacle.traversalCostMultiplier,
+                obstacle.discourageWeight,
+                obstacle.movementSpeedPenalty,
                 obstacle.name,
                 obstacle.tags,
                 obstacle.metadataFields);
@@ -749,6 +860,42 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             return didUpdate;
+        }
+
+        private void DrawObstacleBehaviorFields(ObstacleData obstacle)
+        {
+            GUILayout.Label($"Discourage Weight: {selectionObstacleWeight:0.00}  (0 = open floor, 1 = impassable)", bodyStyle);
+            selectionObstacleWeight = Mathf.Clamp01(GUILayout.HorizontalSlider(selectionObstacleWeight, 0f, 1f));
+
+            var impassable = selectionObstacleWeight >= 1f;
+            var previousEnabled = GUI.enabled;
+            GUI.enabled = !impassable;
+            GUILayout.Label(impassable
+                ? "Movement Speed Penalty: n/a (impassable)"
+                : $"Movement Speed Penalty: {selectionObstacleSpeedPenalty:0.00}  (0 = none, 1 = full stop)", bodyStyle);
+            selectionObstacleSpeedPenalty = Mathf.Clamp01(GUILayout.HorizontalSlider(selectionObstacleSpeedPenalty, 0f, 1f));
+            GUI.enabled = previousEnabled;
+
+            DrawActionButton("Apply Behavior", () => TryApplyObstacleBehavior(obstacle), inspectorPanelShell != null);
+        }
+
+        private bool TryApplyObstacleBehavior(ObstacleData obstacle)
+        {
+            if (obstacle == null)
+            {
+                return false;
+            }
+
+            return inspectorPanelShell != null && inspectorPanelShell.UpdateObstacle(
+                obstacle.obstacleId,
+                obstacle.center,
+                obstacle.size,
+                obstacle.rotationDegrees,
+                selectionObstacleWeight,
+                selectionObstacleSpeedPenalty,
+                obstacle.name,
+                obstacle.tags,
+                obstacle.metadataFields);
         }
 
         private bool TryApplyStairSize(StairPortalData stairPortal)
@@ -771,6 +918,32 @@ namespace EvacLogix.Sandbox.UI.Panels
             if (didUpdate)
             {
                 SyncSelectionEditorState(stairPortal.stairPortalId, SelectionEditableKind.Stair, nextSize, true);
+            }
+
+            return didUpdate;
+        }
+
+        private bool TryApplyTeleport(TeleportPortalData teleportPortal, TeleportPortalKind kind, bool isPairEnabled)
+        {
+            if (teleportPortal == null || !TryParseSelectionSize(out var nextSize))
+            {
+                return false;
+            }
+
+            var didUpdate = inspectorPanelShell != null && inspectorPanelShell.UpdateTeleportPortal(
+                teleportPortal.teleportPortalId,
+                teleportPortal.localPosition,
+                nextSize,
+                teleportPortal.rotationDegrees,
+                teleportPortal.name,
+                kind,
+                teleportPortal.travelCost,
+                isPairEnabled,
+                teleportPortal.tags,
+                teleportPortal.metadataFields);
+            if (didUpdate)
+            {
+                SyncSelectionEditorState(teleportPortal.teleportPortalId, SelectionEditableKind.Teleport, nextSize, true);
             }
 
             return didUpdate;
@@ -925,6 +1098,36 @@ namespace EvacLogix.Sandbox.UI.Panels
             return door != null;
         }
 
+        private bool TryFindSelectedTeleport(string selectedId, out TeleportPortalData teleportPortal)
+        {
+            teleportPortal = null;
+            var floors = workspaceService?.ActiveProject?.floors;
+            if (floors == null)
+            {
+                return false;
+            }
+
+            teleportPortal = floors
+                .SelectMany(floor => floor.teleportPortals)
+                .FirstOrDefault(candidate => string.Equals(candidate.teleportPortalId, selectedId, StringComparison.Ordinal));
+            return teleportPortal != null;
+        }
+
+        private bool IsBrokenTeleport(TeleportPortalData teleportPortal)
+        {
+            if (teleportPortal == null ||
+                string.IsNullOrWhiteSpace(teleportPortal.targetFloorId) ||
+                string.IsNullOrWhiteSpace(teleportPortal.targetTeleportPortalId))
+            {
+                return true;
+            }
+
+            var targetFloor = workspaceService?.ActiveProject?.floors?.FirstOrDefault(candidate =>
+                string.Equals(candidate.floorId, teleportPortal.targetFloorId, StringComparison.Ordinal));
+            return targetFloor == null || !targetFloor.teleportPortals.Any(candidate =>
+                string.Equals(candidate.teleportPortalId, teleportPortal.targetTeleportPortalId, StringComparison.Ordinal));
+        }
+
         private bool TryFindSelectedWindow(string selectedId, out WindowData window)
         {
             window = null;
@@ -943,6 +1146,14 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void DrawStatusBar()
         {
             GUILayout.BeginArea(statusBarRect, GUIContent.none, GUI.skin.box);
+            statusBarCollapsed = DrawCollapseToggle(statusBarRect.width, statusBarCollapsed);
+            if (statusBarCollapsed)
+            {
+                GUILayout.Label(statusBarShell?.StatusMessage ?? "Ready", bodyStyle);
+                GUILayout.EndArea();
+                return;
+            }
+
             GUILayout.BeginHorizontal();
             GUILayout.Label(statusBarShell?.StatusMessage ?? "Ready", bodyStyle);
             GUILayout.FlexibleSpace();
@@ -951,6 +1162,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUILayout.Label(statusBarShell?.LifecycleStateLabel ?? "Draft", bodyStyle);
             GUILayout.Space(16f);
             GUILayout.Label(statusBarShell?.ModeLabel ?? "Edit Mode", bodyStyle);
+            GUILayout.Space(30f);
             GUILayout.EndHorizontal();
 
             if (!string.IsNullOrWhiteSpace(statusBarShell?.RecoveryPromptLabel))
@@ -987,6 +1199,21 @@ namespace EvacLogix.Sandbox.UI.Panels
         {
             GUILayout.Space(8f);
             GUILayout.Label(title, subheaderStyle);
+        }
+
+        // Draws a small triangle toggle in the panel's top-right corner. The triangle points
+        // down (open) when expanded and right (closed) when collapsed. Returns the new state.
+        private bool DrawCollapseToggle(float panelWidth, bool collapsed)
+        {
+            var toggleRect = new Rect(panelWidth - 26f, 6f, 20f, 18f);
+            var glyph = collapsed ? "▶" : "▼";
+            var tooltip = collapsed ? "Expand panel" : "Collapse panel";
+            if (GUI.Button(toggleRect, new GUIContent(glyph, tooltip), collapseToggleStyle ?? GUI.skin.button))
+            {
+                return !collapsed;
+            }
+
+            return collapsed;
         }
 
         private void DrawActionButton(string label, Action action, bool enabled = true)
@@ -1197,12 +1424,22 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             bodyStyle ??= new GUIStyle(labelStyle)
             {
+                fontSize = 11,
                 wordWrap = true
             };
 
             activeToolButtonStyle ??= new GUIStyle(buttonStyle)
             {
                 fontStyle = FontStyle.Bold,
+            };
+
+            collapseToggleStyle ??= new GUIStyle(buttonStyle)
+            {
+                fontSize = 12,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                padding = new RectOffset(0, 0, 0, 0),
+                margin = new RectOffset(0, 0, 0, 0)
             };
 
             if (activeToolButtonStyle.padding == null)
@@ -1221,17 +1458,21 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void RecalculateLayout()
         {
             var margin = 12f;
-            var topBarHeight = 110f;
-            var floorTabsHeight = 60f;
-            var statusBarHeight = 58f;
+            var topBarHeight = topBarCollapsed ? CollapsedPanelHeight : 110f;
+            var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : 60f;
+            var statusBarHeight = statusBarCollapsed ? CollapsedPanelHeight : 58f;
             var toolWidth = 180f;
             var inspectorWidth = 340f;
-            var validationHeight = 220f;
+            var toolHeight = toolPaletteCollapsed ? CollapsedPanelHeight : Screen.height - topBarHeight - statusBarHeight - (margin * 4f);
+            var validationHeight = validationCollapsed ? CollapsedPanelHeight : 220f;
+            var inspectorHeight = inspectorCollapsed
+                ? CollapsedPanelHeight
+                : Screen.height - topBarHeight - statusBarHeight - validationHeight - (margin * 5f);
 
             topBarRect = new Rect(margin, margin, Screen.width - (margin * 2f), topBarHeight);
-            toolPaletteRect = new Rect(margin, topBarRect.yMax + margin, toolWidth, Screen.height - topBarHeight - statusBarHeight - (margin * 4f));
+            toolPaletteRect = new Rect(margin, topBarRect.yMax + margin, toolWidth, toolHeight);
             floorTabsRect = new Rect(toolPaletteRect.xMax + margin, topBarRect.yMax + margin, Screen.width - toolWidth - inspectorWidth - (margin * 4f), floorTabsHeight);
-            inspectorRect = new Rect(Screen.width - inspectorWidth - margin, topBarRect.yMax + margin, inspectorWidth, Screen.height - topBarHeight - statusBarHeight - validationHeight - (margin * 5f));
+            inspectorRect = new Rect(Screen.width - inspectorWidth - margin, topBarRect.yMax + margin, inspectorWidth, inspectorHeight);
             validationRect = new Rect(Screen.width - inspectorWidth - margin, inspectorRect.yMax + margin, inspectorWidth, validationHeight);
             statusBarRect = new Rect(margin, Screen.height - statusBarHeight - margin, Screen.width - (margin * 2f), statusBarHeight);
 
@@ -1296,6 +1537,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             {
                 SandboxToolMode.WallLine => "Wall Line",
                 SandboxToolMode.WallBrush => "Wall Brush",
+                SandboxToolMode.Teleport => "Teleport",
                 SandboxToolMode.SpawnPoint => "Spawn Point",
                 SandboxToolMode.SpawnBrush => "Spawn Brush",
                 _ => toolMode.ToString()

@@ -7,7 +7,7 @@ namespace EvacLogix.Sandbox.Data
     public static class SandboxSchemaVersions
     {
         public const int Initial = 1;
-        public const int Current = 1;
+        public const int Current = 2;
     }
 
     public enum BuildingLifecycleState
@@ -45,18 +45,19 @@ namespace EvacLogix.Sandbox.Data
         Closed = 4,
     }
 
-    public enum ObstacleSemanticType
-    {
-        HardBlocking = 0,
-        SlowThrough = 1,
-        HazardLinkedBlockage = 2,
-    }
-
     public enum StairTraversalDirection
     {
         Bidirectional = 0,
         AscendOnly = 1,
         DescendOnly = 2,
+    }
+
+    public enum TeleportPortalKind
+    {
+        Stair = 0,
+        Elevator = 1,
+        Escalator = 2,
+        Other = 3,
     }
 
     public enum RegionSemanticType
@@ -167,6 +168,7 @@ namespace EvacLogix.Sandbox.Data
         public List<ExitZoneData> exits = new();
         public List<ObstacleData> obstacles = new();
         public List<StairPortalData> stairPortals = new();
+        public List<TeleportPortalData> teleportPortals = new();
         public List<RegionData> regions = new();
     }
 
@@ -236,11 +238,15 @@ namespace EvacLogix.Sandbox.Data
     {
         public string obstacleId = string.Empty;
         public string name = string.Empty;
-        public ObstacleSemanticType semanticType = ObstacleSemanticType.HardBlocking;
         public Vector2 center;
         public Vector2 size = Vector2.one;
         public float rotationDegrees;
-        public float traversalCostMultiplier = 1f;
+        // How strongly agents are discouraged from routing through this obstacle.
+        // 0 = no different from open floor, 1 = impassable (a solid wall).
+        public float discourageWeight = 1f;
+        // How much an agent is slowed while traversing this obstacle (only meaningful when
+        // discourageWeight < 1). 0 = no slowdown, 1 = effectively immobile.
+        public float movementSpeedPenalty;
         public List<string> tags = new();
         public List<MetadataFieldData> metadataFields = new();
     }
@@ -258,6 +264,26 @@ namespace EvacLogix.Sandbox.Data
         public string targetStairPortalId = string.Empty;
         public StairTraversalDirection direction = StairTraversalDirection.Bidirectional;
         public float travelCost = 1f;
+        public List<string> tags = new();
+        public List<MetadataFieldData> metadataFields = new();
+    }
+
+    [Serializable]
+    public sealed class TeleportPortalData
+    {
+        public string teleportPortalId = string.Empty;
+        public string pairId = string.Empty;
+        public int pairColorIndex;
+        public string sourceFloorId = string.Empty;
+        public string name = string.Empty;
+        public Vector2 localPosition;
+        public Vector2 size = Vector2.one;
+        public float rotationDegrees;
+        public string targetFloorId = string.Empty;
+        public string targetTeleportPortalId = string.Empty;
+        public TeleportPortalKind kind = TeleportPortalKind.Stair;
+        public float travelCost = 1f;
+        public bool isPairEnabled = true;
         public List<string> tags = new();
         public List<MetadataFieldData> metadataFields = new();
     }
