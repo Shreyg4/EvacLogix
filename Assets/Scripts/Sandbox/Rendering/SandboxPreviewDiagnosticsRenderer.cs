@@ -14,6 +14,7 @@ namespace EvacLogix.Sandbox.Rendering
         [SerializeField] private Color chokePointColor = new(1f, 0.55f, 0.1f, 0.95f);
         [SerializeField] private Color heatmapColor = new(1f, 0.7f, 0.15f, 0.55f);
         [SerializeField] private Color fireCellColor = new(1f, 0.4f, 0.1f, 0.6f);
+        [SerializeField] private Color agentColor = new(0.35f, 0.95f, 0.65f, 0.95f);
         [SerializeField] private float lineWidth = 0.05f;
         [SerializeField] private float markerRadius = 0.22f;
 
@@ -21,12 +22,14 @@ namespace EvacLogix.Sandbox.Rendering
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxPreviewService previewService;
         private SandboxFireSimulationService fireSimulationService;
+        private SandboxAgentSimulationService agentSimulationService;
 
         private void Awake()
         {
             workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
             previewService = FindAnyObjectByType<SandboxPreviewService>();
             fireSimulationService = FindAnyObjectByType<SandboxFireSimulationService>();
+            agentSimulationService = FindAnyObjectByType<SandboxAgentSimulationService>();
 
             if (workspaceService != null)
             {
@@ -93,13 +96,16 @@ namespace EvacLogix.Sandbox.Rendering
                 }
             }
 
-            if (fireSimulationService != null && fireSimulationService.SimulationActive)
+            if (agentSimulationService != null && agentSimulationService.SimulationActive)
             {
-                foreach (var fireCell in fireSimulationService.ActiveFireCells.Where(cell => cell.floorId == floor.floorId))
+                foreach (var agent in agentSimulationService.ActiveAgents.Where(candidate => candidate != null && !candidate.HasExited && candidate.FloorId == floor.floorId))
                 {
-                    var radius = markerRadius * (0.8f + Mathf.Clamp(fireCell.intensity, 0f, 1f) * 0.9f);
-                    var alpha = Mathf.Lerp(0.2f, 0.85f, Mathf.Clamp01(fireCell.intensity));
-                    RenderCircle($"FireCell_{fireCell.cellId}", fireCell.position, radius, new Color(fireCellColor.r, fireCellColor.g, fireCellColor.b, alpha));
+                    var position = (Vector2)agent.transform.position;
+                    var urgency = Mathf.Clamp01(1f - agent.Health);
+                    var radius = markerRadius * (0.6f + urgency * 0.35f);
+                    var alpha = Mathf.Lerp(0.4f, 1f, Mathf.Clamp01(agent.Health));
+                    RenderCross($"Agent_{agent.AgentId}", position, new Color(agentColor.r, agentColor.g, agentColor.b, alpha), radius);
+                    RenderCircle($"AgentHalo_{agent.AgentId}", position, radius * 1.4f, new Color(agentColor.r, agentColor.g, agentColor.b, alpha * 0.35f));
                 }
             }
 
