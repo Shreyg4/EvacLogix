@@ -24,61 +24,50 @@ namespace EvacLogix.Sandbox.Rendering
         private SandboxPreviewService previewService;
         private SandboxFireSimulationService fireSimulationService;
         private SandboxAgentSimulationService agentSimulationService;
+        private bool workspaceEventsSubscribed;
+        private bool previewEventsSubscribed;
+        private bool fireEventsSubscribed;
+        private bool agentEventsSubscribed;
 
         private void Awake()
         {
-            workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
-            previewService = FindAnyObjectByType<SandboxPreviewService>();
-            fireSimulationService = FindAnyObjectByType<SandboxFireSimulationService>();
-            agentSimulationService = FindAnyObjectByType<SandboxAgentSimulationService>();
-
-            if (workspaceService != null)
-            {
-                workspaceService.ActiveProjectChanged += HandleProjectChanged;
-                workspaceService.ActiveFloorChanged += HandleFloorChanged;
-            }
-
-            if (previewService != null)
-            {
-                previewService.PreviewModeChanged += HandlePreviewModeChanged;
-                previewService.PreviewStateChanged += HandlePreviewStateChanged;
-                previewService.PreviewReportChanged += HandlePreviewReportChanged;
-            }
-
-            if (fireSimulationService != null)
-            {
-                fireSimulationService.FireStateChanged += HandleFireStateChanged;
-            }
-
-            if (agentSimulationService != null)
-            {
-                agentSimulationService.AgentsChanged += HandleAgentsChanged;
-            }
-
+            ResolveDependencies();
             Refresh();
+        }
+
+        private void LateUpdate()
+        {
+            var hadWorkspaceService = workspaceService != null;
+            var hadPreviewService = previewService != null;
+            ResolveDependencies();
+            if ((!hadWorkspaceService && workspaceService != null) ||
+                (!hadPreviewService && previewService != null))
+            {
+                Refresh();
+            }
         }
 
         private void OnDestroy()
         {
-            if (workspaceService != null)
+            if (workspaceService != null && workspaceEventsSubscribed)
             {
                 workspaceService.ActiveProjectChanged -= HandleProjectChanged;
                 workspaceService.ActiveFloorChanged -= HandleFloorChanged;
             }
 
-            if (previewService != null)
+            if (previewService != null && previewEventsSubscribed)
             {
                 previewService.PreviewModeChanged -= HandlePreviewModeChanged;
                 previewService.PreviewStateChanged -= HandlePreviewStateChanged;
                 previewService.PreviewReportChanged -= HandlePreviewReportChanged;
             }
 
-            if (fireSimulationService != null)
+            if (fireSimulationService != null && fireEventsSubscribed)
             {
                 fireSimulationService.FireStateChanged -= HandleFireStateChanged;
             }
 
-            if (agentSimulationService != null)
+            if (agentSimulationService != null && agentEventsSubscribed)
             {
                 agentSimulationService.AgentsChanged -= HandleAgentsChanged;
             }
@@ -86,6 +75,7 @@ namespace EvacLogix.Sandbox.Rendering
 
         public void Refresh()
         {
+            ResolveDependencies();
             Clear();
             var project = workspaceService?.ActiveProject;
             var floor = workspaceService?.ActiveFloor;
@@ -232,6 +222,41 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
             renderedObjects.Add(lineObject);
+        }
+
+        private void ResolveDependencies()
+        {
+            workspaceService ??= FindAnyObjectByType<SandboxProjectWorkspaceService>();
+            previewService ??= FindAnyObjectByType<SandboxPreviewService>();
+            fireSimulationService ??= FindAnyObjectByType<SandboxFireSimulationService>();
+            agentSimulationService ??= FindAnyObjectByType<SandboxAgentSimulationService>();
+
+            if (workspaceService != null && !workspaceEventsSubscribed)
+            {
+                workspaceService.ActiveProjectChanged += HandleProjectChanged;
+                workspaceService.ActiveFloorChanged += HandleFloorChanged;
+                workspaceEventsSubscribed = true;
+            }
+
+            if (previewService != null && !previewEventsSubscribed)
+            {
+                previewService.PreviewModeChanged += HandlePreviewModeChanged;
+                previewService.PreviewStateChanged += HandlePreviewStateChanged;
+                previewService.PreviewReportChanged += HandlePreviewReportChanged;
+                previewEventsSubscribed = true;
+            }
+
+            if (fireSimulationService != null && !fireEventsSubscribed)
+            {
+                fireSimulationService.FireStateChanged += HandleFireStateChanged;
+                fireEventsSubscribed = true;
+            }
+
+            if (agentSimulationService != null && !agentEventsSubscribed)
+            {
+                agentSimulationService.AgentsChanged += HandleAgentsChanged;
+                agentEventsSubscribed = true;
+            }
         }
 
         private void RenderCross(string name, Vector2 center, Color color, float size)

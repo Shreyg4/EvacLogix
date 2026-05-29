@@ -43,81 +43,48 @@ namespace EvacLogix.Sandbox.Rendering
         private Vector2 lastRectangleDragSize;
         private bool lastSelectionDragActive;
         private Vector2 lastSelectionDragCurrentPoint;
+        private bool workspaceEventsSubscribed;
+        private bool selectionEventsSubscribed;
+        private bool semanticAuthoringEventsSubscribed;
+        private bool previewAuthoringEventsSubscribed;
+        private bool visualOrganizationEventsSubscribed;
+        private bool editorQoLEventsSubscribed;
 
         private void Awake()
         {
-            workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
-            workspaceStateService = FindAnyObjectByType<SandboxWorkspaceStateService>();
-            selectionService = FindAnyObjectByType<SandboxSelectionService>();
-            semanticObjectAuthoringService = FindAnyObjectByType<SandboxSemanticObjectAuthoringService>();
-            previewAuthoringService = FindAnyObjectByType<SandboxPreviewAuthoringService>();
-            visualOrganizationService = FindAnyObjectByType<SandboxVisualOrganizationService>();
-            editorQoLService = FindAnyObjectByType<SandboxEditorQoLService>();
-            objectInteractionOverlay = FindAnyObjectByType<SandboxObjectInteractionOverlay>();
-
-            if (workspaceService != null)
-            {
-                workspaceService.ActiveProjectChanged += HandleProjectChanged;
-                workspaceService.ActiveFloorChanged += HandleFloorChanged;
-            }
-
-            if (selectionService != null)
-            {
-                selectionService.SelectionChanged += HandleSelectionChanged;
-            }
-
-            if (semanticObjectAuthoringService != null)
-            {
-                semanticObjectAuthoringService.SemanticObjectsChanged += HandleSemanticObjectsChanged;
-            }
-
-            if (previewAuthoringService != null)
-            {
-                previewAuthoringService.PreviewAuthoringChanged += HandlePreviewAuthoringChanged;
-            }
-
-            if (visualOrganizationService != null)
-            {
-                visualOrganizationService.VisualStateChanged += HandleVisualStateChanged;
-            }
-
-            if (editorQoLService != null)
-            {
-                editorQoLService.StateChanged += HandleVisualStateChanged;
-            }
-
+            ResolveDependencies();
             Refresh();
         }
 
         private void OnDestroy()
         {
-            if (workspaceService != null)
+            if (workspaceService != null && workspaceEventsSubscribed)
             {
                 workspaceService.ActiveProjectChanged -= HandleProjectChanged;
                 workspaceService.ActiveFloorChanged -= HandleFloorChanged;
             }
 
-            if (selectionService != null)
+            if (selectionService != null && selectionEventsSubscribed)
             {
                 selectionService.SelectionChanged -= HandleSelectionChanged;
             }
 
-            if (semanticObjectAuthoringService != null)
+            if (semanticObjectAuthoringService != null && semanticAuthoringEventsSubscribed)
             {
                 semanticObjectAuthoringService.SemanticObjectsChanged -= HandleSemanticObjectsChanged;
             }
 
-            if (previewAuthoringService != null)
+            if (previewAuthoringService != null && previewAuthoringEventsSubscribed)
             {
                 previewAuthoringService.PreviewAuthoringChanged -= HandlePreviewAuthoringChanged;
             }
 
-            if (visualOrganizationService != null)
+            if (visualOrganizationService != null && visualOrganizationEventsSubscribed)
             {
                 visualOrganizationService.VisualStateChanged -= HandleVisualStateChanged;
             }
 
-            if (editorQoLService != null)
+            if (editorQoLService != null && editorQoLEventsSubscribed)
             {
                 editorQoLService.StateChanged -= HandleVisualStateChanged;
             }
@@ -125,6 +92,15 @@ namespace EvacLogix.Sandbox.Rendering
 
         private void LateUpdate()
         {
+            var hadWorkspaceService = workspaceService != null;
+            var hadPreviewAuthoringService = previewAuthoringService != null;
+            ResolveDependencies();
+            if ((!hadWorkspaceService && workspaceService != null) ||
+                (!hadPreviewAuthoringService && previewAuthoringService != null))
+            {
+                Refresh();
+            }
+
             if (objectInteractionOverlay == null)
             {
                 return;
@@ -153,6 +129,7 @@ namespace EvacLogix.Sandbox.Rendering
 
         public void Refresh()
         {
+            ResolveDependencies();
             Clear();
 
             var floor = workspaceService?.ActiveFloor;
@@ -401,6 +378,55 @@ namespace EvacLogix.Sandbox.Rendering
                 {
                     RenderRectangleGhost($"DragGhost_{objectId}", center + delta, size, rotationDegrees, color);
                 }
+            }
+        }
+
+        private void ResolveDependencies()
+        {
+            workspaceService ??= FindAnyObjectByType<SandboxProjectWorkspaceService>();
+            workspaceStateService ??= FindAnyObjectByType<SandboxWorkspaceStateService>();
+            selectionService ??= FindAnyObjectByType<SandboxSelectionService>();
+            semanticObjectAuthoringService ??= FindAnyObjectByType<SandboxSemanticObjectAuthoringService>();
+            previewAuthoringService ??= FindAnyObjectByType<SandboxPreviewAuthoringService>();
+            visualOrganizationService ??= FindAnyObjectByType<SandboxVisualOrganizationService>();
+            editorQoLService ??= FindAnyObjectByType<SandboxEditorQoLService>();
+            objectInteractionOverlay ??= FindAnyObjectByType<SandboxObjectInteractionOverlay>();
+
+            if (workspaceService != null && !workspaceEventsSubscribed)
+            {
+                workspaceService.ActiveProjectChanged += HandleProjectChanged;
+                workspaceService.ActiveFloorChanged += HandleFloorChanged;
+                workspaceEventsSubscribed = true;
+            }
+
+            if (selectionService != null && !selectionEventsSubscribed)
+            {
+                selectionService.SelectionChanged += HandleSelectionChanged;
+                selectionEventsSubscribed = true;
+            }
+
+            if (semanticObjectAuthoringService != null && !semanticAuthoringEventsSubscribed)
+            {
+                semanticObjectAuthoringService.SemanticObjectsChanged += HandleSemanticObjectsChanged;
+                semanticAuthoringEventsSubscribed = true;
+            }
+
+            if (previewAuthoringService != null && !previewAuthoringEventsSubscribed)
+            {
+                previewAuthoringService.PreviewAuthoringChanged += HandlePreviewAuthoringChanged;
+                previewAuthoringEventsSubscribed = true;
+            }
+
+            if (visualOrganizationService != null && !visualOrganizationEventsSubscribed)
+            {
+                visualOrganizationService.VisualStateChanged += HandleVisualStateChanged;
+                visualOrganizationEventsSubscribed = true;
+            }
+
+            if (editorQoLService != null && !editorQoLEventsSubscribed)
+            {
+                editorQoLService.StateChanged += HandleVisualStateChanged;
+                editorQoLEventsSubscribed = true;
             }
         }
 
