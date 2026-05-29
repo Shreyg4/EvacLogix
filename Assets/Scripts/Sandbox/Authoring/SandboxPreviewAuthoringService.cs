@@ -159,9 +159,10 @@ namespace EvacLogix.Sandbox.Authoring
                 return false;
             }
 
-            if (!IsValidSpawnPointPlacement(workspaceService.ActiveFloor.floorId, position))
+            var activeFloor = workspaceService.ActiveFloor;
+            if (!IsValidSpawnPointPlacement(activeFloor, position))
             {
-                failureMessage = "Spawn points can only be placed inside enclosed rooms.";
+                failureMessage = "Spawn points require at least one exit or window on the floor and must stay inside an enclosed room.";
                 return false;
             }
 
@@ -236,9 +237,10 @@ namespace EvacLogix.Sandbox.Authoring
                 return false;
             }
 
-            if (!IsValidSpawnPointBrushPlacement(workspaceService.ActiveFloor.floorId, polygonPoints))
+            var activeFloor = workspaceService.ActiveFloor;
+            if (!IsValidSpawnPointBrushPlacement(activeFloor, polygonPoints))
             {
-                failureMessage = "Spawn point brushes must stay inside enclosed rooms.";
+                failureMessage = "Spawn point brushes require at least one exit or window on the floor and must stay inside an enclosed room.";
                 return false;
             }
 
@@ -576,14 +578,23 @@ namespace EvacLogix.Sandbox.Authoring
             return true;
         }
 
-        private bool IsValidSpawnPointPlacement(string floorId, Vector2 position)
+        private bool IsValidSpawnPointPlacement(FloorData floor, Vector2 position)
         {
-            return roomDetectionService != null && roomDetectionService.IsPointInsideCompleteRoom(floorId, position);
+            return HasSpawnAccessPoints(floor) &&
+                   roomDetectionService != null &&
+                   roomDetectionService.IsPointInsideCompleteRoom(floor.floorId, position);
         }
 
-        private bool IsValidSpawnPointBrushPlacement(string floorId, IReadOnlyList<Vector2> polygonPoints)
+        private bool IsValidSpawnPointBrushPlacement(FloorData floor, IReadOnlyList<Vector2> polygonPoints)
         {
-            return roomDetectionService != null && roomDetectionService.ArePointsInsideCompleteRooms(floorId, polygonPoints);
+            return HasSpawnAccessPoints(floor) &&
+                   roomDetectionService != null &&
+                   roomDetectionService.ArePointsInsideCompleteRooms(floor.floorId, polygonPoints);
+        }
+
+        private static bool HasSpawnAccessPoints(FloorData floor)
+        {
+            return floor != null && (floor.exits.Count > 0 || floor.windows.Count > 0);
         }
 
         private static List<Vector2> GenerateSpawnPointBrushSamples(IReadOnlyList<Vector2> polygonPoints, float density)
