@@ -440,8 +440,8 @@ namespace EvacLogix.Sandbox.UI.Panels
                 {
                     GUILayout.BeginHorizontal();
                     DrawActionButton("Fire Tool", ActivateFirePlacement);
-                    DrawActionButton("Spawn Tool", ActivateSpawnPlacement);
-                    DrawActionButton("Spawn Brush", ActivateSpawnBrushPlacement);
+                    DrawActionButton("Agents", ActivateSpawnPlacement);
+                    DrawActionButton("Agents Brush", ActivateSpawnBrushPlacement);
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
@@ -449,7 +449,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                     DrawActionButton("Clear Mode", () => previewService.ClearInteractionMode());
                     GUILayout.EndHorizontal();
 
-                    GUILayout.Label($"Interaction: {previewService.InteractionMode}", bodyStyle);
+                    GUILayout.Label($"Interaction: {GetPreviewInteractionLabel(previewService.InteractionMode)}", bodyStyle);
                     if (!string.IsNullOrWhiteSpace(topBarShell.PreviewSummary))
                     {
                         GUILayout.Label(topBarShell.PreviewSummary, bodyStyle);
@@ -457,7 +457,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 }
                 else
                 {
-                    GUILayout.Label("Enter preview mode from the top bar to place fire origins, spawn points, regions, and run diagnostics.", bodyStyle);
+                    GUILayout.Label("Enter preview mode from the top bar to place fire origins, agents, regions, and run diagnostics.", bodyStyle);
                 }
             }
 
@@ -1538,9 +1538,21 @@ namespace EvacLogix.Sandbox.UI.Panels
                 SandboxToolMode.WallLine => "Wall Line",
                 SandboxToolMode.WallBrush => "Wall Brush",
                 SandboxToolMode.Teleport => "Teleport",
-                SandboxToolMode.SpawnPoint => "Spawn Point",
-                SandboxToolMode.SpawnBrush => "Spawn Brush",
+                SandboxToolMode.SpawnPoint => "Agents",
+                SandboxToolMode.SpawnBrush => "Agents Brush",
                 _ => toolMode.ToString()
+            };
+        }
+
+        private static string GetPreviewInteractionLabel(SandboxPreviewInteractionMode interactionMode)
+        {
+            return interactionMode switch
+            {
+                SandboxPreviewInteractionMode.PlaceFireOrigin => "Fire",
+                SandboxPreviewInteractionMode.PlaceSpawnPoint => "Agents",
+                SandboxPreviewInteractionMode.PaintSpawnBrush => "Agents Brush",
+                SandboxPreviewInteractionMode.PlaceRegion => "Region",
+                _ => "None"
             };
         }
     }

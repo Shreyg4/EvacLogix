@@ -83,17 +83,18 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     worldPoint,
                     out _,
                     out var resolvedLayoutId,
+                    out var failureMessage,
                     previewService.PendingSpawnLayoutId,
                     previewService.PendingSpawnLayoutName,
                     previewService.PendingSpawnLayoutIsPersistent))
             {
-                UpdateStatus("Could not place preview spawn point.");
+                UpdateStatus(string.IsNullOrWhiteSpace(failureMessage) ? "Could not place agent." : failureMessage);
                 return;
             }
 
             previewService.SetActiveSpawnLayout(resolvedLayoutId);
             previewService.ClearInteractionMode();
-            UpdateStatus("Placed preview spawn point.");
+            UpdateStatus("Placed agent.");
         }
 
         private void HandleSpawnBrushPlacement(Vector2 worldPoint)
@@ -122,12 +123,13 @@ namespace EvacLogix.Sandbox.UI.Overlays
                         activeBrushPoints,
                         out _,
                         out var resolvedLayoutId,
+                        out var failureMessage,
                         previewService.PendingSpawnBrushDensity,
                         previewService.PendingSpawnLayoutId,
                         previewService.PendingSpawnLayoutName,
                         previewService.PendingSpawnLayoutIsPersistent))
                 {
-                    UpdateStatus("Could not commit preview spawn brush.");
+                    UpdateStatus(string.IsNullOrWhiteSpace(failureMessage) ? "Could not commit agent brush." : failureMessage);
                     activeBrushPoints.Clear();
                     return;
                 }
@@ -135,7 +137,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 previewService.SetActiveSpawnLayout(resolvedLayoutId);
                 previewService.ClearInteractionMode();
                 activeBrushPoints.Clear();
-                UpdateStatus("Committed preview spawn brush.");
+                UpdateStatus("Committed agent brush.");
                 return;
             }
 

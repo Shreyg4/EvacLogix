@@ -22,6 +22,7 @@ namespace EvacLogix.Tests.PlayMode
             yield return null;
 
             harness.workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            CreateEnclosedRoom(harness.wallAuthoringService);
 
             Assert.That(harness.wallAuthoringService.TryRegisterLinePoint(new Vector2(0f, 0f), out _), Is.False);
             yield return null;
@@ -60,7 +61,7 @@ namespace EvacLogix.Tests.PlayMode
             yield return null;
 
             harness.workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
-            Assert.That(harness.wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(6f, 0f), 0.2f), Is.True);
+            CreateEnclosedRoom(harness.wallAuthoringService);
 
             Assert.That(harness.semanticObjectAuthoringService.PlaceDoor(new Vector2(2f, 0.05f), out _), Is.True);
             Assert.That(harness.semanticObjectAuthoringService.PlaceExit(new Vector2(7f, 0f), out _, new Vector2(2f, 1.5f), 0f, 1.5f, 30f, 1f, "Main Exit"), Is.True);
@@ -110,6 +111,7 @@ namespace EvacLogix.Tests.PlayMode
             var workspaceService = host.AddComponent<SandboxProjectWorkspaceService>();
             host.AddComponent<SandboxColliderRebuildService>();
             host.AddComponent<SandboxValidationService>();
+            host.AddComponent<SandboxRoomDetectionService>();
             host.AddComponent<SandboxVisualOrganizationService>();
             var clipboardService = host.AddComponent<SandboxClipboardService>();
             host.AddComponent<SandboxWallSnappingService>();
@@ -130,6 +132,14 @@ namespace EvacLogix.Tests.PlayMode
                 semanticObjectAuthoringService = semanticObjectAuthoringService,
                 previewAuthoringService = previewAuthoringService
             };
+        }
+
+        private static void CreateEnclosedRoom(SandboxWallAuthoringService wallAuthoringService)
+        {
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(-2f, 0f), new Vector2(4f, 0f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(4f, 0f), new Vector2(4f, 6f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(4f, 6f), new Vector2(-2f, 6f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(-2f, 6f), new Vector2(-2f, 0f), 0.2f), Is.True);
         }
 
         private sealed class PlayModeHarness

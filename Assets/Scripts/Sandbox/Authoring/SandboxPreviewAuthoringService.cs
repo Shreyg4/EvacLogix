@@ -19,6 +19,7 @@ namespace EvacLogix.Sandbox.Authoring
         private SandboxSelectionService selectionService;
         private SandboxValidationService validationService;
         private SandboxPreviewService previewService;
+        private SandboxRoomDetectionService roomDetectionService;
 
         public event Action PreviewAuthoringChanged;
 
@@ -29,6 +30,7 @@ namespace EvacLogix.Sandbox.Authoring
             selectionService = GetComponent<SandboxSelectionService>();
             validationService = GetComponent<SandboxValidationService>();
             previewService = GetComponent<SandboxPreviewService>();
+            roomDetectionService = GetComponent<SandboxRoomDetectionService>();
         }
 
         public IReadOnlyList<SpawnLayoutData> GetSpawnLayouts()
@@ -136,10 +138,30 @@ namespace EvacLogix.Sandbox.Authoring
             string spawnLayoutName = "",
             bool isPersistent = true)
         {
+            return PlaceSpawnPoint(position, out spawnPointId, out resolvedSpawnLayoutId, out _, spawnLayoutId, spawnLayoutName, isPersistent);
+        }
+
+        public bool PlaceSpawnPoint(
+            Vector2 position,
+            out string spawnPointId,
+            out string resolvedSpawnLayoutId,
+            out string failureMessage,
+            string spawnLayoutId = null,
+            string spawnLayoutName = "",
+            bool isPersistent = true)
+        {
             spawnPointId = string.Empty;
             resolvedSpawnLayoutId = string.Empty;
+            failureMessage = string.Empty;
             if (workspaceService?.ActiveFloor == null)
             {
+                failureMessage = "Create or select a floor first.";
+                return false;
+            }
+
+            if (!IsValidAgentPlacement(workspaceService.ActiveFloor.floorId, position))
+            {
+                failureMessage = "Agents can only be placed inside enclosed rooms.";
                 return false;
             }
 
@@ -184,10 +206,39 @@ namespace EvacLogix.Sandbox.Authoring
             string spawnLayoutName = "",
             bool isPersistent = false)
         {
+            return PlaceSpawnBrush(
+                polygonPoints,
+                out spawnBrushStrokeId,
+                out resolvedSpawnLayoutId,
+                out _,
+                density,
+                spawnLayoutId,
+                spawnLayoutName,
+                isPersistent);
+        }
+
+        public bool PlaceSpawnBrush(
+            IReadOnlyList<Vector2> polygonPoints,
+            out string spawnBrushStrokeId,
+            out string resolvedSpawnLayoutId,
+            out string failureMessage,
+            float density = -1f,
+            string spawnLayoutId = null,
+            string spawnLayoutName = "",
+            bool isPersistent = false)
+        {
             spawnBrushStrokeId = string.Empty;
             resolvedSpawnLayoutId = string.Empty;
+            failureMessage = string.Empty;
             if (workspaceService?.ActiveFloor == null || polygonPoints == null || polygonPoints.Count < 3)
             {
+                failureMessage = "Create or select a floor first.";
+                return false;
+            }
+
+            if (!IsValidAgentBrushPlacement(workspaceService.ActiveFloor.floorId, polygonPoints))
+            {
+                failureMessage = "Agent brushes must stay inside enclosed rooms.";
                 return false;
             }
 
@@ -463,6 +514,16 @@ namespace EvacLogix.Sandbox.Authoring
 
             commandHistory.Execute(new DelegateSandboxEditorCommand(description, ApplyAfter, ApplyBefore));
             return true;
+        }
+
+        private bool IsValidAgentPlacement(string floorId, Vector2 position)
+        {
+            return roomDetectionService != null && roomDetectionService.IsPointInsideCompleteRoom(floorId, position);
+        }
+
+        private bool IsValidAgentBrushPlacement(string floorId, IReadOnlyList<Vector2> polygonPoints)
+        {
+            return roomDetectionService != null && roomDetectionService.ArePointsInsideCompleteRooms(floorId, polygonPoints);
         }
 
         private static bool ResolveOrCreateSpawnLayout(

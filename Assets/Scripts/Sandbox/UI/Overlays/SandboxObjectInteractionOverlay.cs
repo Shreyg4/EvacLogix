@@ -1365,7 +1365,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     if (layout.spawnPoints.Any(candidate => candidate.floorId == floor.floorId && candidate.spawnPointId == objectId) ||
                         layout.spawnBrushStrokes.Any(candidate => candidate.floorId == floor.floorId && candidate.spawnBrushStrokeId == objectId))
                     {
-                        hit = new SandboxHitResult { kind = SandboxHitKind.Region, objectId = objectId, label = "spawn object" };
+                        hit = new SandboxHitResult { kind = SandboxHitKind.Region, objectId = objectId, label = "agent object" };
                         return true;
                     }
                 }
