@@ -7,6 +7,7 @@ using EvacLogix.Sandbox.Authoring.Snapping;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Runtime;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -80,6 +81,30 @@ namespace EvacLogix.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator PreviewRun_SpawnsRuntimeAgents()
+        {
+            var harness = CreateHarness();
+            yield return null;
+
+            harness.workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            CreateEnclosedRoom(harness.wallAuthoringService);
+
+            Assert.That(harness.semanticObjectAuthoringService.PlaceExit(new Vector2(3f, 3f), out _, new Vector2(1.5f, 1.5f), 0f, 1.5f, 0f, 1f, "Main Exit"), Is.True);
+            Assert.That(harness.previewAuthoringService.PlaceSpawnPoint(new Vector2(0f, 3f), out _, out _, null, "Play Layout", true), Is.True);
+            Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(1f, 1f), out _, 1.2f, 2f, true), Is.True);
+            yield return null;
+
+            harness.previewService.EnterPreviewMode();
+            Assert.That(harness.previewService.RunPreview(), Is.True);
+            yield return null;
+
+            Assert.That(harness.agentSimulationService.SimulationActive, Is.True);
+            Assert.That(harness.agentSimulationService.ActiveAgents.Count, Is.GreaterThan(0));
+
+            harness.Destroy();
+        }
+
+        [UnityTest]
         public IEnumerator Selection_TracksAndMovesClipboardSafeObjects()
         {
             var harness = CreateHarness();
@@ -118,7 +143,8 @@ namespace EvacLogix.Tests.PlayMode
             var wallAuthoringService = host.AddComponent<SandboxWallAuthoringService>();
             var semanticObjectAuthoringService = host.AddComponent<SandboxSemanticObjectAuthoringService>();
             host.AddComponent<SandboxFloorManagementService>();
-            host.AddComponent<SandboxPreviewService>();
+            var previewService = host.AddComponent<SandboxPreviewService>();
+            var agentSimulationService = host.AddComponent<SandboxAgentSimulationService>();
             var previewAuthoringService = host.AddComponent<SandboxPreviewAuthoringService>();
 
             return new PlayModeHarness
@@ -130,6 +156,8 @@ namespace EvacLogix.Tests.PlayMode
                 clipboardService = clipboardService,
                 wallAuthoringService = wallAuthoringService,
                 semanticObjectAuthoringService = semanticObjectAuthoringService,
+                previewService = previewService,
+                agentSimulationService = agentSimulationService,
                 previewAuthoringService = previewAuthoringService
             };
         }
@@ -151,6 +179,8 @@ namespace EvacLogix.Tests.PlayMode
             public SandboxClipboardService clipboardService;
             public SandboxWallAuthoringService wallAuthoringService;
             public SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
+            public SandboxPreviewService previewService;
+            public SandboxAgentSimulationService agentSimulationService;
             public SandboxPreviewAuthoringService previewAuthoringService;
 
             public void Destroy()

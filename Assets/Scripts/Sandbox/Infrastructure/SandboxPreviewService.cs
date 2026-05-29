@@ -271,6 +271,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         {
             lastPreviewReport = BuildPreviewReport();
             PreviewReportChanged?.Invoke(lastPreviewReport);
+
             return lastPreviewReport.didRun;
         }
 

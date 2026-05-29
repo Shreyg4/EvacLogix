@@ -4,6 +4,7 @@ using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Authoring.Snapping;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Runtime;
 using EvacLogix.Sandbox.Rendering;
 using EvacLogix.Sandbox.UI.Overlays;
 using EvacLogix.Sandbox.UI.Panels;
@@ -86,6 +87,7 @@ namespace EvacLogix.Sandbox.Core
             EnsureComponent<SandboxSemanticObjectAuthoringService>(gameObject);
             EnsureComponent<SandboxPreviewAuthoringService>(gameObject);
             EnsureComponent<SandboxScenarioManagementService>(gameObject);
+            EnsureComponent<SandboxAgentSimulationService>(gameObject);
 
             var overlayRoot = FindRequiredRoot(OverlayRootName);
             var wallRoot = FindOrCreateNestedRoot(WorldRootName, WallRootName);
