@@ -71,6 +71,10 @@ namespace EvacLogix.Sandbox.UI.Panels
                     previewService.ConfigureSpawnPointBrush(1f, string.Empty, "Spawn Point Brush Layout", true);
                     previewService.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
                     break;
+                default:
+                    previewService.ClearInteractionMode();
+                    previewService.ExitPreviewMode();
+                    break;
             }
         }
     }
