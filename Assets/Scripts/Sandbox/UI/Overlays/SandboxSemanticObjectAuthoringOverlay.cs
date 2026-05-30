@@ -17,16 +17,20 @@ namespace EvacLogix.Sandbox.UI.Overlays
         [SerializeField] private Color exitGhostColor = new(0.2f, 0.9f, 0.5f, 0.75f);
         [SerializeField] private Color obstacleGhostColor = new(0.85f, 0.25f, 0.2f, 0.75f);
         [SerializeField] private Color teleportGhostColor = new(0.3f, 0.95f, 0.95f, 0.75f);
+        [SerializeField] private Color fireStartGhostColor = new(0.9f, 0.2f, 0.1f, 0.75f);
         [SerializeField] private Color invalidGhostColor = new(1f, 0.2f, 0.18f, 0.65f);
+        [SerializeField] private float fireStartGhostSize = 0.8f;
         [SerializeField] private Color ghostMaskColor = new(0.11f, 0.18f, 0.3f, 0.92f);
         [SerializeField] private float ghostLineWidth = 0.08f;
         [SerializeField] private float ghostMaskWidth = 0.15f;
         [SerializeField] private float ghostEdgeLength = 0.36f;
 
         private readonly GameObject[] ghostObjects = new GameObject[4];
+        private GameObject fireGhostObject;
         private string lastOpeningGhostStatus = string.Empty;
         private SandboxToolStateService toolStateService;
         private SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
+        private SandboxPreviewAuthoringService previewAuthoringService;
         private SandboxInputRouter inputRouter;
         private SandboxStatusBarShell statusBar;
         private SandboxProjectWorkspaceService workspaceService;
@@ -45,6 +49,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
         {
             toolStateService = FindAnyObjectByType<SandboxToolStateService>();
             semanticObjectAuthoringService = FindAnyObjectByType<SandboxSemanticObjectAuthoringService>();
+            previewAuthoringService = FindAnyObjectByType<SandboxPreviewAuthoringService>();
             inputRouter = FindAnyObjectByType<SandboxInputRouter>();
             statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
             workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
@@ -113,6 +118,9 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 case SandboxToolMode.Teleport:
                     HandleTeleportPlacement(worldPoint);
                     break;
+                case SandboxToolMode.FireStart:
+                    HandleFireStartPlacement(worldPoint);
+                    break;
             }
         }
 
@@ -122,7 +130,8 @@ namespace EvacLogix.Sandbox.UI.Overlays
                    toolMode == SandboxToolMode.Window ||
                    toolMode == SandboxToolMode.Exit ||
                    toolMode == SandboxToolMode.Obstacle ||
-                   toolMode == SandboxToolMode.Teleport;
+                   toolMode == SandboxToolMode.Teleport ||
+                   toolMode == SandboxToolMode.FireStart;
         }
 
         private void CancelPlacementToSelect()
@@ -234,6 +243,12 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return;
             }
 
+            if (mode == SandboxToolMode.FireStart)
+            {
+                UpdateFireStartPlacementGhost();
+                return;
+            }
+
             if (mode == SandboxToolMode.Exit || mode == SandboxToolMode.Obstacle || mode == SandboxToolMode.Teleport)
             {
                 UpdateRectanglePlacementGhost(mode);
@@ -295,6 +310,80 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 lastOpeningGhostStatus = statusMessage;
                 UpdateStatus(statusMessage);
             }
+        }
+
+        private void UpdateFireStartPlacementGhost()
+        {
+            var inputTarget = inputRouter != null
+                ? inputRouter.ResolvePointerTarget(SandboxInputAdapter.PointerScreenPosition)
+                : SandboxInputTarget.World;
+            if (workspaceService?.ActiveFloor == null || inputTarget != SandboxInputTarget.World)
+            {
+                lastOpeningGhostStatus = string.Empty;
+                ClearGhost();
+                return;
+            }
+
+            var center = ApplyPlacementSnap(SandboxVisualObjectType.FireStart, ScreenToWorldPoint(SandboxInputAdapter.PointerScreenPosition));
+            ClearGhostObject(0);
+            ClearGhostObject(1);
+            ClearGhostObject(2);
+            ClearGhostObject(3);
+            RenderFireGhostCircle(center, fireStartGhostSize * 0.5f, fireStartGhostColor);
+
+            const string statusMessage = "Fire start ready: click to place.";
+            if (!string.Equals(lastOpeningGhostStatus, statusMessage, System.StringComparison.Ordinal))
+            {
+                lastOpeningGhostStatus = statusMessage;
+                UpdateStatus(statusMessage);
+            }
+        }
+
+        private void RenderFireGhostCircle(Vector2 center, float radius, Color color)
+        {
+            const int segments = 24;
+            if (fireGhostObject == null)
+            {
+                fireGhostObject = new GameObject("FireStartGhost");
+                fireGhostObject.transform.SetParent(transform, false);
+                var created = fireGhostObject.AddComponent<LineRenderer>();
+                created.useWorldSpace = true;
+                created.loop = true;
+                created.material = new Material(Shader.Find("Sprites/Default"));
+                created.numCapVertices = 2;
+            }
+
+            var renderer = fireGhostObject.GetComponent<LineRenderer>();
+            renderer.startWidth = ghostLineWidth;
+            renderer.endWidth = ghostLineWidth;
+            renderer.startColor = color;
+            renderer.endColor = color;
+            renderer.positionCount = segments;
+            for (var i = 0; i < segments; i += 1)
+            {
+                var angle = i / (float)segments * Mathf.PI * 2f;
+                var point = center + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * radius;
+                renderer.SetPosition(i, new Vector3(point.x, point.y, 0f));
+            }
+        }
+
+        private void ClearFireGhost()
+        {
+            if (fireGhostObject == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                Destroy(fireGhostObject);
+            }
+            else
+            {
+                DestroyImmediate(fireGhostObject);
+            }
+
+            fireGhostObject = null;
         }
 
         private void UpdateOpeningGhost()
@@ -392,6 +481,8 @@ namespace EvacLogix.Sandbox.UI.Overlays
             {
                 ClearGhostObject(i);
             }
+
+            ClearFireGhost();
         }
 
         private void ClearGhostObject(int index)
@@ -429,6 +520,18 @@ namespace EvacLogix.Sandbox.UI.Overlays
             {
                 UpdateStatus("Placed obstacle.");
             }
+        }
+
+        private void HandleFireStartPlacement(Vector2 worldPoint)
+        {
+            worldPoint = ApplyPlacementSnap(SandboxVisualObjectType.FireStart, worldPoint);
+            if (previewAuthoringService != null && previewAuthoringService.PlaceFireOrigin(worldPoint, out _))
+            {
+                UpdateStatus("Placed fire start. It will spread during simulation.");
+                return;
+            }
+
+            UpdateStatus("Could not place a fire start on the active floor.");
         }
 
         // Snaps the placement center to same-type peers, walls, and the grid (boxes only).

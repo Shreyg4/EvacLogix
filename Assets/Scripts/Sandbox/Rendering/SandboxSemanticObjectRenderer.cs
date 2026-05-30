@@ -401,19 +401,19 @@ namespace EvacLogix.Sandbox.Rendering
                 }
             }
 
-            if (IsVisible(SandboxVisualObjectType.Region))
+            if (IsVisible(SandboxVisualObjectType.FireStart))
             {
-                foreach (var region in floor.regions)
+                foreach (var fireOrigin in project.fireOrigins.Where(origin => origin.floorId == floor.floorId))
                 {
-                    if (IsHidden(region.regionId, SandboxVisualObjectType.Region))
+                    if (IsHidden(fireOrigin.fireOriginId, SandboxVisualObjectType.FireStart))
                     {
                         continue;
                     }
 
-                    RenderPolygon(
-                        $"Region_{region.regionId}",
-                        region.polygonPoints,
-                        ResolveSelectionColor(region.regionId, ResolveBaseColor(SandboxVisualObjectType.Region)));
+                    RenderFireStartMarker(
+                        $"FireStart_{fireOrigin.fireOriginId}",
+                        fireOrigin.position,
+                        ResolveSelectionColor(fireOrigin.fireOriginId, ResolveBaseColor(SandboxVisualObjectType.FireStart)));
                 }
             }
 
@@ -450,11 +450,20 @@ namespace EvacLogix.Sandbox.Rendering
                 return;
             }
 
+            var project = workspaceService?.ActiveProject;
             foreach (var objectId in selectionService.SelectedObjectIds)
             {
                 if (TryResolveGhostRectangle(floor, objectId, out var center, out var size, out var rotationDegrees, out var color))
                 {
                     RenderRectangleGhost($"DragGhost_{objectId}", center + delta, size, rotationDegrees, color);
+                    continue;
+                }
+
+                var fireOrigin = project?.fireOrigins.FirstOrDefault(origin =>
+                    origin.floorId == floor.floorId && string.Equals(origin.fireOriginId, objectId, StringComparison.Ordinal));
+                if (fireOrigin != null)
+                {
+                    RenderFireStartMarker($"DragGhost_{objectId}", fireOrigin.position + delta, new Color(0.9f, 0.2f, 0.1f, 0.6f));
                 }
             }
 
@@ -775,6 +784,38 @@ namespace EvacLogix.Sandbox.Rendering
             var haloColor = new Color(color.r, color.g, color.b, Mathf.Clamp01(color.a * 0.35f));
             RenderCircle($"{name}_Halo", center, markerRadius * 1.2f, haloColor);
             RenderCircle($"{name}_Ring", center, markerRadius * 0.8f, color);
+        }
+
+        // Fire start marker: a black circle with red diagonal hatches inside, plus a thin outer ring
+        // tinted by the resolved selection color so selection is visible.
+        private void RenderFireStartMarker(string name, Vector2 center, Color selectionColor)
+        {
+            var radius = markerRadius * 1.1f;
+            var black = new Color(0.05f, 0.05f, 0.05f, 1f);
+            var hatch = new Color(0.9f, 0.15f, 0.1f, 1f);
+
+            RenderCircle($"{name}_Ring", center, radius, black);
+            RenderCircle($"{name}_RingInner", center, radius * 0.92f, black);
+
+            // Red diagonal hatch chords clipped to the circle.
+            var dir = new Vector2(1f, 1f).normalized;
+            var perp = new Vector2(-dir.y, dir.x);
+            var step = radius * 0.45f;
+            var index = 0;
+            for (var offset = -radius + step; offset < radius; offset += step)
+            {
+                var half = Mathf.Sqrt(Mathf.Max(0f, radius * radius - offset * offset)) * 0.92f;
+                if (half <= 0.01f)
+                {
+                    continue;
+                }
+
+                var lineCenter = center + perp * offset;
+                RenderLine($"{name}_Hatch{index}", lineCenter - dir * half, lineCenter + dir * half, hatch);
+                index += 1;
+            }
+
+            RenderCircle($"{name}_Selection", center, radius * 1.18f, selectionColor);
         }
 
         private void RenderCircle(string name, Vector2 center, float radius, Color color)

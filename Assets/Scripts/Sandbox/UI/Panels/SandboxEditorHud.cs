@@ -26,6 +26,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             Teleport = 4,
             Door = 5,
             Window = 6,
+            FireStart = 7,
         }
 
         private enum FloorLevelView
@@ -129,6 +130,9 @@ namespace EvacLogix.Sandbox.UI.Panels
         private string obstacleBehaviorSyncedId = string.Empty;
         private float selectionObstacleWeight = 1f;
         private float selectionObstacleSpeedPenalty;
+        private string fireBehaviorSyncedId = string.Empty;
+        private float selectionFireIntensity = 1f;
+        private float selectionFireStartDelay;
         private bool hasLoggedGuiException;
         private string lastGuiExceptionMessage = string.Empty;
         private bool hasLoggedWebGlDependencyStatus;
@@ -777,7 +781,6 @@ namespace EvacLogix.Sandbox.UI.Panels
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
-                    DrawActionButton("Region Tool", ActivateRegionPlacement);
                     DrawActionButton("Clear Mode", () => previewService.ClearInteractionMode());
                     GUILayout.EndHorizontal();
 
@@ -789,7 +792,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 }
                 else
                 {
-                    GUILayout.Label("Enter preview mode from the top bar to place fire origins, spawn points, regions, and run diagnostics.", bodyStyle);
+                    GUILayout.Label("Enter preview mode from the top bar to place spawn points and run diagnostics.", bodyStyle);
                 }
             }
 
@@ -1034,8 +1037,62 @@ namespace EvacLogix.Sandbox.UI.Panels
                 return;
             }
 
+            if (TryFindSelectedFireOrigin(selectedId, out var fireOrigin))
+            {
+                selectionEditorKind = SelectionEditableKind.FireStart;
+                if (!string.Equals(fireBehaviorSyncedId, selectedId, StringComparison.Ordinal))
+                {
+                    fireBehaviorSyncedId = selectedId;
+                    selectionFireIntensity = fireOrigin.spreadIntensity;
+                    selectionFireStartDelay = fireOrigin.startDelaySeconds;
+                }
+
+                DrawFireStartFields(fireOrigin);
+                return;
+            }
+
             ResetSelectionEditorState();
             GUILayout.Label("The current selection does not expose editable size controls yet.", bodyStyle);
+        }
+
+        private bool TryFindSelectedFireOrigin(string selectedId, out FireOriginData fireOrigin)
+        {
+            fireOrigin = null;
+            var floor = workspaceService?.ActiveFloor;
+            var project = workspaceService?.ActiveProject;
+            if (floor == null || project == null)
+            {
+                return false;
+            }
+
+            fireOrigin = project.fireOrigins.FirstOrDefault(origin =>
+                origin.floorId == floor.floorId && origin.fireOriginId == selectedId);
+            return fireOrigin != null;
+        }
+
+        private void DrawFireStartFields(FireOriginData fireOrigin)
+        {
+            GUILayout.Label($"Fire Start: {fireOrigin.fireOriginId}", bodyStyle);
+            GUILayout.Label($"Spread Intensity: {selectionFireIntensity:0.00}  (higher = faster, farther spread)", bodyStyle);
+            selectionFireIntensity = Mathf.Clamp(GUILayout.HorizontalSlider(selectionFireIntensity, 0.1f, 5f), 0.1f, 5f);
+            GUILayout.Label($"Start Delay: {selectionFireStartDelay:0.0}s  (seconds before ignition)", bodyStyle);
+            selectionFireStartDelay = Mathf.Max(0f, GUILayout.HorizontalSlider(selectionFireStartDelay, 0f, 30f));
+            DrawActionButton("Apply Fire Settings", () => TryApplyFireStart(fireOrigin), inspectorPanelShell != null);
+        }
+
+        private bool TryApplyFireStart(FireOriginData fireOrigin)
+        {
+            if (fireOrigin == null)
+            {
+                return false;
+            }
+
+            return inspectorPanelShell != null && inspectorPanelShell.UpdateFireOrigin(
+                fireOrigin.fireOriginId,
+                fireOrigin.position,
+                selectionFireIntensity,
+                selectionFireStartDelay,
+                fireOrigin.isPersistent);
         }
 
         private void DrawDoorFields(DoorData door)
@@ -1821,16 +1878,6 @@ namespace EvacLogix.Sandbox.UI.Panels
             previewService.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
         }
 
-        private void ActivateRegionPlacement()
-        {
-            if (previewService == null)
-            {
-                return;
-            }
-
-            previewService.ConfigureRegionPlacement("Preview Region", RegionSemanticType.SpawnZone);
-            previewService.SetInteractionMode(SandboxPreviewInteractionMode.PlaceRegion);
-        }
 
         private void RefreshDependenciesIfNeeded()
         {
@@ -2353,6 +2400,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 SandboxToolMode.Teleport => "Teleport",
                 SandboxToolMode.SpawnPoint => "Spawn Point",
                 SandboxToolMode.SpawnPointBrush => "Spawn Point Brush",
+                SandboxToolMode.FireStart => "Fire Start",
                 _ => toolMode.ToString()
             };
         }
@@ -2364,7 +2412,6 @@ namespace EvacLogix.Sandbox.UI.Panels
                 SandboxPreviewInteractionMode.PlaceFireOrigin => "Fire",
                 SandboxPreviewInteractionMode.PlaceSpawnPoint => "Spawn Point",
                 SandboxPreviewInteractionMode.PaintSpawnPointBrush => "Spawn Point Brush",
-                SandboxPreviewInteractionMode.PlaceRegion => "Region",
                 _ => "None"
             };
         }

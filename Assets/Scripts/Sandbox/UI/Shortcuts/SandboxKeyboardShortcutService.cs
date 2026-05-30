@@ -234,8 +234,8 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                     previewService?.ConfigureSpawnPointBrush(1f, string.Empty, "Spawn Point Brush Layout", true);
                     previewService?.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
                     break;
-                case SandboxShortcutId.RegionTool:
-                    toolStateService?.RequestToolModeChange(SandboxToolMode.Region, commandHistory);
+                case SandboxShortcutId.FireStartTool:
+                    toolStateService?.RequestToolModeChange(SandboxToolMode.FireStart, commandHistory);
                     break;
                 case SandboxShortcutId.Undo:
                     commandHistory?.Undo();
@@ -312,7 +312,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                    shortcutId == SandboxShortcutId.ExitTool ||
                    shortcutId == SandboxShortcutId.ObstacleTool ||
                    shortcutId == SandboxShortcutId.TeleportTool ||
-                   shortcutId == SandboxShortcutId.RegionTool;
+                   shortcutId == SandboxShortcutId.FireStartTool;
         }
 
         private static List<SandboxShortcutBinding> CreateDefaultBindings()
@@ -332,7 +332,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 CreateBinding(SandboxShortcutId.TeleportTool, KeyCode.Y),
                 CreateBinding(SandboxShortcutId.SpawnPointTool, KeyCode.Alpha1),
                 CreateBinding(SandboxShortcutId.SpawnPointBrushTool, KeyCode.Alpha2),
-                CreateBinding(SandboxShortcutId.RegionTool, KeyCode.R),
+                CreateBinding(SandboxShortcutId.FireStartTool, KeyCode.F),
                 CreateBinding(SandboxShortcutId.Undo, KeyCode.Z, requiresCommandOrControl: true),
                 CreateBinding(SandboxShortcutId.Redo, KeyCode.Z, requiresCommandOrControl: true, requiresShift: true),
                 CreateBinding(SandboxShortcutId.DeleteSelection, KeyCode.Backspace),
@@ -365,7 +365,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 SandboxShortcutId.TeleportTool => ("Tools", "Teleport Tool", "Place paired stair, elevator, or escalator transitions across floors."),
                 SandboxShortcutId.SpawnPointTool => ("Spawn", "Spawn Point Tool", "Place individual spawn points in enclosed rooms that have exits or windows."),
                 SandboxShortcutId.SpawnPointBrushTool => ("Spawn", "Spawn Point Brush Tool", "Paint spawn points in enclosed rooms that have exits or windows."),
-                SandboxShortcutId.RegionTool => ("Preview", "Region Tool", "Draw named semantic regions for preview semantics."),
+                SandboxShortcutId.FireStartTool => ("Hazards", "Fire Start Tool", "Place a fire origin that seeds the spreading fire during simulation."),
                 SandboxShortcutId.Undo => ("Editing", "Undo", "Revert the most recent editor command."),
                 SandboxShortcutId.Redo => ("Editing", "Redo", "Reapply the most recently undone editor command."),
                 SandboxShortcutId.DeleteSelection => ("Editing", "Delete Selection", "Delete or clear the current selection safely."),

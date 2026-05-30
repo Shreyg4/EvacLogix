@@ -134,12 +134,6 @@ namespace EvacLogix.Tests.EditMode
 
             workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
             validationService.ReplaceIssues(Array.Empty<ValidationIssueData>());
-            workspaceService.ActiveProject.floors[0].regions.Add(new RegionData
-            {
-                regionId = "shared-region-id",
-                floorId = workspaceService.ActiveProject.floors[0].floorId,
-                name = "Existing Region"
-            });
             workspaceService.SetActiveProject(workspaceService.ActiveProject);
 
             var conflictingSource = new BuildingProjectData
@@ -160,15 +154,6 @@ namespace EvacLogix.Tests.EditMode
                                 sourceFloorId = "import-floor-duplicate-name",
                                 targetFloorId = "external-floor",
                                 targetStairPortalId = "external-stair"
-                            }
-                        },
-                        regions =
-                        {
-                            new RegionData
-                            {
-                                regionId = "shared-region-id",
-                                floorId = "import-floor-duplicate-name",
-                                name = "Imported Region"
                             }
                         }
                     },

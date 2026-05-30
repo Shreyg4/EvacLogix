@@ -394,11 +394,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                 idRemap[floor.teleportPortals[i].teleportPortalId] = SandboxId.NewId();
             }
 
-            for (var i = 0; i < floor.regions.Count; i += 1)
-            {
-                idRemap[floor.regions[i].regionId] = SandboxId.NewId();
-            }
-
             foreach (var junction in floor.wallJunctions)
             {
                 junction.wallJunctionId = idRemap[junction.wallJunctionId];
@@ -448,12 +443,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                 var previousPortalId = teleportPortal.teleportPortalId;
                 teleportPortal.teleportPortalId = idRemap[previousPortalId];
                 teleportPortal.sourceFloorId = floor.floorId;
-            }
-
-            foreach (var region in floor.regions)
-            {
-                region.regionId = idRemap[region.regionId];
-                region.floorId = floor.floorId;
             }
 
             return idRemap;

@@ -85,11 +85,11 @@ namespace EvacLogix.Sandbox.Infrastructure
             },
             new()
             {
-                objectType = SandboxVisualObjectType.Region,
-                label = "Regions",
-                description = "Named semantic areas for spawn zones, restrictions, and annotations.",
-                advancedFoldoutKey = "region.advanced",
-                color = new Color(0.15f, 0.55f, 0.95f, 1f)
+                objectType = SandboxVisualObjectType.FireStart,
+                label = "Fire Starts",
+                description = "Fire origin points that seed the spreading fire during simulation.",
+                advancedFoldoutKey = "firestart.advanced",
+                color = new Color(0.9f, 0.2f, 0.1f, 1f)
             }
         };
 

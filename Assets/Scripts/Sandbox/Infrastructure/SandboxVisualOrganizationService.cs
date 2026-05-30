@@ -16,7 +16,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         Teleport = 5,
         Obstacle = 6,
         Spawn = 7,
-        Region = 8,
+        FireStart = 8,
     }
 
     [Serializable]
