@@ -84,10 +84,6 @@ namespace EvacLogix.Sandbox.UI.Panels
                     }
 
                     break;
-                default:
-                    previewService.ClearInteractionMode();
-                    previewService.ExitPreviewMode();
-                    break;
             }
         }
     }
