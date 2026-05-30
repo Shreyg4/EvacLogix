@@ -81,12 +81,13 @@ namespace EvacLogix.Sandbox.Rendering
         private void HandlePan()
         {
             var usingMiddleMousePan = SandboxInputAdapter.GetMouseButton(2);
+            var usingRightMousePan = SandboxInputAdapter.IsRightMousePanActive;
             var usingPanToolPrimaryDrag =
                 toolStateService != null &&
                 toolStateService.CurrentToolMode == SandboxToolMode.Pan &&
                 SandboxInputAdapter.GetMouseButton(0);
 
-            if (!usingMiddleMousePan && !usingPanToolPrimaryDrag)
+            if (!usingMiddleMousePan && !usingRightMousePan && !usingPanToolPrimaryDrag)
             {
                 return;
             }

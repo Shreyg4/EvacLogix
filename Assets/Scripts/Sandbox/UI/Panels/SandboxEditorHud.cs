@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using EvacLogix.Sandbox.Authoring;
@@ -29,6 +30,8 @@ namespace EvacLogix.Sandbox.UI.Panels
         [SerializeField] private string pendingFloorName = "Floor";
         [SerializeField] private string selectionSizeXText = string.Empty;
         [SerializeField] private string selectionSizeYText = string.Empty;
+        [SerializeField] private string windowEscapeCostText = "1";
+        [SerializeField] private string windowEscapeRiskText = "1";
         [SerializeField] private bool showLegend = true;
         [SerializeField] private bool topBarCollapsed;
         [SerializeField] private bool toolPaletteCollapsed;
@@ -54,6 +57,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxInputRouter inputRouter;
         private SandboxWallAuthoringService wallAuthoringService;
+        private SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
         private SandboxSemanticObjectAuthoringOverlay semanticObjectAuthoringOverlay;
 
         private GUIStyle headerStyle;
@@ -61,9 +65,20 @@ namespace EvacLogix.Sandbox.UI.Panels
         private GUIStyle bodyStyle;
         private GUIStyle activeToolButtonStyle;
         private GUIStyle collapseToggleStyle;
+        private GUIStyle panelBoxStyle;
+        private GUIStyle insetPanelBoxStyle;
+        private GUIStyle modalWindowStyle;
         private RectOffset buttonPadding;
+        private Texture2D solidTexture;
+        private Texture2D hudPanelTexture;
+        private Texture2D hudInsetPanelTexture;
+        private Texture2D modalWindowTexture;
 
         private const float CollapsedPanelHeight = 30f;
+        private static readonly Color HudPanelColor = new(0.06f, 0.09f, 0.14f, 1f);
+        private static readonly Color HudInsetPanelColor = new(0.08f, 0.12f, 0.18f, 1f);
+        private static readonly Color ModalBackdropColor = new(0.02f, 0.03f, 0.05f, 0.38f);
+        private static readonly Color ModalWindowColor = new(0.07f, 0.1f, 0.15f, 1f);
 
         private Rect topBarRect;
         private Rect toolPaletteRect;
@@ -71,9 +86,24 @@ namespace EvacLogix.Sandbox.UI.Panels
         private Rect inspectorRect;
         private Rect validationRect;
         private Rect statusBarRect;
+
+        private enum MovablePanel { TopBar, Floors, Tools, Inspector, Validation, StatusBar }
+
+        private const float PanelDragThresholdPixels = 5f;
+        private const string PanelLayoutPrefPrefix = "Sandbox.PanelLayout.";
+        private readonly Dictionary<MovablePanel, Vector2> customPanelPositions = new();
+        private bool panelLayoutLoaded;
+        private bool hasPendingPanelPress;
+        private bool isPanelDragActive;
+        private MovablePanel pendingPanel;
+        private Vector2 panelDragGrabOffset;
+        private Vector2 pendingPanelPressPoint;
+        private Vector2 panelDragGhostPosition;
         private Rect modalRect;
         private string selectionEditorTargetId = string.Empty;
         private SelectionEditableKind selectionEditorKind = SelectionEditableKind.None;
+        private string openingValidationMessage = string.Empty;
+        private string openingValidationTargetId = string.Empty;
         private string obstacleBehaviorSyncedId = string.Empty;
         private float selectionObstacleWeight = 1f;
         private float selectionObstacleSpeedPenalty;
@@ -125,12 +155,20 @@ namespace EvacLogix.Sandbox.UI.Panels
             visualOrganizationService = FindAnyObjectByType<SandboxVisualOrganizationService>();
             inputRouter = FindAnyObjectByType<SandboxInputRouter>();
             wallAuthoringService = FindAnyObjectByType<SandboxWallAuthoringService>();
+            semanticObjectAuthoringService = FindAnyObjectByType<SandboxSemanticObjectAuthoringService>();
             semanticObjectAuthoringOverlay = FindAnyObjectByType<SandboxSemanticObjectAuthoringOverlay>();
         }
 
         private void OnDisable()
         {
             inputRouter?.SetManualOverride(SandboxInputTarget.None);
+        }
+
+        private void OnDestroy()
+        {
+            DestroyGeneratedTexture(hudPanelTexture);
+            DestroyGeneratedTexture(hudInsetPanelTexture);
+            DestroyGeneratedTexture(modalWindowTexture);
         }
 
         private void OnGUI()
@@ -140,7 +178,9 @@ namespace EvacLogix.Sandbox.UI.Panels
                 RefreshDependenciesIfNeeded();
                 EnsureStyles();
                 EnsureDefaultFieldValues();
+                EnsurePanelLayoutLoaded();
                 RecalculateLayout();
+                ProcessPanelDragEvents();
 
                 DrawTopBar();
                 DrawToolPalette();
@@ -148,6 +188,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 DrawInspector();
                 DrawValidationPanel();
                 DrawStatusBar();
+                DrawPanelDragGhost();
 
                 if (newProjectDialogShell != null && newProjectDialogShell.IsOpen)
                 {
@@ -169,7 +210,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void DrawTopBar()
         {
-            GUILayout.BeginArea(topBarRect, GUIContent.none, GUI.skin.box);
+            GUILayout.BeginArea(topBarRect, GUIContent.none, panelBoxStyle ?? GUI.skin.box);
             topBarCollapsed = DrawCollapseToggle(topBarRect.width, topBarCollapsed);
             GUILayout.Label(topBarShell?.Title ?? "Sandbox Editor", headerStyle);
             if (topBarCollapsed)
@@ -207,6 +248,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             DrawActionButton("Export Runtime", () => { topBarShell?.ExportRuntimeProjectData(GetRuntimeExportPath()); }, workspaceService?.ActiveProject != null);
             DrawActionButton("Export Preview", () => { topBarShell?.ExportPreviewImage(GetPreviewImagePath()); }, workspaceService?.ActiveProject != null);
             DrawActionButton("Rebuild All", () => topBarShell?.RebuildAll(), workspaceService?.ActiveProject != null);
+            DrawActionButton("Reset Layout", ResetPanelLayout);
 
             if (topBarShell != null && topBarShell.IsPreviewModeActive)
             {
@@ -235,7 +277,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void DrawToolPalette()
         {
-            var boxStyle = GUI.skin?.box ?? GUIStyle.none;
+            var boxStyle = panelBoxStyle ?? GUI.skin?.box ?? GUIStyle.none;
             GUI.BeginGroup(toolPaletteRect, GUIContent.none, boxStyle);
 
             GUI.Label(new Rect(12f, 10f, toolPaletteRect.width - 44f, 22f), "Tools", headerStyle);
@@ -285,7 +327,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void DrawFloorTabs()
         {
-            GUILayout.BeginArea(floorTabsRect, GUIContent.none, GUI.skin.box);
+            GUILayout.BeginArea(floorTabsRect, GUIContent.none, panelBoxStyle ?? GUI.skin.box);
             floorTabsCollapsed = DrawCollapseToggle(floorTabsRect.width, floorTabsCollapsed);
             if (floorTabsCollapsed)
             {
@@ -334,7 +376,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void DrawInspector()
         {
-            GUILayout.BeginArea(inspectorRect, GUIContent.none, GUI.skin.box);
+            GUILayout.BeginArea(inspectorRect, GUIContent.none, panelBoxStyle ?? GUI.skin.box);
             inspectorCollapsed = DrawCollapseToggle(inspectorRect.width, inspectorCollapsed);
             GUILayout.Label("Inspector", headerStyle);
             if (inspectorCollapsed)
@@ -370,6 +412,23 @@ namespace EvacLogix.Sandbox.UI.Panels
             DrawActionButton("Use Inches", () => inspectorPanelShell?.SetProjectDistanceUnit(DistanceUnit.Inches), activeProject != null);
             DrawActionButton("Use Centimeters", () => inspectorPanelShell?.SetProjectDistanceUnit(DistanceUnit.Centimeters), activeProject != null);
             GUILayout.EndHorizontal();
+
+            var snappingRelevant = toolPaletteShell != null && (
+                toolPaletteShell.IsToolActive(SandboxToolMode.WallLine) ||
+                toolPaletteShell.IsToolActive(SandboxToolMode.WallBrush) ||
+                toolPaletteShell.IsToolActive(SandboxToolMode.Exit) ||
+                toolPaletteShell.IsToolActive(SandboxToolMode.Obstacle) ||
+                toolPaletteShell.IsToolActive(SandboxToolMode.Teleport) ||
+                (selectionService != null && selectionService.SelectedObjectIds.Count == 1));
+            if (inspectorPanelShell != null && snappingRelevant)
+            {
+                DrawInspectorSection("Snapping");
+                var snappingEnabled = GUILayout.Toggle(inspectorPanelShell.SnappingEnabled, "Snapping");
+                if (snappingEnabled != inspectorPanelShell.SnappingEnabled)
+                {
+                    inspectorPanelShell.SetSnappingEnabled(snappingEnabled);
+                }
+            }
 
             DrawSelectionEditor();
 
@@ -553,7 +612,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 return;
             }
 
-            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.BeginVertical(insetPanelBoxStyle ?? GUI.skin.box);
             GUILayout.Label("Wall Brush", subheaderStyle);
 
             if (wallAuthoringService.IsBrushCaptureActive)
@@ -575,7 +634,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void DrawValidationPanel()
         {
-            GUILayout.BeginArea(validationRect, GUIContent.none, GUI.skin.box);
+            GUILayout.BeginArea(validationRect, GUIContent.none, panelBoxStyle ?? GUI.skin.box);
             validationCollapsed = DrawCollapseToggle(validationRect.width, validationCollapsed);
             GUILayout.Label("Validation", headerStyle);
 
@@ -693,7 +752,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             if (TryFindSelectedWindow(selectedId, out var window))
             {
-                SyncSelectionEditorState(selectedId, SelectionEditableKind.Window, new Vector2(window.width, 0f));
+                SyncWindowEditorState(selectedId, window);
                 DrawWindowFields(window);
                 return;
             }
@@ -723,6 +782,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             var canApplyWidth = inspectorPanelShell != null && TryParseSelectionWidth(out _);
             DrawActionButton("Apply Door Width", () => TryApplyDoor(door, door.state), canApplyWidth);
             GUILayout.Label("Normal/Closed doors create passable collider gaps. Blocked/Locked doors remain blocked.", bodyStyle);
+            DrawOpeningValidationMessage(door.doorId);
         }
 
         private void DrawWindowFields(WindowData window)
@@ -733,15 +793,28 @@ namespace EvacLogix.Sandbox.UI.Panels
             selectionSizeXText = GUILayout.TextField(selectionSizeXText, GUILayout.Width(64f));
             GUILayout.EndHorizontal();
 
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Escape Off", () => TryApplyWindow(window, false), window.canBeUsedForEscape);
+            DrawActionButton("Escape On", () => TryApplyWindow(window, true), !window.canBeUsedForEscape);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Cost", bodyStyle, GUILayout.Width(42f));
+            windowEscapeCostText = GUILayout.TextField(windowEscapeCostText, GUILayout.Width(64f));
+            GUILayout.Label("Risk", bodyStyle, GUILayout.Width(42f));
+            windowEscapeRiskText = GUILayout.TextField(windowEscapeRiskText, GUILayout.Width(64f));
+            GUILayout.EndHorizontal();
+
             var escapeUsable = GUILayout.Toggle(window.canBeUsedForEscape, "Escape Usable");
             if (escapeUsable != window.canBeUsedForEscape)
             {
                 TryApplyWindow(window, escapeUsable);
             }
 
-            var canApplyWidth = inspectorPanelShell != null && TryParseSelectionWidth(out _);
-            DrawActionButton("Apply Window Width", () => TryApplyWindow(window, window.canBeUsedForEscape), canApplyWidth);
-            GUILayout.Label("Only escape-usable windows create passable collider gaps.", bodyStyle);
+            var canApplyWindowSettings = inspectorPanelShell != null && TryParseWindowSettings(out _, out _, out _);
+            DrawActionButton("Apply Window Settings", () => TryApplyWindow(window, window.canBeUsedForEscape), canApplyWindowSettings);
+            GUILayout.Label("Only escape-usable windows create passable collider gaps. Cost and risk tune escape-window traversal.", bodyStyle);
+            DrawOpeningValidationMessage(window.windowId);
         }
 
         private void DrawTeleportFields(TeleportPortalData teleportPortal)
@@ -951,21 +1024,35 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private bool TryApplyDoor(DoorData door, DoorState state)
         {
-            if (door == null || !TryParseSelectionWidth(out var width))
+            if (door == null)
             {
+                return false;
+            }
+
+            if (!TryParseSelectionWidth(out var width))
+            {
+                SetOpeningValidationMessage(door.doorId, "Invalid door/window size: width must be a positive number.");
                 return false;
             }
 
             var didUpdate = inspectorPanelShell != null && inspectorPanelShell.UpdateDoor(
                 door.doorId,
                 width,
+                door.wallSegmentId,
                 door.offsetAlongWall,
                 state,
                 door.tags,
                 door.metadataFields);
             if (didUpdate)
             {
+                ClearOpeningValidationMessage(door.doorId);
                 SyncSelectionEditorState(door.doorId, SelectionEditableKind.Door, new Vector2(width, 0f), true);
+            }
+            else if (semanticObjectAuthoringService != null &&
+                     semanticObjectAuthoringService.TryGetDoorValidationError(door.doorId, width, door.offsetAlongWall, out var errorMessage) &&
+                     !string.IsNullOrWhiteSpace(errorMessage))
+            {
+                SetOpeningValidationMessage(door.doorId, errorMessage);
             }
 
             return didUpdate;
@@ -973,26 +1060,55 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private bool TryApplyWindow(WindowData window, bool canBeUsedForEscape)
         {
-            if (window == null || !TryParseSelectionWidth(out var width))
+            if (window == null)
             {
+                return false;
+            }
+
+            if (!TryParseWindowSettings(out var width, out var escapeCost, out var escapeRiskMultiplier))
+            {
+                SetOpeningValidationMessage(window.windowId, "Invalid door/window size: width, cost, and risk must be valid non-negative numbers.");
                 return false;
             }
 
             var didUpdate = inspectorPanelShell != null && inspectorPanelShell.UpdateWindow(
                 window.windowId,
                 width,
+                window.wallSegmentId,
                 window.offsetAlongWall,
                 canBeUsedForEscape,
-                window.escapeCost,
-                window.escapeRiskMultiplier,
+                escapeCost,
+                escapeRiskMultiplier,
                 window.tags,
                 window.metadataFields);
             if (didUpdate)
             {
-                SyncSelectionEditorState(window.windowId, SelectionEditableKind.Window, new Vector2(width, 0f), true);
+                window.canBeUsedForEscape = canBeUsedForEscape;
+                window.escapeCost = escapeCost;
+                window.escapeRiskMultiplier = escapeRiskMultiplier;
+                ClearOpeningValidationMessage(window.windowId);
+                SyncWindowEditorState(window.windowId, window, true);
+            }
+            else if (semanticObjectAuthoringService != null &&
+                     semanticObjectAuthoringService.TryGetWindowValidationError(window.windowId, width, window.offsetAlongWall, out var errorMessage) &&
+                     !string.IsNullOrWhiteSpace(errorMessage))
+            {
+                SetOpeningValidationMessage(window.windowId, errorMessage);
             }
 
             return didUpdate;
+        }
+
+        private void SyncWindowEditorState(string targetId, WindowData window, bool force = false)
+        {
+            if (window == null)
+            {
+                return;
+            }
+
+            SyncSelectionEditorState(targetId, SelectionEditableKind.Window, new Vector2(window.width, 0f), force);
+            windowEscapeCostText = window.escapeCost.ToString("0.###");
+            windowEscapeRiskText = window.escapeRiskMultiplier.ToString("0.###");
         }
 
         private void SyncSelectionEditorState(string targetId, SelectionEditableKind editableKind, Vector2 size, bool force = false)
@@ -1016,6 +1132,10 @@ namespace EvacLogix.Sandbox.UI.Panels
             selectionEditorKind = SelectionEditableKind.None;
             selectionSizeXText = string.Empty;
             selectionSizeYText = string.Empty;
+            windowEscapeCostText = "1";
+            windowEscapeRiskText = "1";
+            openingValidationTargetId = string.Empty;
+            openingValidationMessage = string.Empty;
         }
 
         private bool TryParseSelectionSize(out Vector2 size)
@@ -1036,6 +1156,54 @@ namespace EvacLogix.Sandbox.UI.Panels
         private bool TryParseSelectionWidth(out float width)
         {
             return float.TryParse(selectionSizeXText, out width) && width > 0f;
+        }
+
+        private bool TryParseWindowSettings(out float width, out float escapeCost, out float escapeRiskMultiplier)
+        {
+            width = 0f;
+            escapeCost = 0f;
+            escapeRiskMultiplier = 0f;
+            return TryParseSelectionWidth(out width) &&
+                float.TryParse(windowEscapeCostText, out escapeCost) &&
+                float.TryParse(windowEscapeRiskText, out escapeRiskMultiplier) &&
+                escapeCost >= 0f &&
+                escapeRiskMultiplier >= 0f;
+        }
+
+        private void DrawOpeningValidationMessage(string openingId)
+        {
+            if (string.IsNullOrWhiteSpace(openingId) ||
+                !string.Equals(openingValidationTargetId, openingId, StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(openingValidationMessage))
+            {
+                return;
+            }
+
+            var previousColor = GUI.color;
+            GUI.color = new Color(1f, 0.72f, 0.3f, 1f);
+            GUILayout.Label(openingValidationMessage, bodyStyle);
+            GUI.color = previousColor;
+        }
+
+        private void SetOpeningValidationMessage(string openingId, string message)
+        {
+            openingValidationTargetId = openingId ?? string.Empty;
+            openingValidationMessage = message ?? string.Empty;
+            if (statusBarShell != null && !string.IsNullOrWhiteSpace(openingValidationMessage))
+            {
+                statusBarShell.StatusMessage = openingValidationMessage;
+            }
+        }
+
+        private void ClearOpeningValidationMessage(string openingId)
+        {
+            if (!string.Equals(openingValidationTargetId, openingId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            openingValidationTargetId = string.Empty;
+            openingValidationMessage = string.Empty;
         }
 
         private bool TryFindSelectedExit(string selectedId, out ExitZoneData exitZone)
@@ -1145,7 +1313,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void DrawStatusBar()
         {
-            GUILayout.BeginArea(statusBarRect, GUIContent.none, GUI.skin.box);
+            GUILayout.BeginArea(statusBarRect, GUIContent.none, panelBoxStyle ?? GUI.skin.box);
             statusBarCollapsed = DrawCollapseToggle(statusBarRect.width, statusBarCollapsed);
             if (statusBarCollapsed)
             {
@@ -1175,9 +1343,12 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void DrawNewProjectModal()
         {
-            GUI.Box(new Rect(0f, 0f, Screen.width, Screen.height), string.Empty);
+            var previousColor = GUI.color;
+            GUI.color = ModalBackdropColor;
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), solidTexture ?? Texture2D.whiteTexture);
+            GUI.color = previousColor;
 
-            GUILayout.BeginArea(modalRect, GUIContent.none, GUI.skin.window);
+            GUILayout.BeginArea(modalRect, GUIContent.none, modalWindowStyle ?? GUI.skin.window);
             GUILayout.Label("Start a Sandbox Project", headerStyle);
             GUILayout.Label("Choose a starting template to unlock the tool palette and authoring overlays.", bodyStyle);
             GUILayout.Space(8f);
@@ -1406,6 +1577,10 @@ namespace EvacLogix.Sandbox.UI.Panels
         {
             var labelStyle = GUI.skin?.label ?? GUIStyle.none;
             var buttonStyle = GUI.skin?.button ?? GUIStyle.none;
+            solidTexture ??= Texture2D.whiteTexture;
+            hudPanelTexture ??= CreateSolidTexture(HudPanelColor);
+            hudInsetPanelTexture ??= CreateSolidTexture(HudInsetPanelColor);
+            modalWindowTexture ??= CreateSolidTexture(ModalWindowColor);
             buttonPadding ??= new RectOffset(10, 10, 6, 6);
 
             headerStyle ??= new GUIStyle(labelStyle)
@@ -1442,6 +1617,14 @@ namespace EvacLogix.Sandbox.UI.Panels
                 margin = new RectOffset(0, 0, 0, 0)
             };
 
+            panelBoxStyle ??= new GUIStyle(GUI.skin?.box ?? GUIStyle.none);
+            insetPanelBoxStyle ??= new GUIStyle(GUI.skin?.box ?? GUIStyle.none);
+            modalWindowStyle ??= new GUIStyle(GUI.skin?.window ?? GUIStyle.none);
+
+            ApplySolidBackground(panelBoxStyle, hudPanelTexture);
+            ApplySolidBackground(insetPanelBoxStyle, hudInsetPanelTexture);
+            ApplySolidBackground(modalWindowStyle, modalWindowTexture);
+
             if (activeToolButtonStyle.padding == null)
             {
                 activeToolButtonStyle.padding = new RectOffset(buttonPadding.left, buttonPadding.right, buttonPadding.top, buttonPadding.bottom);
@@ -1452,6 +1635,60 @@ namespace EvacLogix.Sandbox.UI.Panels
                 activeToolButtonStyle.padding.right = buttonPadding.right;
                 activeToolButtonStyle.padding.top = buttonPadding.top;
                 activeToolButtonStyle.padding.bottom = buttonPadding.bottom;
+            }
+        }
+
+        private void ApplySolidBackground(GUIStyle style, Texture2D backgroundTexture)
+        {
+            if (style == null || backgroundTexture == null)
+            {
+                return;
+            }
+
+            style.normal.background = backgroundTexture;
+            style.hover.background = backgroundTexture;
+            style.active.background = backgroundTexture;
+            style.focused.background = backgroundTexture;
+            style.onNormal.background = backgroundTexture;
+            style.onHover.background = backgroundTexture;
+            style.onActive.background = backgroundTexture;
+            style.onFocused.background = backgroundTexture;
+
+            style.normal.textColor = Color.white;
+            style.hover.textColor = Color.white;
+            style.active.textColor = Color.white;
+            style.focused.textColor = Color.white;
+            style.onNormal.textColor = Color.white;
+            style.onHover.textColor = Color.white;
+            style.onActive.textColor = Color.white;
+            style.onFocused.textColor = Color.white;
+        }
+
+        private static Texture2D CreateSolidTexture(Color color)
+        {
+            var texture = new Texture2D(1, 1, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            texture.SetPixel(0, 0, color);
+            texture.Apply();
+            return texture;
+        }
+
+        private static void DestroyGeneratedTexture(Texture2D texture)
+        {
+            if (texture == null || texture == Texture2D.whiteTexture)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                Destroy(texture);
+            }
+            else
+            {
+                DestroyImmediate(texture);
             }
         }
 
@@ -1476,6 +1713,8 @@ namespace EvacLogix.Sandbox.UI.Panels
             validationRect = new Rect(Screen.width - inspectorWidth - margin, inspectorRect.yMax + margin, inspectorWidth, validationHeight);
             statusBarRect = new Rect(margin, Screen.height - statusBarHeight - margin, Screen.width - (margin * 2f), statusBarHeight);
 
+            ApplyCustomPanelPositions();
+
             var modalWidth = Mathf.Min(480f, Screen.width - 40f);
             var modalHeight = 210f;
             modalRect = new Rect(
@@ -1483,6 +1722,210 @@ namespace EvacLogix.Sandbox.UI.Panels
                 (Screen.height - modalHeight) * 0.5f,
                 modalWidth,
                 modalHeight);
+        }
+
+        private void EnsurePanelLayoutLoaded()
+        {
+            if (panelLayoutLoaded)
+            {
+                return;
+            }
+
+            panelLayoutLoaded = true;
+            foreach (MovablePanel panel in Enum.GetValues(typeof(MovablePanel)))
+            {
+                var key = PanelLayoutPrefPrefix + panel;
+                if (PlayerPrefs.GetInt(key + ".set", 0) == 1)
+                {
+                    customPanelPositions[panel] = new Vector2(
+                        PlayerPrefs.GetFloat(key + ".x", 0f),
+                        PlayerPrefs.GetFloat(key + ".y", 0f));
+                }
+            }
+        }
+
+        // After the default layout is computed, override the position (not size) of any panel the
+        // user has dragged, clamped so its header stays on-screen.
+        private void ApplyCustomPanelPositions()
+        {
+            if (customPanelPositions.Count == 0)
+            {
+                return;
+            }
+
+            ApplyStoredPosition(MovablePanel.TopBar, ref topBarRect);
+            ApplyStoredPosition(MovablePanel.Tools, ref toolPaletteRect);
+            ApplyStoredPosition(MovablePanel.Floors, ref floorTabsRect);
+            ApplyStoredPosition(MovablePanel.Inspector, ref inspectorRect);
+            ApplyStoredPosition(MovablePanel.Validation, ref validationRect);
+            ApplyStoredPosition(MovablePanel.StatusBar, ref statusBarRect);
+        }
+
+        private void ApplyStoredPosition(MovablePanel panel, ref Rect rect)
+        {
+            if (customPanelPositions.TryGetValue(panel, out var position))
+            {
+                rect = new Rect(ClampPanelPosition(position, rect.size), rect.size);
+            }
+        }
+
+        private static Vector2 ClampPanelPosition(Vector2 position, Vector2 size)
+        {
+            var maxX = Mathf.Max(0f, Screen.width - 60f);
+            var maxY = Mathf.Max(0f, Screen.height - 30f);
+            return new Vector2(Mathf.Clamp(position.x, 0f, maxX), Mathf.Clamp(position.y, 0f, maxY));
+        }
+
+        private Rect GetPanelRect(MovablePanel panel)
+        {
+            return panel switch
+            {
+                MovablePanel.TopBar => topBarRect,
+                MovablePanel.Tools => toolPaletteRect,
+                MovablePanel.Floors => floorTabsRect,
+                MovablePanel.Inspector => inspectorRect,
+                MovablePanel.Validation => validationRect,
+                MovablePanel.StatusBar => statusBarRect,
+                _ => topBarRect
+            };
+        }
+
+        private string GetPanelTitle(MovablePanel panel)
+        {
+            return panel switch
+            {
+                MovablePanel.TopBar => topBarShell?.Title ?? "Sandbox Editor",
+                MovablePanel.Tools => "Tools",
+                MovablePanel.Floors => "Floors",
+                MovablePanel.Inspector => "Inspector",
+                MovablePanel.Validation => "Validation",
+                MovablePanel.StatusBar => "Status",
+                _ => string.Empty
+            };
+        }
+
+        // The grab zone is the panel's title strip, excluding the collapse triangle and (for Floors)
+        // the tab/button row to its right.
+        private Rect GetPanelHeaderGrabRect(MovablePanel panel)
+        {
+            var rect = GetPanelRect(panel);
+            if (panel == MovablePanel.Floors)
+            {
+                return new Rect(rect.x, rect.y, Mathf.Min(60f, rect.width), 28f);
+            }
+
+            return new Rect(rect.x, rect.y, Mathf.Max(0f, rect.width - 30f), 28f);
+        }
+
+        private void ProcessPanelDragEvents()
+        {
+            var e = Event.current;
+            if (e == null)
+            {
+                return;
+            }
+
+            switch (e.type)
+            {
+                case EventType.MouseDown when e.button == 0 && !hasPendingPanelPress:
+                    foreach (MovablePanel panel in Enum.GetValues(typeof(MovablePanel)))
+                    {
+                        if (!GetPanelHeaderGrabRect(panel).Contains(e.mousePosition))
+                        {
+                            continue;
+                        }
+
+                        hasPendingPanelPress = true;
+                        isPanelDragActive = false;
+                        pendingPanel = panel;
+                        pendingPanelPressPoint = e.mousePosition;
+                        panelDragGrabOffset = e.mousePosition - GetPanelRect(panel).position;
+                        e.Use();
+                        break;
+                    }
+
+                    break;
+                case EventType.MouseDrag when hasPendingPanelPress:
+                    if (!isPanelDragActive && Vector2.Distance(e.mousePosition, pendingPanelPressPoint) >= PanelDragThresholdPixels)
+                    {
+                        isPanelDragActive = true;
+                    }
+
+                    if (isPanelDragActive)
+                    {
+                        panelDragGhostPosition = ClampPanelPosition(e.mousePosition - panelDragGrabOffset, GetPanelRect(pendingPanel).size);
+                    }
+
+                    e.Use();
+                    break;
+                case EventType.MouseUp when hasPendingPanelPress && e.button == 0:
+                    if (isPanelDragActive)
+                    {
+                        CommitPanelDrag();
+                    }
+
+                    ClearPanelDragState();
+                    e.Use();
+                    break;
+                case EventType.MouseDown when e.button == 1 && hasPendingPanelPress:
+                    ClearPanelDragState();
+                    e.Use();
+                    break;
+                case EventType.KeyDown when e.keyCode == KeyCode.Escape && hasPendingPanelPress:
+                    ClearPanelDragState();
+                    e.Use();
+                    break;
+            }
+        }
+
+        private void CommitPanelDrag()
+        {
+            var clamped = ClampPanelPosition(panelDragGhostPosition, GetPanelRect(pendingPanel).size);
+            customPanelPositions[pendingPanel] = clamped;
+            var key = PanelLayoutPrefPrefix + pendingPanel;
+            PlayerPrefs.SetInt(key + ".set", 1);
+            PlayerPrefs.SetFloat(key + ".x", clamped.x);
+            PlayerPrefs.SetFloat(key + ".y", clamped.y);
+            PlayerPrefs.Save();
+        }
+
+        private void ClearPanelDragState()
+        {
+            hasPendingPanelPress = false;
+            isPanelDragActive = false;
+        }
+
+        private void ResetPanelLayout()
+        {
+            foreach (MovablePanel panel in Enum.GetValues(typeof(MovablePanel)))
+            {
+                var key = PanelLayoutPrefPrefix + panel;
+                PlayerPrefs.DeleteKey(key + ".set");
+                PlayerPrefs.DeleteKey(key + ".x");
+                PlayerPrefs.DeleteKey(key + ".y");
+            }
+
+            PlayerPrefs.Save();
+            customPanelPositions.Clear();
+            ClearPanelDragState();
+        }
+
+        private void DrawPanelDragGhost()
+        {
+            if (!isPanelDragActive)
+            {
+                return;
+            }
+
+            var ghostRect = new Rect(panelDragGhostPosition, GetPanelRect(pendingPanel).size);
+            var previousColor = GUI.color;
+            GUI.color = new Color(0.4f, 0.62f, 0.95f, 0.35f);
+            GUI.DrawTexture(ghostRect, Texture2D.whiteTexture);
+            GUI.color = previousColor;
+            GUI.Label(
+                new Rect(ghostRect.x + 12f, ghostRect.y + 6f, Mathf.Max(40f, ghostRect.width - 24f), 22f),
+                GetPanelTitle(pendingPanel),
+                headerStyle ?? GUI.skin.label);
         }
 
         private void UpdateInputCapture()
