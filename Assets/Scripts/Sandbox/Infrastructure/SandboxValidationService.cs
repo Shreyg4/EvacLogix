@@ -26,6 +26,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         public IReadOnlyList<SandboxValidationFloorGroup> GroupedIssues => groupedIssues;
         public bool HasBlockingIssues => hasBlockingIssues;
         public string LastValidatedUtc => lastValidatedUtc;
+        public string PreviewPlacementMessage => previewPlacementIssues.FirstOrDefault()?.message ?? string.Empty;
 
         private bool subscribedToColliders;
         private bool subscribedToProjectChanges;
