@@ -67,6 +67,42 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
+        public void FloorManagement_AddsSurfaceAndBasementFloorsInVerticalOrder()
+        {
+            var host = CreatePhase7Host(
+                out var workspaceService,
+                out var floorManagementService,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _);
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+
+            Assert.That(floorManagementService.AddSurfaceFloor(out var secondFloorId), Is.True);
+            Assert.That(floorManagementService.AddBasementFloor(out var firstBasementId), Is.True);
+            Assert.That(floorManagementService.AddBasementFloor(out var secondBasementId), Is.True);
+            Assert.That(floorManagementService.AddSurfaceFloor(out var thirdFloorId), Is.True);
+
+            var orderedFloors = floorManagementService.GetOrderedFloors().ToArray();
+            Assert.That(orderedFloors.Select(floor => floor.floorId), Is.EqualTo(new[]
+            {
+                secondBasementId,
+                firstBasementId,
+                workspaceService.ActiveProject.floors.Single(floor => floor.name == "Floor 1").floorId,
+                secondFloorId,
+                thirdFloorId
+            }));
+            Assert.That(orderedFloors.Select(floor => floor.order), Is.EqualTo(new[] { 0, 1, 2, 3, 4 }));
+            Assert.That(orderedFloors.Select(floor => floor.name), Is.EqualTo(new[] { "B2", "B1", "Floor 1", "Floor 2", "Floor 3" }));
+            Assert.That(orderedFloors.Select(floor => floor.elevation), Is.EqualTo(new[] { -2f, -1f, 0f, 1f, 2f }));
+
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
         public void FloorDeletion_UsesConfirmationAndRevalidatesBrokenReferences()
         {
             var host = CreatePhase7Host(

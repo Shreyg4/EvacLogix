@@ -1,7 +1,7 @@
 {
-  "loaderUrl": "/unity-build/sandbox-editor/EvacLogixSandbox0.011.loader.js",
-  "dataUrl": "/unity-build/sandbox-editor/EvacLogixSandbox0.011.data",
-  "frameworkUrl": "/unity-build/sandbox-editor/EvacLogixSandbox0.011.framework.js",
-  "codeUrl": "/unity-build/sandbox-editor/EvacLogixSandbox0.011.wasm",
-  "productName": "Sandbox Editor"
+  "loaderUrl": "/unity-build/evac-logix/EvacLogixBuild.loader.js",
+  "dataUrl": "/unity-build/evac-logix/EvacLogixBuild.data",
+  "frameworkUrl": "/unity-build/evac-logix/EvacLogixBuild.framework.js",
+  "codeUrl": "/unity-build/evac-logix/EvacLogixBuild.wasm",
+  "productName": "Evac Simulation"
 }

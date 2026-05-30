@@ -22,9 +22,10 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
         CopySelection = 18,
         PasteSelection = 19,
         DuplicateSelection = 20,
-        ToggleGrid = 21,
-        ToggleSnapping = 22,
-        ResetCamera = 23,
-        CancelTool = 24,
+        CutSelection = 21,
+        ToggleGrid = 22,
+        ToggleSnapping = 23,
+        ResetCamera = 24,
+        CancelTool = 25,
     }
 }

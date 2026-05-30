@@ -131,9 +131,13 @@ function requestFileSelection(policy: UnityBridgeFileImportPolicy): Promise<File
     document.body.appendChild(input);
 
     let settled = false;
+    let focusFallbackTimeoutId: number | null = null;
 
     const cleanup = () => {
       window.removeEventListener("focus", handleWindowFocus);
+      if (focusFallbackTimeoutId !== null) {
+        window.clearTimeout(focusFallbackTimeoutId);
+      }
       window.setTimeout(() => {
         input.remove();
       }, 0);
@@ -150,7 +154,11 @@ function requestFileSelection(policy: UnityBridgeFileImportPolicy): Promise<File
     };
 
     const handleWindowFocus = () => {
-      window.setTimeout(() => {
+      if (focusFallbackTimeoutId !== null) {
+        window.clearTimeout(focusFallbackTimeoutId);
+      }
+
+      focusFallbackTimeoutId = window.setTimeout(() => {
         if (settled) {
           return;
         }
@@ -162,7 +170,7 @@ function requestFileSelection(policy: UnityBridgeFileImportPolicy): Promise<File
           sizeBytes: file.size
         } : { cancelled: true });
         resolveOnce(file);
-      }, 0);
+      }, 750);
     };
 
     input.addEventListener(

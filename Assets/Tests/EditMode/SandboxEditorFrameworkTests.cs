@@ -96,6 +96,7 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(shortcutService.Bindings.Any(binding => binding.shortcutId == SandboxShortcutId.Undo), Is.True);
             Assert.That(shortcutService.Bindings.Any(binding => binding.shortcutId == SandboxShortcutId.WallLineTool), Is.True);
             Assert.That(shortcutService.Bindings.Any(binding => binding.shortcutId == SandboxShortcutId.ToggleGrid), Is.True);
+            Assert.That(shortcutService.Bindings.Any(binding => binding.shortcutId == SandboxShortcutId.CutSelection), Is.True);
 
             Object.DestroyImmediate(host);
         }

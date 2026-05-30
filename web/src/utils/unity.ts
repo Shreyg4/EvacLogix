@@ -1,9 +1,13 @@
 import type { UnityBuildConfig } from "../types/unity";
 
+export type UnityInstance = {
+  SendMessage?: (gameObjectName: string, methodName: string, value?: string | number) => void;
+};
+
 type CreateUnityInstance = (
   canvas: HTMLCanvasElement,
   config: UnityBuildConfig
-) => Promise<unknown>;
+) => Promise<UnityInstance>;
 
 type UnityWindow = Window & {
   createUnityInstance?: CreateUnityInstance;
@@ -64,7 +68,7 @@ export async function fetchUnityBuildConfigFromPath(
 export async function createUnityInstanceBridge(
   canvas: HTMLCanvasElement,
   config: UnityBuildConfig
-): Promise<unknown> {
+): Promise<UnityInstance> {
   const unityWindow = window as UnityWindow;
 
   if (!unityWindow.createUnityInstance) {
