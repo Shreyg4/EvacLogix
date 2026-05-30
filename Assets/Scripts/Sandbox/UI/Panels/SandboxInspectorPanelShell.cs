@@ -125,7 +125,6 @@ namespace EvacLogix.Sandbox.UI.Panels
                 CreateAuditEntry("exit", "Exit Zone", 1, 6, true, "exit.advanced"),
                 CreateAuditEntry("obstacle", "Obstacle", 1, 4, true, "obstacle.advanced"),
                 CreateAuditEntry("stair", "Stair Portal", 1, 4, true, "stair.advanced"),
-                CreateAuditEntry("region", "Region", 1, 0, true, "region.advanced"),
                 CreateAuditEntry("spawn", "Spawn Layout", 1, 0, true, "spawn.advanced"),
                 CreateAuditEntry("preview", "Fire Origin", 0, 2, false, "preview.advanced"),
                 CreateAuditEntry("scenario", "Scenario Preset", 1, 2, true, "scenario.advanced"),
@@ -765,18 +764,6 @@ namespace EvacLogix.Sandbox.UI.Panels
                 "Updated floor metadata.");
         }
 
-        public bool UpdateRegion(
-            string regionId,
-            string name,
-            RegionSemanticType semanticType,
-            IReadOnlyList<Vector2> polygonPoints,
-            IEnumerable<MetadataFieldData> metadataFields)
-        {
-            return UpdateVisualActionStatus(
-                previewAuthoringService != null && previewAuthoringService.UpdateRegion(regionId, name, semanticType, polygonPoints, metadataFields),
-                "Updated region metadata.");
-        }
-
         public bool UpdateSpawnLayout(
             string spawnLayoutId,
             string name,
@@ -1167,19 +1154,6 @@ namespace EvacLogix.Sandbox.UI.Panels
         public bool BeginSpawnBrushPlacement(float density = 1f, string spawnLayoutName = "", bool isPersistent = false, string spawnLayoutId = null)
         {
             return BeginSpawnPointBrushPlacement(density, spawnLayoutName, isPersistent, spawnLayoutId);
-        }
-
-        public bool BeginRegionPlacement(string regionName, RegionSemanticType semanticType)
-        {
-            if (previewService == null)
-            {
-                return false;
-            }
-
-            previewService.EnterPreviewMode();
-            previewService.ConfigureRegionPlacement(regionName, semanticType);
-            previewService.SetInteractionMode(SandboxPreviewInteractionMode.PlaceRegion);
-            return UpdateVisualActionStatus(true, "Drag to place a named preview region.");
         }
 
         public bool SetIsolateSelectedObjects(bool enabled)

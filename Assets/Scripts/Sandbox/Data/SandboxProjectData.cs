@@ -60,13 +60,6 @@ namespace EvacLogix.Sandbox.Data
         Other = 3,
     }
 
-    public enum RegionSemanticType
-    {
-        SpawnZone = 0,
-        RestrictedZone = 1,
-        Annotation = 2,
-    }
-
     public enum DistanceUnit
     {
         Feet = 0,
@@ -169,7 +162,6 @@ namespace EvacLogix.Sandbox.Data
         public List<ObstacleData> obstacles = new();
         public List<StairPortalData> stairPortals = new();
         public List<TeleportPortalData> teleportPortals = new();
-        public List<RegionData> regions = new();
     }
 
     [Serializable]
@@ -285,17 +277,6 @@ namespace EvacLogix.Sandbox.Data
         public float travelCost = 1f;
         public bool isPairEnabled = true;
         public List<string> tags = new();
-        public List<MetadataFieldData> metadataFields = new();
-    }
-
-    [Serializable]
-    public sealed class RegionData
-    {
-        public string regionId = string.Empty;
-        public string floorId = string.Empty;
-        public string name = string.Empty;
-        public RegionSemanticType semanticType = RegionSemanticType.SpawnZone;
-        public List<Vector2> polygonPoints = new();
         public List<MetadataFieldData> metadataFields = new();
     }
 

@@ -32,13 +32,6 @@ namespace EvacLogix.Tests.EditMode
             workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
             Assert.That(wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(5f, 0f), 0.25f), Is.True);
             Assert.That(semanticObjectAuthoringService.PlaceDoor(new Vector2(1.5f, 0.1f), out var sourceDoorId, 1f), Is.True);
-            workspaceService.ActiveFloor.regions.Add(new RegionData
-            {
-                regionId = "region-source",
-                floorId = workspaceService.ActiveFloor.floorId,
-                name = "Assembly",
-                polygonPoints = { new Vector2(0f, 0f), new Vector2(2f, 0f), new Vector2(2f, 2f) }
-            });
 
             Assert.That(floorManagementService.AddFloor(out var secondFloorId, "Level 2", 3f), Is.True);
             Assert.That(floorManagementService.DuplicateFloor(workspaceService.ActiveProject.floors[0].floorId, out var duplicateFloorId), Is.True);
@@ -52,7 +45,6 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(duplicatedFloor.wallSegments[0].startPoint, Is.EqualTo(sourceFloor.wallSegments[0].startPoint));
             Assert.That(duplicatedFloor.doors[0].doorId, Is.Not.EqualTo(sourceDoorId));
             Assert.That(duplicatedFloor.doors[0].wallSegmentId, Is.EqualTo(duplicatedFloor.wallSegments[0].wallSegmentId));
-            Assert.That(duplicatedFloor.regions[0].regionId, Is.Not.EqualTo(sourceFloor.regions[0].regionId));
             Assert.That(duplicatedFloor.name, Does.Contain("Copy"));
 
             Assert.That(floorManagementService.UpdateFloorMetadata(duplicateFloorId, "Duplicate Level", 0, 6f), Is.True);
@@ -181,12 +173,6 @@ namespace EvacLogix.Tests.EditMode
             workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
             Assert.That(wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(5f, 0f), 0.25f), Is.True);
             Assert.That(semanticObjectAuthoringService.PlaceDoor(new Vector2(1.5f, 0.1f), out var doorId, 1f), Is.True);
-            workspaceService.ActiveFloor.regions.Add(new RegionData
-            {
-                regionId = "region-1",
-                floorId = workspaceService.ActiveFloor.floorId,
-                polygonPoints = { new Vector2(0f, 0f), new Vector2(2f, 0f), new Vector2(2f, 2f) }
-            });
             workspaceService.ActiveProject.spawnLayouts.Add(new SpawnLayoutData
             {
                 spawnLayoutId = "spawn-layout-2",
@@ -233,7 +219,7 @@ namespace EvacLogix.Tests.EditMode
 
             Assert.That(legendShell.LegendEntries.Count, Is.EqualTo(8));
             Assert.That(legendShell.LegendEntries.Any(entry => entry.label == "Spawns"), Is.True);
-            Assert.That(legendShell.LegendEntries.Any(entry => entry.label == "Regions"), Is.True);
+            Assert.That(legendShell.LegendEntries.Any(entry => entry.label == "Fire Starts"), Is.True);
 
             Object.DestroyImmediate(legendObject);
             Object.DestroyImmediate(world);

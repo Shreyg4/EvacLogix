@@ -18,7 +18,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         Obstacle = 3,
         Stair = 4,
         Teleport = 5,
-        Region = 6,
+        FireStart = 6,
         SpawnPoint = 7,
         SpawnBrush = 8,
         Wall = 9,
@@ -173,7 +173,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                     didChange |= RemoveAll(floor.obstacles, candidate => selectedIds.Contains(candidate.obstacleId) && !IsLocked(SandboxVisualObjectType.Obstacle, candidate.obstacleId));
                     didChange |= RemoveAll(floor.stairPortals, candidate => selectedIds.Contains(candidate.stairPortalId) && !IsLocked(SandboxVisualObjectType.Stair, candidate.stairPortalId));
                     didChange |= RemoveAll(floor.teleportPortals, candidate => selectedIds.Contains(candidate.teleportPortalId) && !IsLocked(SandboxVisualObjectType.Teleport, candidate.teleportPortalId));
-                    didChange |= RemoveAll(floor.regions, candidate => selectedIds.Contains(candidate.regionId) && !IsLocked(SandboxVisualObjectType.Region, candidate.regionId));
+                    didChange |= RemoveAll(project.fireOrigins, candidate => candidate.floorId == floor.floorId && selectedIds.Contains(candidate.fireOriginId) && !IsLocked(SandboxVisualObjectType.FireStart, candidate.fireOriginId));
 
                     foreach (var layout in project.spawnLayouts)
                     {
@@ -257,18 +257,15 @@ namespace EvacLogix.Sandbox.Infrastructure
                         movedIds.Add(teleportPortal.teleportPortalId);
                     }
 
-                    foreach (var region in floor.regions.Where(candidate => selectedIds.Contains(candidate.regionId)))
+                    foreach (var fireOrigin in project.fireOrigins.Where(candidate => candidate.floorId == floor.floorId && selectedIds.Contains(candidate.fireOriginId)))
                     {
-                        if (IsLocked(SandboxVisualObjectType.Region, region.regionId))
+                        if (IsLocked(SandboxVisualObjectType.FireStart, fireOrigin.fireOriginId))
                         {
                             continue;
                         }
 
-                        for (var i = 0; i < region.polygonPoints.Count; i += 1)
-                        {
-                            region.polygonPoints[i] += delta;
-                        }
-                        movedIds.Add(region.regionId);
+                        fireOrigin.position += delta;
+                        movedIds.Add(fireOrigin.fireOriginId);
                     }
 
                     foreach (var door in floor.doors.Where(candidate => selectedIds.Contains(candidate.doorId)))
@@ -449,10 +446,11 @@ namespace EvacLogix.Sandbox.Infrastructure
                 return true;
             }
 
-            var region = floor.regions.FirstOrDefault(candidate => candidate.regionId == selectedId);
-            if (region != null)
+            var fireOrigin = project.fireOrigins.FirstOrDefault(candidate =>
+                candidate.floorId == floor.floorId && candidate.fireOriginId == selectedId);
+            if (fireOrigin != null)
             {
-                items.Add(CreateItem(SandboxClipboardItemKind.Region, floor.floorId, region));
+                items.Add(CreateItem(SandboxClipboardItemKind.FireStart, floor.floorId, fireOrigin));
                 return true;
             }
 
@@ -653,21 +651,18 @@ namespace EvacLogix.Sandbox.Infrastructure
                     targetFloor.teleportPortals.Add(teleportPortal);
                     newSelection.Add(teleportPortal.teleportPortalId);
                     return true;
-                case SandboxClipboardItemKind.Region:
-                    var region = JsonUtility.FromJson<RegionData>(item.serializedPayload);
-                    if (region == null)
+                case SandboxClipboardItemKind.FireStart:
+                    var fireOrigin = JsonUtility.FromJson<FireOriginData>(item.serializedPayload);
+                    if (fireOrigin == null)
                     {
                         return false;
                     }
 
-                    region.regionId = SandboxId.NewId();
-                    region.floorId = targetFloor.floorId;
-                    for (var i = 0; i < region.polygonPoints.Count; i += 1)
-                    {
-                        region.polygonPoints[i] += offset;
-                    }
-                    targetFloor.regions.Add(region);
-                    newSelection.Add(region.regionId);
+                    fireOrigin.fireOriginId = SandboxId.NewId();
+                    fireOrigin.floorId = targetFloor.floorId;
+                    fireOrigin.position += offset;
+                    project.fireOrigins.Add(fireOrigin);
+                    newSelection.Add(fireOrigin.fireOriginId);
                     return true;
                 case SandboxClipboardItemKind.SpawnPoint:
                     var spawnPoint = JsonUtility.FromJson<SpawnPointData>(item.serializedPayload);

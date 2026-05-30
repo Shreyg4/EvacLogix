@@ -12,7 +12,6 @@ namespace EvacLogix.Sandbox.Infrastructure
         PlaceFireOrigin = 1,
         PlaceSpawnPoint = 2,
         PaintSpawnPointBrush = 3,
-        PlaceRegion = 4,
     }
 
     public enum SandboxPreviewDiagnosticKind
@@ -111,8 +110,6 @@ namespace EvacLogix.Sandbox.Infrastructure
         [SerializeField] private string pendingSpawnLayoutId = string.Empty;
         [SerializeField] private bool pendingSpawnLayoutIsPersistent = true;
         [SerializeField] private float pendingSpawnPointBrushDensity = 1f;
-        [SerializeField] private string pendingRegionName = "Preview Region";
-        [SerializeField] private RegionSemanticType pendingRegionSemanticType = RegionSemanticType.SpawnZone;
         [SerializeField] private bool pendingFireOriginIsPersistent = true;
         [SerializeField] private List<string> activeFireOriginSelectionIds = new();
         [SerializeField] private PreviewParameterData activePreviewParameters = new();
@@ -134,8 +131,6 @@ namespace EvacLogix.Sandbox.Infrastructure
         public string PendingSpawnLayoutId => pendingSpawnLayoutId;
         public bool PendingSpawnLayoutIsPersistent => pendingSpawnLayoutIsPersistent;
         public float PendingSpawnPointBrushDensity => pendingSpawnPointBrushDensity;
-        public string PendingRegionName => pendingRegionName;
-        public RegionSemanticType PendingRegionSemanticType => pendingRegionSemanticType;
         public bool PendingFireOriginIsPersistent => pendingFireOriginIsPersistent;
         public IReadOnlyList<string> ActiveFireOriginSelectionIds => activeFireOriginSelectionIds;
         public PreviewParameterData ActivePreviewParameters => activePreviewParameters;
@@ -216,13 +211,6 @@ namespace EvacLogix.Sandbox.Infrastructure
         public void ConfigureSpawnBrush(float density, string layoutId, string layoutName, bool isPersistent)
         {
             ConfigureSpawnPointBrush(density, layoutId, layoutName, isPersistent);
-        }
-
-        public void ConfigureRegionPlacement(string regionName, RegionSemanticType semanticType)
-        {
-            pendingRegionName = string.IsNullOrWhiteSpace(regionName) ? "Preview Region" : regionName.Trim();
-            pendingRegionSemanticType = semanticType;
-            RaisePreviewStateChanged();
         }
 
         public void ConfigureFirePlacement(bool isPersistent)
@@ -996,14 +984,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                 return true;
             }
 
-            if (floor.regions.Any(region =>
-                    region.semanticType == RegionSemanticType.RestrictedZone &&
-                    PointInPolygon(position, region.polygonPoints)))
-            {
-                blockedMessage = "Preview sample starts inside a restricted region.";
-                return true;
-            }
-
             if (fireOrigins.Any(origin =>
                     string.Equals(origin.floorId, floorId, StringComparison.Ordinal) &&
                     Vector2.Distance(position, origin.position) <= hazardRadius))
@@ -1038,20 +1018,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                 }
 
                 if (SegmentIntersectsRect(start, end, obstacle.center, obstacle.size))
-                {
-                    return true;
-                }
-            }
-
-            for (var regionIndex = 0; regionIndex < floor.regions.Count; regionIndex += 1)
-            {
-                var region = floor.regions[regionIndex];
-                if (region.semanticType != RegionSemanticType.RestrictedZone)
-                {
-                    continue;
-                }
-
-                if (PointInPolygon((start + end) * 0.5f, region.polygonPoints))
                 {
                     return true;
                 }

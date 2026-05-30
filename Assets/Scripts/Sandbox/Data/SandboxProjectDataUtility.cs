@@ -50,7 +50,6 @@ namespace EvacLogix.Sandbox.Data
                 floor.obstacles ??= new List<ObstacleData>();
                 floor.stairPortals ??= new List<StairPortalData>();
                 floor.teleportPortals ??= new List<TeleportPortalData>();
-                floor.regions ??= new List<RegionData>();
 
                 foreach (var junction in floor.wallJunctions)
                 {
@@ -108,14 +107,6 @@ namespace EvacLogix.Sandbox.Data
                     teleport.travelCost = teleport.travelCost <= 0f ? 1f : teleport.travelCost;
                     teleport.tags ??= new List<string>();
                     teleport.metadataFields ??= new List<MetadataFieldData>();
-                }
-
-                foreach (var region in floor.regions)
-                {
-                    region.regionId = EnsureId(region.regionId);
-                    region.floorId = string.IsNullOrWhiteSpace(region.floorId) ? floor.floorId : region.floorId;
-                    region.polygonPoints ??= new List<UnityEngine.Vector2>();
-                    region.metadataFields ??= new List<MetadataFieldData>();
                 }
             }
 

@@ -162,9 +162,9 @@ namespace EvacLogix.Sandbox.Infrastructure
                 AddRotatedRectPoints(points, teleportPortal.localPosition, teleportPortal.size, teleportPortal.rotationDegrees);
             }
 
-            foreach (var region in floor.regions.Where(region => selectedIds.Contains(region.regionId)))
+            foreach (var fireOrigin in workspaceService.ActiveProject.fireOrigins.Where(origin => origin.floorId == floor.floorId && selectedIds.Contains(origin.fireOriginId)))
             {
-                points.AddRange(region.polygonPoints);
+                points.Add(fireOrigin.position);
             }
 
             foreach (var layout in workspaceService.ActiveProject.spawnLayouts)
