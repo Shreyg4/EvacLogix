@@ -71,6 +71,19 @@ namespace EvacLogix.Sandbox.UI.Panels
                     previewService.ConfigureSpawnPointBrush(1f, string.Empty, "Spawn Point Brush Layout", true);
                     previewService.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
                     break;
+                case SandboxToolMode.Region:
+                    // Region is a preview-authoring tool; leave preview state untouched.
+                    break;
+                default:
+                    // Selecting any edit tool must leave preview mode, otherwise the editor stays
+                    // gated (edit overlays and shortcuts are disabled during preview) and the user
+                    // gets trapped with no way back to editing.
+                    if (previewService.IsPreviewModeActive)
+                    {
+                        previewService.ExitPreviewMode();
+                    }
+
+                    break;
                 default:
                     previewService.ClearInteractionMode();
                     previewService.ExitPreviewMode();
