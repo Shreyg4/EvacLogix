@@ -298,6 +298,51 @@ namespace EvacLogix.Tests.EditMode
             Object.DestroyImmediate(debugRoot);
         }
 
+        [Test]
+        public void TeleportPortal_CanTargetAnotherFloorDirectly()
+        {
+            var host = CreateSemanticHost(
+                out var workspaceService,
+                out _,
+                out _,
+                out var semanticObjectAuthoringService,
+                out _);
+
+            var project = workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            project.floors.Add(new FloorData
+            {
+                floorId = "floor-2",
+                name = "Floor 2",
+                order = 1,
+                elevation = 3f,
+            });
+            SandboxProjectDataUtility.EnsureIds(project);
+            workspaceService.SetActiveProject(project);
+            workspaceService.SetActiveFloor(project.floors[0].floorId);
+
+            Assert.That(
+                semanticObjectAuthoringService.PlaceTeleportPortal(
+                    new Vector2(4f, 2f),
+                    out var sourcePortalId,
+                    "pair-1",
+                    0),
+                Is.True);
+            Assert.That(semanticObjectAuthoringService.SetTeleportTargetFloor(sourcePortalId, "floor-2"), Is.True);
+
+            var sourceFloor = workspaceService.ActiveProject.floors.Single(floor => floor.floorId == project.floors[0].floorId);
+            var targetFloor = workspaceService.ActiveProject.floors.Single(floor => floor.floorId == "floor-2");
+            var sourcePortal = sourceFloor.teleportPortals.Single(portal => portal.teleportPortalId == sourcePortalId);
+            var targetPortal = targetFloor.teleportPortals.Single();
+
+            Assert.That(sourcePortal.targetFloorId, Is.EqualTo("floor-2"));
+            Assert.That(sourcePortal.targetTeleportPortalId, Is.EqualTo(targetPortal.teleportPortalId));
+            Assert.That(targetPortal.targetFloorId, Is.EqualTo(sourceFloor.floorId));
+            Assert.That(targetPortal.targetTeleportPortalId, Is.EqualTo(sourcePortalId));
+            Assert.That(targetPortal.localPosition, Is.EqualTo(sourcePortal.localPosition));
+
+            Object.DestroyImmediate(host);
+        }
+
         private static GameObject CreateSemanticHost(
             out SandboxProjectWorkspaceService workspaceService,
             out SandboxCommandHistory commandHistory,

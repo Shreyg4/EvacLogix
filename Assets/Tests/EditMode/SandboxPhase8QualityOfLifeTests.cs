@@ -114,6 +114,83 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
+        public void ClipboardService_CutTeleportPreservesLinkedEndpointOnPaste()
+        {
+            var host = CreatePhase8Host(
+                out var workspaceService,
+                out _,
+                out var floorManagementService,
+                out _,
+                out var semanticObjectAuthoringService,
+                out var clipboardService,
+                out _,
+                out _,
+                out _,
+                out _,
+                out var selectionService);
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            var sourceFloorId = workspaceService.ActiveFloorId;
+            Assert.That(floorManagementService.AddFloor(out var targetFloorId, "Floor 2", 3f), Is.True);
+            workspaceService.SetActiveFloor(sourceFloorId);
+            Assert.That(semanticObjectAuthoringService.PlaceTeleportPortal(new Vector2(2f, 2f), out var sourcePortalId, "pair-1", 0), Is.True);
+            Assert.That(semanticObjectAuthoringService.SetTeleportTargetFloor(sourcePortalId, targetFloorId), Is.True);
+
+            selectionService.ReplaceSelection(new[] { sourcePortalId });
+            Assert.That(clipboardService.CutSelection(), Is.True);
+            Assert.That(workspaceService.ActiveProject.floors.Single(floor => floor.floorId == sourceFloorId).teleportPortals.Count, Is.EqualTo(0));
+
+            Assert.That(clipboardService.PasteSelection(Vector2.zero), Is.True);
+            var sourceFloor = workspaceService.ActiveProject.floors.Single(floor => floor.floorId == sourceFloorId);
+            var targetFloor = workspaceService.ActiveProject.floors.Single(floor => floor.floorId == targetFloorId);
+            var pastedPortal = sourceFloor.teleportPortals.Single();
+            var linkedPortal = targetFloor.teleportPortals.Single();
+
+            Assert.That(pastedPortal.teleportPortalId, Is.Not.EqualTo(sourcePortalId));
+            Assert.That(pastedPortal.targetFloorId, Is.EqualTo(targetFloorId));
+            Assert.That(pastedPortal.targetTeleportPortalId, Is.EqualTo(linkedPortal.teleportPortalId));
+            Assert.That(linkedPortal.targetFloorId, Is.EqualTo(sourceFloorId));
+            Assert.That(linkedPortal.targetTeleportPortalId, Is.EqualTo(pastedPortal.teleportPortalId));
+
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void ClipboardService_CopyTeleportDoesNotRestoreLinkedEndpointOnPaste()
+        {
+            var host = CreatePhase8Host(
+                out var workspaceService,
+                out _,
+                out var floorManagementService,
+                out _,
+                out var semanticObjectAuthoringService,
+                out var clipboardService,
+                out _,
+                out _,
+                out _,
+                out _,
+                out var selectionService);
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            var sourceFloorId = workspaceService.ActiveFloorId;
+            Assert.That(floorManagementService.AddFloor(out var targetFloorId, "Floor 2", 3f), Is.True);
+            workspaceService.SetActiveFloor(sourceFloorId);
+            Assert.That(semanticObjectAuthoringService.PlaceTeleportPortal(new Vector2(2f, 2f), out var sourcePortalId, "pair-1", 0), Is.True);
+            Assert.That(semanticObjectAuthoringService.SetTeleportTargetFloor(sourcePortalId, targetFloorId), Is.True);
+
+            selectionService.ReplaceSelection(new[] { sourcePortalId });
+            Assert.That(clipboardService.CopySelection(), Is.True);
+            Assert.That(clipboardService.PasteSelection(new Vector2(1f, 0f)), Is.True);
+
+            var sourceFloor = workspaceService.ActiveProject.floors.Single(floor => floor.floorId == sourceFloorId);
+            var copiedPortal = sourceFloor.teleportPortals.Single(portal => portal.teleportPortalId != sourcePortalId);
+            Assert.That(copiedPortal.targetFloorId, Is.EqualTo(string.Empty));
+            Assert.That(copiedPortal.targetTeleportPortalId, Is.EqualTo(string.Empty));
+
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
         public void MeasurementAndSnapSettings_EnablePreciseEditing()
         {
             var host = CreatePhase8Host(

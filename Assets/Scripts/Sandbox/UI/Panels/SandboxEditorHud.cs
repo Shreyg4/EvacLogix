@@ -832,6 +832,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             var pairStateLabel = IsBrokenTeleport(teleportPortal) ? "Broken Pair" : (teleportPortal.isPairEnabled ? "On" : "Off");
             GUILayout.Label($"Pair State: {pairStateLabel}", bodyStyle);
+            DrawTeleportTargetFloorControls(teleportPortal);
 
             GUILayout.Label("Type", bodyStyle);
             GUILayout.BeginHorizontal();
@@ -867,10 +868,42 @@ namespace EvacLogix.Sandbox.UI.Panels
                     semanticObjectAuthoringOverlay != null);
                 GUILayout.Label("Broken pairs stay in the project until you place the missing endpoint.", bodyStyle);
             }
-            else
+        }
+
+        private void DrawTeleportTargetFloorControls(TeleportPortalData teleportPortal)
+        {
+            var floors = workspaceService?.ActiveProject?.floors?
+                .OrderBy(floor => floor.order)
+                .ThenBy(floor => floor.name, StringComparer.Ordinal)
+                .ToList();
+            if (floors == null || floors.Count <= 1)
             {
-                GUILayout.Label($"Linked floor: {teleportPortal.targetFloorId}", bodyStyle);
+                GUILayout.Label("Add another floor before setting a teleport target.", bodyStyle);
+                return;
             }
+
+            var sourceFloorId = ResolveTeleportSourceFloorId(teleportPortal);
+            var linkedFloorName = ResolveFloorName(teleportPortal.targetFloorId);
+            GUILayout.Label(
+                string.IsNullOrWhiteSpace(linkedFloorName)
+                    ? "Target Floor: Not set"
+                    : $"Target Floor: {linkedFloorName}",
+                bodyStyle);
+
+            GUILayout.BeginHorizontal();
+            foreach (var floor in floors)
+            {
+                if (string.Equals(floor.floorId, sourceFloorId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                DrawActionButton(
+                    floor.name,
+                    () => TrySetTeleportTargetFloor(teleportPortal, floor.floorId),
+                    !string.Equals(teleportPortal.targetFloorId, floor.floorId, StringComparison.Ordinal));
+            }
+            GUILayout.EndHorizontal();
         }
 
         private void DrawEditableSelectionSizeFields(string objectTypeLabel, string objectLabel, Action applyAction)
@@ -1023,6 +1056,16 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             return didUpdate;
+        }
+
+        private bool TrySetTeleportTargetFloor(TeleportPortalData teleportPortal, string targetFloorId)
+        {
+            if (teleportPortal == null || string.IsNullOrWhiteSpace(targetFloorId))
+            {
+                return false;
+            }
+
+            return inspectorPanelShell != null && inspectorPanelShell.SetTeleportTargetFloor(teleportPortal.teleportPortalId, targetFloorId);
         }
 
         private bool TryApplyDoor(DoorData door, DoorState state)
@@ -1202,6 +1245,36 @@ namespace EvacLogix.Sandbox.UI.Panels
                 string.Equals(candidate.floorId, teleportPortal.targetFloorId, StringComparison.Ordinal));
             return targetFloor == null || !targetFloor.teleportPortals.Any(candidate =>
                 string.Equals(candidate.teleportPortalId, teleportPortal.targetTeleportPortalId, StringComparison.Ordinal));
+        }
+
+        private string ResolveTeleportSourceFloorId(TeleportPortalData teleportPortal)
+        {
+            if (teleportPortal == null)
+            {
+                return string.Empty;
+            }
+
+            if (!string.IsNullOrWhiteSpace(teleportPortal.sourceFloorId))
+            {
+                return teleportPortal.sourceFloorId;
+            }
+
+            var sourceFloor = workspaceService?.ActiveProject?.floors?.FirstOrDefault(floor =>
+                floor.teleportPortals.Any(candidate =>
+                    string.Equals(candidate.teleportPortalId, teleportPortal.teleportPortalId, StringComparison.Ordinal)));
+            return sourceFloor?.floorId ?? string.Empty;
+        }
+
+        private string ResolveFloorName(string floorId)
+        {
+            if (string.IsNullOrWhiteSpace(floorId))
+            {
+                return string.Empty;
+            }
+
+            return workspaceService?.ActiveProject?.floors?
+                .FirstOrDefault(floor => string.Equals(floor.floorId, floorId, StringComparison.Ordinal))
+                ?.name ?? string.Empty;
         }
 
         private bool TryFindSelectedWindow(string selectedId, out WindowData window)

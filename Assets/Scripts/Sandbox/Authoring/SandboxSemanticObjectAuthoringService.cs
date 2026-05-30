@@ -830,6 +830,72 @@ namespace EvacLogix.Sandbox.Authoring
                 new[] { sourcePortalId, targetPortalId });
         }
 
+        public bool SetTeleportTargetFloor(string sourcePortalId, string targetFloorId)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePortalId) || string.IsNullOrWhiteSpace(targetFloorId))
+            {
+                return false;
+            }
+
+            if (IsLocked(SandboxVisualObjectType.Teleport, sourcePortalId))
+            {
+                return false;
+            }
+
+            return ExecuteProjectMutation(
+                "Set Teleport Target Floor",
+                project =>
+                {
+                    if (!TryFindTeleportPortal(project, sourcePortalId, out var sourceFloor, out var sourcePortal))
+                    {
+                        return false;
+                    }
+
+                    var targetFloor = FindFloor(project, targetFloorId);
+                    if (targetFloor == null || string.Equals(sourceFloor.floorId, targetFloor.floorId, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(sourcePortal.targetTeleportPortalId) &&
+                        TryFindTeleportPortal(project, sourcePortal.targetTeleportPortalId, out _, out var previousTargetPortal) &&
+                        string.Equals(previousTargetPortal.targetTeleportPortalId, sourcePortal.teleportPortalId, StringComparison.Ordinal))
+                    {
+                        previousTargetPortal.targetFloorId = string.Empty;
+                        previousTargetPortal.targetTeleportPortalId = string.Empty;
+                    }
+
+                    var targetPortal = ResolveTeleportTargetPortal(project, sourcePortal, targetFloor);
+                    if (IsLocked(SandboxVisualObjectType.Teleport, targetPortal.teleportPortalId))
+                    {
+                        return false;
+                    }
+
+                    var sharedPairId = string.IsNullOrWhiteSpace(sourcePortal.pairId) ? SandboxId.NewId() : sourcePortal.pairId;
+                    var colorIndex = Mathf.Max(0, sourcePortal.pairColorIndex);
+
+                    sourcePortal.pairId = sharedPairId;
+                    sourcePortal.sourceFloorId = sourceFloor.floorId;
+                    sourcePortal.targetFloorId = targetFloor.floorId;
+                    sourcePortal.targetTeleportPortalId = targetPortal.teleportPortalId;
+                    sourcePortal.pairColorIndex = colorIndex;
+
+                    targetPortal.pairId = sharedPairId;
+                    targetPortal.sourceFloorId = targetFloor.floorId;
+                    targetPortal.targetFloorId = sourceFloor.floorId;
+                    targetPortal.targetTeleportPortalId = sourcePortal.teleportPortalId;
+                    targetPortal.pairColorIndex = colorIndex;
+                    targetPortal.localPosition = sourcePortal.localPosition;
+                    targetPortal.size = sourcePortal.size;
+                    targetPortal.rotationDegrees = sourcePortal.rotationDegrees;
+                    targetPortal.kind = sourcePortal.kind;
+                    targetPortal.travelCost = Mathf.Max(0.1f, sourcePortal.travelCost);
+                    targetPortal.isPairEnabled = sourcePortal.isPairEnabled;
+                    return true;
+                },
+                new[] { sourcePortalId });
+        }
+
         public int GetNextTeleportPairColorIndex()
         {
             var project = workspaceService?.ActiveProject;
@@ -1165,6 +1231,39 @@ namespace EvacLogix.Sandbox.Authoring
         {
             return project?.floors.FirstOrDefault(candidate =>
                 string.Equals(candidate.floorId, floorId, StringComparison.Ordinal));
+        }
+
+        private static TeleportPortalData ResolveTeleportTargetPortal(
+            BuildingProjectData project,
+            TeleportPortalData sourcePortal,
+            FloorData targetFloor)
+        {
+            if (!string.IsNullOrWhiteSpace(sourcePortal.targetTeleportPortalId) &&
+                TryFindTeleportPortal(project, sourcePortal.targetTeleportPortalId, out var existingTargetFloor, out var existingTargetPortal) &&
+                string.Equals(existingTargetFloor.floorId, targetFloor.floorId, StringComparison.Ordinal))
+            {
+                return existingTargetPortal;
+            }
+
+            if (!string.IsNullOrWhiteSpace(sourcePortal.pairId))
+            {
+                var matchingPairPortal = targetFloor.teleportPortals.FirstOrDefault(candidate =>
+                    string.Equals(candidate.pairId, sourcePortal.pairId, StringComparison.Ordinal));
+                if (matchingPairPortal != null)
+                {
+                    return matchingPairPortal;
+                }
+            }
+
+            var targetPortal = new TeleportPortalData
+            {
+                teleportPortalId = SandboxId.NewId(),
+                name = string.IsNullOrWhiteSpace(sourcePortal.name) ? "Teleport Target" : $"{sourcePortal.name} Target",
+                tags = NormalizeTags(sourcePortal.tags),
+                metadataFields = CloneMetadataFields(sourcePortal.metadataFields)
+            };
+            targetFloor.teleportPortals.Add(targetPortal);
+            return targetPortal;
         }
 
         private static bool TryFindDoor(BuildingProjectData project, string doorId, out FloorData floor, out DoorData door)
