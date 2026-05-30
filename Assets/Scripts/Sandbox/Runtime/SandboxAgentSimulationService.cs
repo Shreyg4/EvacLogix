@@ -10,6 +10,8 @@ namespace EvacLogix.Sandbox.Runtime
 {
     public sealed class SandboxAgentSimulationService : MonoBehaviour
     {
+        private const string NavMeshPlaneRootName = "NavMeshPlaneRoot";
+
         [SerializeField] private SandboxAgentProfile defaultAgentProfile;
         [SerializeField] private string agentRootName = "AgentRoot";
         [SerializeField] private bool autoStartOnPreviewRun = true;
@@ -25,6 +27,7 @@ namespace EvacLogix.Sandbox.Runtime
         private readonly List<NavMeshDataInstance> navMeshInstances = new();
         private readonly List<NavMeshData> navMeshDatas = new();
         private readonly List<Mesh> navMeshSourceMeshes = new();
+        private readonly List<GameObject> navMeshPlaneObjects = new();
         private bool simulationActive;
         private float lastPreviewDigestTime;
 
@@ -446,6 +449,23 @@ namespace EvacLogix.Sandbox.Runtime
             }
 
             navMeshSourceMeshes.Clear();
+
+            for (var i = 0; i < navMeshPlaneObjects.Count; i += 1)
+            {
+                if (navMeshPlaneObjects[i] != null)
+                {
+                    if (Application.isPlaying)
+                    {
+                        Destroy(navMeshPlaneObjects[i]);
+                    }
+                    else
+                    {
+                        DestroyImmediate(navMeshPlaneObjects[i]);
+                    }
+                }
+            }
+
+            navMeshPlaneObjects.Clear();
         }
 
         private void BuildAgentRoot()
@@ -509,7 +529,7 @@ namespace EvacLogix.Sandbox.Runtime
                     continue;
                 }
 
-                var rooms = roomDetectionService.GetRoomsForFloor(floorId);
+                var rooms = roomDetectionService.GetCompleteRoomsForFloor(floorId);
                 for (var roomIndex = 0; roomIndex < rooms.Count; roomIndex += 1)
                 {
                     var room = rooms[roomIndex];
@@ -523,6 +543,7 @@ namespace EvacLogix.Sandbox.Runtime
                         continue;
                     }
 
+                    CreateRoomNavMeshPlane(room, floor.elevation, mesh);
                     navMeshSourceMeshes.Add(mesh);
                     var source = new NavMeshBuildSource
                     {
@@ -563,6 +584,36 @@ namespace EvacLogix.Sandbox.Runtime
             navMeshDatas.Add(data);
             navMeshInstances.Add(NavMesh.AddNavMeshData(data));
             return true;
+        }
+
+        private void CreateRoomNavMeshPlane(SandboxDetectedRoomData room, float floorElevation, Mesh mesh)
+        {
+            if (room == null || mesh == null)
+            {
+                return;
+            }
+
+            var root = GetNavMeshPlaneRoot();
+            if (root == null)
+            {
+                return;
+            }
+
+            var planeObject = new GameObject($"RoomNavMeshPlane_{room.roomId}");
+            planeObject.transform.SetParent(root.transform, false);
+            planeObject.transform.SetPositionAndRotation(
+                new Vector3(0f, floorElevation, 0f),
+                Quaternion.identity);
+            planeObject.hideFlags = HideFlags.HideInHierarchy | HideFlags.HideInInspector;
+
+            var meshFilter = planeObject.AddComponent<MeshFilter>();
+            meshFilter.sharedMesh = mesh;
+
+            var meshCollider = planeObject.AddComponent<MeshCollider>();
+            meshCollider.sharedMesh = mesh;
+            meshCollider.convex = false;
+
+            navMeshPlaneObjects.Add(planeObject);
         }
 
         private static Bounds CalculateRoomBounds(IReadOnlyList<Vector2> points, float floorElevation)
@@ -606,6 +657,18 @@ namespace EvacLogix.Sandbox.Runtime
             mesh.triangles = triangleIndices.ToArray();
             mesh.RecalculateBounds();
             return true;
+        }
+
+        private GameObject GetNavMeshPlaneRoot()
+        {
+            var root = GameObject.Find(NavMeshPlaneRootName);
+            if (root != null)
+            {
+                return root;
+            }
+
+            root = new GameObject(NavMeshPlaneRootName);
+            return root;
         }
 
         private static List<int> TriangulatePolygon(IReadOnlyList<Vector2> polygonPoints)
