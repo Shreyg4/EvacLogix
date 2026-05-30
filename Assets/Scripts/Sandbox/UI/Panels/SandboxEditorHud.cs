@@ -11,6 +11,7 @@ using EvacLogix.Sandbox.Infrastructure;
 using EvacLogix.Sandbox.Rendering;
 using EvacLogix.Sandbox.UI.Overlays;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace EvacLogix.Sandbox.UI.Panels
 {
@@ -60,6 +61,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         private SandboxVisualLegendShell visualLegendShell;
         private SandboxValidationPanelShell validationPanelShell;
         private SandboxCameraController cameraController;
+        private bool showReturnToMenuConfirm;
         private SandboxStatusBarShell statusBarShell;
         private SandboxNewProjectDialogShell newProjectDialogShell;
         private SandboxProjectWorkspaceService workspaceService;
@@ -225,6 +227,11 @@ namespace EvacLogix.Sandbox.UI.Panels
                 {
                     DrawNewProjectModal();
                 }
+
+                if (showReturnToMenuConfirm)
+                {
+                    DrawReturnToMenuModal();
+                }
             }
             catch (Exception exception)
             {
@@ -312,6 +319,9 @@ namespace EvacLogix.Sandbox.UI.Panels
                 var canPreview = topBarShell != null && topBarShell.CanOpenPreview();
                 DrawActionButton("Enter Preview", () => { topBarShell?.EnterPreviewMode(); }, workspaceService?.ActiveProject != null && canPreview);
             }
+
+            GUILayout.FlexibleSpace();
+            DrawActionButton("Main Menu", () => showReturnToMenuConfirm = true);
             GUILayout.EndHorizontal();
 
             GUILayout.Label(topBarShell?.PersistenceModeSummary ?? $"Working files: {GetStorageDirectoryPath()}", bodyStyle);
@@ -1703,6 +1713,27 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             GUILayout.Space(10f);
             GUILayout.Label("Tip: after creating a project, import a blueprint path in the Inspector and then pick a wall tool on the left.", bodyStyle);
+            GUILayout.EndArea();
+        }
+
+        private void DrawReturnToMenuModal()
+        {
+            var previousColor = GUI.color;
+            GUI.color = ModalBackdropColor;
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), solidTexture ?? Texture2D.whiteTexture);
+            GUI.color = previousColor;
+
+            GUILayout.BeginArea(modalRect, GUIContent.none, modalWindowStyle ?? GUI.skin.window);
+            GUILayout.Label("Return to Main Menu?", headerStyle);
+            GUILayout.Label("Any unsaved changes will be lost.", bodyStyle);
+            GUILayout.Space(10f);
+
+            DrawActionButton("Return to Main Menu", () =>
+            {
+                showReturnToMenuConfirm = false;
+                SceneManager.LoadScene("MainMenu", LoadSceneMode.Single);
+            });
+            DrawActionButton("Cancel", () => showReturnToMenuConfirm = false);
             GUILayout.EndArea();
         }
 
