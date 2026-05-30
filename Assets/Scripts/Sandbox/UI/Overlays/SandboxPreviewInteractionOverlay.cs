@@ -104,7 +104,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 activeBrushPoints.Clear();
                 activeBrushPoints.Add(worldPoint);
                 lastBrushPoint = worldPoint;
-                UpdateStatus("Painting spawn point brush.");
+                UpdateStatus("Painting spawn point brush in an enclosed room.");
                 return;
             }
 

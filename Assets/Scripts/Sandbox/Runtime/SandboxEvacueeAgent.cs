@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.AI;
 
 namespace EvacLogix.Sandbox.Runtime
 {
@@ -18,6 +19,9 @@ namespace EvacLogix.Sandbox.Runtime
         [SerializeField] private Color dangerColor = new(0.95f, 0.25f, 0.2f, 1f);
 
         private SpriteRenderer spriteRenderer;
+        private GameObject navAgentObject;
+        private NavMeshAgent navMeshAgent;
+        private float floorElevation;
 
         public string AgentId => agentId;
         public string FloorId => floorId;
@@ -25,6 +29,9 @@ namespace EvacLogix.Sandbox.Runtime
         public float Health => health;
         public bool HasExited => hasExited;
         public Vector2 CurrentDestination => currentDestination;
+        public Vector2 CurrentWorldPosition => navAgentObject != null
+            ? new Vector2(navAgentObject.transform.position.x, navAgentObject.transform.position.z)
+            : (Vector2)transform.position;
 
         private void Awake()
         {
@@ -37,16 +44,29 @@ namespace EvacLogix.Sandbox.Runtime
             spriteRenderer.color = healthyColor;
         }
 
-        public void Configure(SandboxAgentProfile agentProfile, string newAgentId, string newFloorId, Vector2 startPosition)
+        private void OnDestroy()
+        {
+            DestroyNavAgentObject();
+        }
+
+        private void LateUpdate()
+        {
+            SyncVisualPosition();
+        }
+
+        public void Configure(SandboxAgentProfile agentProfile, string newAgentId, string newFloorId, Vector2 startPosition, float newFloorElevation = 0f)
         {
             profile = agentProfile;
             agentId = newAgentId;
             floorId = newFloorId;
+            floorElevation = newFloorElevation;
             health = 1f;
             hasExited = false;
             repathTimer = 0f;
             currentDestination = startPosition;
-            transform.position = new Vector3(startPosition.x, startPosition.y, transform.position.z);
+            EnsureNavAgentObject();
+            SyncNavAgentPosition(startPosition);
+            SyncVisualPosition();
             RefreshTint();
         }
 
@@ -55,16 +75,39 @@ namespace EvacLogix.Sandbox.Runtime
             targetExitId = exitId;
             currentDestination = destination;
             repathTimer = 0f;
+
+            if (navMeshAgent != null)
+            {
+                navMeshAgent.isStopped = false;
+                if (TryGetNavPosition(destination, out var navDestination))
+                {
+                    navMeshAgent.SetDestination(navDestination);
+                }
+            }
         }
 
         public void MarkExited()
         {
             hasExited = true;
             health = Mathf.Clamp01(health);
-            spriteRenderer.color = new Color(spriteRenderer.color.r, spriteRenderer.color.g, spriteRenderer.color.b, 0.5f);
+            if (navMeshAgent != null)
+            {
+                navMeshAgent.isStopped = true;
+                navMeshAgent.ResetPath();
+            }
+
+            if (spriteRenderer != null)
+            {
+                spriteRenderer.color = new Color(spriteRenderer.color.r, spriteRenderer.color.g, spriteRenderer.color.b, 0.5f);
+            }
         }
 
         public void Tick(float deltaTime, Vector2 movement, float fireExposure)
+        {
+            Tick(deltaTime, fireExposure);
+        }
+
+        public void Tick(float deltaTime, float fireExposure)
         {
             if (hasExited)
             {
@@ -79,9 +122,7 @@ namespace EvacLogix.Sandbox.Runtime
 
             repathTimer += deltaTime;
             health = Mathf.Clamp01(health - (activeProfile.SafeHealthDecayPerSecond + Mathf.Max(0f, fireExposure) * activeProfile.FireHealthDecayPerSecond) * deltaTime);
-
-            var nextPosition = (Vector2)transform.position + movement * (activeProfile.Speed * deltaTime);
-            transform.position = new Vector3(nextPosition.x, nextPosition.y, transform.position.z);
+            SyncVisualPosition();
             RefreshTint();
 
             if (health <= 0f)
@@ -103,7 +144,7 @@ namespace EvacLogix.Sandbox.Runtime
         public bool IsAtDestination()
         {
             var activeProfile = profile;
-            return activeProfile != null && Vector2.Distance((Vector2)transform.position, currentDestination) <= activeProfile.ExitReachDistance;
+            return activeProfile != null && Vector2.Distance(CurrentWorldPosition, currentDestination) <= activeProfile.ExitReachDistance;
         }
 
         private void RefreshTint()
@@ -125,6 +166,117 @@ namespace EvacLogix.Sandbox.Runtime
             {
                 spriteRenderer.color = healthyColor;
             }
+        }
+
+        private void EnsureNavAgentObject()
+        {
+            if (navAgentObject != null && navMeshAgent != null)
+            {
+                return;
+            }
+
+            navAgentObject = new GameObject($"{name}_NavMeshAgent");
+            navAgentObject.transform.SetParent(transform.parent, false);
+            navAgentObject.hideFlags = HideFlags.HideInHierarchy | HideFlags.HideInInspector;
+            navMeshAgent = navAgentObject.AddComponent<NavMeshAgent>();
+            navMeshAgent.updateRotation = false;
+            navMeshAgent.updateUpAxis = false;
+            navMeshAgent.autoBraking = true;
+            navMeshAgent.radius = GetProfileRadius();
+            navMeshAgent.speed = GetProfileSpeed();
+            navMeshAgent.acceleration = Mathf.Max(1f, GetProfileSpeed() * 4f);
+            navMeshAgent.stoppingDistance = GetProfileExitReachDistance();
+            navMeshAgent.obstacleAvoidanceType = ObstacleAvoidanceType.HighQualityObstacleAvoidance;
+        }
+
+        private void SyncNavAgentPosition(Vector2 worldPosition)
+        {
+            if (navAgentObject == null)
+            {
+                return;
+            }
+
+            var navPosition = TryGetNavPosition(worldPosition, out var sampledPosition)
+                ? sampledPosition
+                : ToNavPosition(worldPosition);
+            navAgentObject.transform.position = navPosition;
+
+            if (navMeshAgent == null)
+            {
+                return;
+            }
+
+            navMeshAgent.speed = GetProfileSpeed();
+            navMeshAgent.radius = GetProfileRadius();
+            navMeshAgent.stoppingDistance = GetProfileExitReachDistance();
+
+            if (!navMeshAgent.Warp(navPosition))
+            {
+                navMeshAgent.transform.position = navPosition;
+            }
+        }
+
+        private void SyncVisualPosition()
+        {
+            if (navAgentObject == null)
+            {
+                return;
+            }
+
+            var navPosition = navAgentObject.transform.position;
+            transform.position = new Vector3(navPosition.x, navPosition.z, transform.position.z);
+        }
+
+        private Vector3 ToNavPosition(Vector2 worldPosition)
+        {
+            return new Vector3(worldPosition.x, floorElevation, worldPosition.y);
+        }
+
+        private bool TryGetNavPosition(Vector2 worldPosition, out Vector3 navPosition)
+        {
+            navPosition = ToNavPosition(worldPosition);
+            if (NavMesh.SamplePosition(navPosition, out var hit, Mathf.Max(GetProfileRadius() * 3f, 0.5f), NavMesh.AllAreas))
+            {
+                navPosition = hit.position;
+                return true;
+            }
+
+            return false;
+        }
+
+        private float GetProfileSpeed()
+        {
+            return profile != null ? profile.Speed : 1.5f;
+        }
+
+        private float GetProfileRadius()
+        {
+            return profile != null ? profile.Radius : 0.25f;
+        }
+
+        private float GetProfileExitReachDistance()
+        {
+            return profile != null ? profile.ExitReachDistance : 0.35f;
+        }
+
+        private void DestroyNavAgentObject()
+        {
+            if (navAgentObject == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                Destroy(navAgentObject);
+            }
+            else
+            {
+                DestroyImmediate(navAgentObject);
+            }
+
+            navAgentObject = null;
+            navMeshAgent = null;
         }
 
         private static Sprite GenerateFallbackSprite()
