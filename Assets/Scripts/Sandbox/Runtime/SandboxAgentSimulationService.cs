@@ -1,9 +1,11 @@
 using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
 using UnityEngine;
+using UnityEngine.AI;
 
 namespace EvacLogix.Sandbox.Runtime
 {
@@ -21,6 +23,9 @@ namespace EvacLogix.Sandbox.Runtime
         private GameObject agentRoot;
         private Texture2D agentTexture;
         private Sprite agentSprite;
+        private readonly List<NavMeshDataInstance> navMeshInstances = new();
+        private readonly List<NavMeshData> navMeshDatas = new();
+        private readonly List<Mesh> navMeshSourceMeshes = new();
         private bool simulationActive;
         private float lastPreviewDigestTime;
 
@@ -53,6 +58,11 @@ namespace EvacLogix.Sandbox.Runtime
             }
         }
 
+        private void OnDestroy()
+        {
+            ClearNavMesh();
+        }
+
         private void OnDisable()
         {
             if (previewService != null)
@@ -81,6 +91,7 @@ namespace EvacLogix.Sandbox.Runtime
         {
             simulationActive = false;
             ClearAgents();
+            ClearNavMesh();
             AgentsChanged?.Invoke(activeAgents);
         }
 
@@ -140,6 +151,12 @@ namespace EvacLogix.Sandbox.Runtime
                 return;
             }
 
+            if (!RebuildNavMesh(project, spawnLayouts))
+            {
+                StopSimulation();
+                return;
+            }
+
             BuildAgentRoot();
             ClearAgents();
 
@@ -159,7 +176,8 @@ namespace EvacLogix.Sandbox.Runtime
                 spriteRenderer.sprite = GetAgentSprite();
 
                 var agent = agentObject.AddComponent<SandboxEvacueeAgent>();
-                agent.Configure(GetProfile(), sample.spawnPointId, sample.floorId, sample.position);
+                var floorElevation = ResolveFloorElevation(project, sample.floorId);
+                agent.Configure(GetProfile(), sample.spawnPointId, sample.floorId, sample.position, floorElevation);
                 activeAgents.Add(agent);
 
                 var destination = ChooseExitDestination(project, sample.floorId, sample.position, fireOrigins, fireCells, out var exitId);
@@ -196,7 +214,7 @@ namespace EvacLogix.Sandbox.Runtime
                     continue;
                 }
 
-                var position = (Vector2)agent.transform.position;
+                var position = agent.CurrentWorldPosition;
                 var destination = agent.CurrentDestination;
                 if (agent.NeedsRepath() || agent.IsAtDestination())
                 {
@@ -211,8 +229,8 @@ namespace EvacLogix.Sandbox.Runtime
                     }
                 }
 
-                var movement = ComputeMovementVector(position, destination, fireOrigins, fireCells, agent.FloorId, out var exposure);
-                agent.Tick(deltaTime, movement, exposure);
+                var exposure = ComputeFireExposure(position, fireOrigins, fireCells, agent.FloorId);
+                agent.Tick(deltaTime, exposure);
 
                 if (agent.IsAtDestination())
                 {
@@ -222,50 +240,6 @@ namespace EvacLogix.Sandbox.Runtime
 
             lastPreviewDigestTime += deltaTime;
             AgentsChanged?.Invoke(activeAgents);
-        }
-
-        private Vector2 ComputeMovementVector(Vector2 position, Vector2 destination, IReadOnlyList<FireOriginData> fireOrigins, IReadOnlyList<SandboxFireCellData> fireCells, string floorId, out float exposure)
-        {
-            var toDestination = destination - position;
-            var desiredDirection = toDestination.sqrMagnitude > 0.0001f ? toDestination.normalized : Vector2.zero;
-            var avoidance = Vector2.zero;
-            exposure = 0f;
-
-            if (fireCells != null && fireCells.Count > 0)
-            {
-                for (var i = 0; i < fireCells.Count; i += 1)
-                {
-                    var fireCell = fireCells[i];
-                    if (!string.Equals(fireCell.floorId, floorId, StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    ApplyFireInfluence(position, fireCell.position, fireCell.intensity, fireCell.sourceSpreadIntensity, ref exposure, ref avoidance);
-                }
-
-                var blendedFire = desiredDirection + avoidance;
-                return blendedFire.sqrMagnitude <= 0.0001f ? desiredDirection : blendedFire.normalized;
-            }
-
-            for (var i = 0; i < fireOrigins.Count; i += 1)
-            {
-                var fireOrigin = fireOrigins[i];
-                if (!string.Equals(fireOrigin.floorId, floorId, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                ApplyFireInfluence(position, fireOrigin.position, 1f, fireOrigin.spreadIntensity, ref exposure, ref avoidance);
-            }
-
-            var blended = desiredDirection + avoidance;
-            if (blended.sqrMagnitude <= 0.0001f)
-            {
-                return desiredDirection;
-            }
-
-            return blended.normalized;
         }
 
         private Vector2 ChooseExitDestination(
@@ -354,6 +328,41 @@ namespace EvacLogix.Sandbox.Runtime
             return penalty;
         }
 
+        private float ComputeFireExposure(Vector2 position, IReadOnlyList<FireOriginData> fireOrigins, IReadOnlyList<SandboxFireCellData> fireCells, string floorId)
+        {
+            var exposure = 0f;
+            var avoidance = Vector2.zero;
+
+            if (fireCells != null && fireCells.Count > 0)
+            {
+                for (var i = 0; i < fireCells.Count; i += 1)
+                {
+                    var fireCell = fireCells[i];
+                    if (!string.Equals(fireCell.floorId, floorId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    ApplyFireInfluence(position, fireCell.position, fireCell.intensity, fireCell.sourceSpreadIntensity, ref exposure, ref avoidance);
+                }
+
+                return exposure;
+            }
+
+            for (var i = 0; i < fireOrigins.Count; i += 1)
+            {
+                var fireOrigin = fireOrigins[i];
+                if (!string.Equals(fireOrigin.floorId, floorId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                ApplyFireInfluence(position, fireOrigin.position, 1f, fireOrigin.spreadIntensity, ref exposure, ref avoidance);
+            }
+
+            return exposure;
+        }
+
         private List<SpawnSample> ExpandSpawnSamples(IReadOnlyList<SpawnLayoutData> spawnLayouts)
         {
             var samples = new List<SpawnSample>();
@@ -396,6 +405,50 @@ namespace EvacLogix.Sandbox.Runtime
             activeAgents.Clear();
         }
 
+        private void ClearNavMesh()
+        {
+            for (var i = 0; i < navMeshInstances.Count; i += 1)
+            {
+                navMeshInstances[i].Remove();
+            }
+
+            navMeshInstances.Clear();
+
+            for (var i = 0; i < navMeshDatas.Count; i += 1)
+            {
+                if (navMeshDatas[i] != null)
+                {
+                    if (Application.isPlaying)
+                    {
+                        Destroy(navMeshDatas[i]);
+                    }
+                    else
+                    {
+                        DestroyImmediate(navMeshDatas[i]);
+                    }
+                }
+            }
+
+            navMeshDatas.Clear();
+
+            for (var i = 0; i < navMeshSourceMeshes.Count; i += 1)
+            {
+                if (navMeshSourceMeshes[i] != null)
+                {
+                    if (Application.isPlaying)
+                    {
+                        Destroy(navMeshSourceMeshes[i]);
+                    }
+                    else
+                    {
+                        DestroyImmediate(navMeshSourceMeshes[i]);
+                    }
+                }
+            }
+
+            navMeshSourceMeshes.Clear();
+        }
+
         private void BuildAgentRoot()
         {
             if (agentRoot != null)
@@ -418,6 +471,260 @@ namespace EvacLogix.Sandbox.Runtime
             previewService ??= GetComponent<SandboxPreviewService>();
             fireSimulationService ??= GetComponent<SandboxFireSimulationService>();
             roomDetectionService ??= GetComponent<SandboxRoomDetectionService>();
+        }
+
+        private bool RebuildNavMesh(BuildingProjectData project, IReadOnlyList<SpawnLayoutData> spawnLayouts)
+        {
+            ClearNavMesh();
+            if (project == null || roomDetectionService == null || spawnLayouts == null)
+            {
+                return false;
+            }
+
+            var floorIds = new HashSet<string>(StringComparer.Ordinal);
+            for (var layoutIndex = 0; layoutIndex < spawnLayouts.Count; layoutIndex += 1)
+            {
+                var layout = spawnLayouts[layoutIndex];
+                if (layout?.spawnPoints == null)
+                {
+                    continue;
+                }
+
+                for (var pointIndex = 0; pointIndex < layout.spawnPoints.Count; pointIndex += 1)
+                {
+                    if (!string.IsNullOrWhiteSpace(layout.spawnPoints[pointIndex].floorId))
+                    {
+                        floorIds.Add(layout.spawnPoints[pointIndex].floorId);
+                    }
+                }
+            }
+
+            var sources = new List<NavMeshBuildSource>();
+            var bounds = new Bounds(Vector3.zero, Vector3.one);
+            var initializedBounds = false;
+            foreach (var floorId in floorIds)
+            {
+                var floor = project.floors.FirstOrDefault(candidate => string.Equals(candidate.floorId, floorId, StringComparison.Ordinal));
+                if (floor == null)
+                {
+                    continue;
+                }
+
+                var rooms = roomDetectionService.GetRoomsForFloor(floorId);
+                for (var roomIndex = 0; roomIndex < rooms.Count; roomIndex += 1)
+                {
+                    var room = rooms[roomIndex];
+                    if (room?.polygonPoints == null || room.polygonPoints.Count < 3)
+                    {
+                        continue;
+                    }
+
+                    if (!TryBuildRoomNavMeshMesh(room.polygonPoints, out var mesh))
+                    {
+                        continue;
+                    }
+
+                    navMeshSourceMeshes.Add(mesh);
+                    var source = new NavMeshBuildSource
+                    {
+                        shape = NavMeshBuildSourceShape.Mesh,
+                        sourceObject = mesh,
+                        transform = Matrix4x4.TRS(new Vector3(0f, floor.elevation, 0f), Quaternion.identity, Vector3.one),
+                        area = 0
+                    };
+                    sources.Add(source);
+
+                    var roomBounds = CalculateRoomBounds(room.polygonPoints, floor.elevation);
+                    if (!initializedBounds)
+                    {
+                        bounds = roomBounds;
+                        initializedBounds = true;
+                    }
+                    else
+                    {
+                        bounds.Encapsulate(roomBounds.min);
+                        bounds.Encapsulate(roomBounds.max);
+                    }
+                }
+            }
+
+            if (sources.Count == 0)
+            {
+                return false;
+            }
+
+            bounds.Expand(4f);
+            var settings = NavMesh.GetSettingsByIndex(0);
+            var data = NavMeshBuilder.BuildNavMeshData(settings, sources, bounds, Vector3.zero, Quaternion.identity);
+            if (data == null)
+            {
+                return false;
+            }
+
+            navMeshDatas.Add(data);
+            navMeshInstances.Add(NavMesh.AddNavMeshData(data));
+            return true;
+        }
+
+        private static Bounds CalculateRoomBounds(IReadOnlyList<Vector2> points, float floorElevation)
+        {
+            var min = new Vector3(float.MaxValue, floorElevation, float.MaxValue);
+            var max = new Vector3(float.MinValue, floorElevation, float.MinValue);
+            for (var i = 0; i < points.Count; i += 1)
+            {
+                var point = points[i];
+                min.x = Mathf.Min(min.x, point.x);
+                min.y = Mathf.Min(min.y, floorElevation);
+                min.z = Mathf.Min(min.z, point.y);
+                max.x = Mathf.Max(max.x, point.x);
+                max.y = Mathf.Max(max.y, floorElevation);
+                max.z = Mathf.Max(max.z, point.y);
+            }
+
+            return new Bounds((min + max) * 0.5f, max - min);
+        }
+
+        private bool TryBuildRoomNavMeshMesh(IReadOnlyList<Vector2> polygonPoints, out Mesh mesh)
+        {
+            mesh = null;
+            if (polygonPoints == null || polygonPoints.Count < 3)
+            {
+                return false;
+            }
+
+            var vertices = polygonPoints.Select(point => new Vector3(point.x, 0f, point.y)).ToArray();
+            var triangleIndices = TriangulatePolygon(polygonPoints);
+            if (triangleIndices.Count < 3)
+            {
+                return false;
+            }
+
+            mesh = new Mesh
+            {
+                name = "SandboxRoomNavMeshSource"
+            };
+            mesh.vertices = vertices;
+            mesh.triangles = triangleIndices.ToArray();
+            mesh.RecalculateBounds();
+            return true;
+        }
+
+        private static List<int> TriangulatePolygon(IReadOnlyList<Vector2> polygonPoints)
+        {
+            var triangles = new List<int>();
+            if (polygonPoints == null || polygonPoints.Count < 3)
+            {
+                return triangles;
+            }
+
+            var indices = Enumerable.Range(0, polygonPoints.Count).ToList();
+            if (SignedPolygonArea(polygonPoints) < 0f)
+            {
+                indices.Reverse();
+            }
+
+            var guard = 0;
+            while (indices.Count > 2 && guard < 10_000)
+            {
+                var earClipped = false;
+                for (var i = 0; i < indices.Count; i += 1)
+                {
+                    var prev = indices[(i - 1 + indices.Count) % indices.Count];
+                    var current = indices[i];
+                    var next = indices[(i + 1) % indices.Count];
+
+                    if (!IsConvex(polygonPoints[prev], polygonPoints[current], polygonPoints[next]))
+                    {
+                        continue;
+                    }
+
+                    if (ContainsPointInsideTriangle(polygonPoints, indices, prev, current, next))
+                    {
+                        continue;
+                    }
+
+                    triangles.Add(prev);
+                    triangles.Add(current);
+                    triangles.Add(next);
+                    indices.RemoveAt(i);
+                    earClipped = true;
+                    break;
+                }
+
+                if (!earClipped)
+                {
+                    break;
+                }
+
+                guard += 1;
+            }
+
+            return triangles;
+        }
+
+        private static bool ContainsPointInsideTriangle(IReadOnlyList<Vector2> points, IReadOnlyList<int> indices, int prev, int current, int next)
+        {
+            var a = points[prev];
+            var b = points[current];
+            var c = points[next];
+            for (var i = 0; i < indices.Count; i += 1)
+            {
+                var index = indices[i];
+                if (index == prev || index == current || index == next)
+                {
+                    continue;
+                }
+
+                if (PointInTriangle(points[index], a, b, c))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsConvex(Vector2 previous, Vector2 current, Vector2 next)
+        {
+            var cross = (current.x - previous.x) * (next.y - current.y) -
+                        (current.y - previous.y) * (next.x - current.x);
+            return cross > 0f;
+        }
+
+        private static bool PointInTriangle(Vector2 point, Vector2 a, Vector2 b, Vector2 c)
+        {
+            var v0 = c - a;
+            var v1 = b - a;
+            var v2 = point - a;
+
+            var dot00 = Vector2.Dot(v0, v0);
+            var dot01 = Vector2.Dot(v0, v1);
+            var dot02 = Vector2.Dot(v0, v2);
+            var dot11 = Vector2.Dot(v1, v1);
+            var dot12 = Vector2.Dot(v1, v2);
+
+            var invDenominator = 1f / Mathf.Max(0.0001f, dot00 * dot11 - dot01 * dot01);
+            var u = (dot11 * dot02 - dot01 * dot12) * invDenominator;
+            var v = (dot00 * dot12 - dot01 * dot02) * invDenominator;
+            return u >= 0f && v >= 0f && u + v <= 1f;
+        }
+
+        private static float SignedPolygonArea(IReadOnlyList<Vector2> points)
+        {
+            var area = 0f;
+            for (var i = 0; i < points.Count; i += 1)
+            {
+                var next = (i + 1) % points.Count;
+                area += points[i].x * points[next].y - points[next].x * points[i].y;
+            }
+
+            return area * 0.5f;
+        }
+
+        private float ResolveFloorElevation(BuildingProjectData project, string floorId)
+        {
+            var floor = project?.floors?.FirstOrDefault(candidate => string.Equals(candidate.floorId, floorId, StringComparison.Ordinal));
+            return floor != null ? floor.elevation : 0f;
         }
 
         private void ApplyFireInfluence(Vector2 position, Vector2 firePosition, float intensity, float spreadIntensity, ref float exposure, ref Vector2 avoidance)

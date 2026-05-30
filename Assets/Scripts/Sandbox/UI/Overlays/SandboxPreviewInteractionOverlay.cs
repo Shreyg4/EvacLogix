@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Infrastructure;
 using EvacLogix.Sandbox.UI.Panels;
@@ -8,15 +7,15 @@ namespace EvacLogix.Sandbox.UI.Overlays
 {
     public sealed class SandboxPreviewInteractionOverlay : MonoBehaviour
     {
-        [SerializeField] private float minimumBrushSampleDistance = 0.25f;
+        [SerializeField] private float spawnPointBrushPlacementIntervalSeconds = 0.75f;
 
-        private readonly List<Vector2> activeBrushPoints = new();
         private SandboxPreviewService previewService;
         private SandboxPreviewAuthoringService previewAuthoringService;
         private SandboxStatusBarShell statusBar;
         private bool regionDragActive;
         private Vector2 regionStartPoint;
-        private Vector2 lastBrushPoint;
+        private bool spawnPointBrushActive;
+        private float spawnPointBrushTimer;
 
         private void Awake()
         {
@@ -93,58 +92,53 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
 
             previewService.SetActiveSpawnLayout(resolvedLayoutId);
-            previewService.ClearInteractionMode();
-            UpdateStatus("Placed spawn point.");
+            UpdateStatus("Placed spawn point. Click again to add another.");
         }
 
         private void HandleSpawnPointBrushPlacement(Vector2 worldPoint)
         {
             if (SandboxInputAdapter.GetMouseButtonDown(0))
             {
-                activeBrushPoints.Clear();
-                activeBrushPoints.Add(worldPoint);
-                lastBrushPoint = worldPoint;
-                UpdateStatus("Painting spawn point brush.");
+                spawnPointBrushActive = true;
+                spawnPointBrushTimer = 0f;
+                TryPlaceSpawnPointBrushStamp(worldPoint);
+                UpdateStatus("Painting spawn point brush in an enclosed room.");
                 return;
             }
 
-            if (SandboxInputAdapter.GetMouseButton(0) && activeBrushPoints.Count > 0)
+            if (SandboxInputAdapter.GetMouseButton(0) && spawnPointBrushActive)
             {
-                if (Vector2.Distance(lastBrushPoint, worldPoint) >= minimumBrushSampleDistance)
+                spawnPointBrushTimer += Time.deltaTime;
+                while (spawnPointBrushTimer >= spawnPointBrushPlacementIntervalSeconds)
                 {
-                    activeBrushPoints.Add(worldPoint);
-                    lastBrushPoint = worldPoint;
+                    spawnPointBrushTimer -= spawnPointBrushPlacementIntervalSeconds;
+                    TryPlaceSpawnPointBrushStamp(worldPoint);
                 }
-            }
-
-            if (SandboxInputAdapter.GetMouseButtonUp(0) && activeBrushPoints.Count >= 3)
-            {
-                if (!previewAuthoringService.PlaceSpawnPointBrush(
-                        activeBrushPoints,
-                        out _,
-                        out var resolvedLayoutId,
-                        out var failureMessage,
-                        previewService.PendingSpawnPointBrushDensity,
-                        previewService.PendingSpawnLayoutId,
-                        previewService.PendingSpawnLayoutName,
-                        previewService.PendingSpawnLayoutIsPersistent))
-                {
-                    UpdateStatus(string.IsNullOrWhiteSpace(failureMessage) ? "Could not commit spawn point brush." : failureMessage);
-                    activeBrushPoints.Clear();
-                    return;
-                }
-
-                previewService.SetActiveSpawnLayout(resolvedLayoutId);
-                previewService.ClearInteractionMode();
-                activeBrushPoints.Clear();
-                UpdateStatus("Committed spawn point brush.");
-                return;
             }
 
             if (SandboxInputAdapter.GetMouseButtonUp(0))
             {
-                activeBrushPoints.Clear();
+                spawnPointBrushActive = false;
+                spawnPointBrushTimer = 0f;
             }
+        }
+
+        private void TryPlaceSpawnPointBrushStamp(Vector2 worldPoint)
+        {
+            if (!previewAuthoringService.PlaceSpawnPoint(
+                    worldPoint,
+                    out _,
+                    out var resolvedLayoutId,
+                    out var failureMessage,
+                    previewService.PendingSpawnLayoutId,
+                    previewService.PendingSpawnLayoutName,
+                    previewService.PendingSpawnLayoutIsPersistent))
+            {
+                UpdateStatus(string.IsNullOrWhiteSpace(failureMessage) ? "Could not place spawn point." : failureMessage);
+                return;
+            }
+
+            previewService.SetActiveSpawnLayout(resolvedLayoutId);
         }
 
         private void HandleRegionPlacement(Vector2 worldPoint)

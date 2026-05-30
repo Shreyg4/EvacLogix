@@ -96,14 +96,8 @@ namespace EvacLogix.Sandbox.Rendering
                 {
                     foreach (var spawnPoint in layout.spawnPoints.Where(point => point.floorId == floor.floorId))
                     {
-                        RenderCross($"SpawnPoint_{spawnPoint.spawnPointId}", spawnPoint.position, agentColor, markerRadius * 0.9f);
                         RenderCircle($"SpawnPointHalo_{spawnPoint.spawnPointId}", spawnPoint.position, markerRadius * 1.35f, new Color(agentColor.r, agentColor.g, agentColor.b, 0.25f));
-                    }
-
-                    foreach (var spawnBrushStroke in layout.spawnBrushStrokes.Where(stroke => stroke.floorId == floor.floorId))
-                    {
-                        var centroid = CalculateCentroid(spawnBrushStroke.polygonPoints);
-                        RenderCircle($"LegacySpawnBrush_{spawnBrushStroke.spawnBrushStrokeId}", centroid, markerRadius * 1.1f, new Color(agentColor.r, agentColor.g, agentColor.b, 0.2f));
+                        RenderCircle($"SpawnPoint_{spawnPoint.spawnPointId}", spawnPoint.position, markerRadius * 0.85f, agentColor);
                     }
                 }
             }
@@ -126,7 +120,7 @@ namespace EvacLogix.Sandbox.Rendering
             {
                 foreach (var agent in agentSimulationService.ActiveAgents.Where(candidate => candidate != null && !candidate.HasExited && candidate.FloorId == floor.floorId))
                 {
-                    var position = (Vector2)agent.transform.position;
+                    var position = agent.CurrentWorldPosition;
                     var urgency = Mathf.Clamp01(1f - agent.Health);
                     var radius = markerRadius * (0.6f + urgency * 0.35f);
                     var alpha = Mathf.Lerp(0.4f, 1f, Mathf.Clamp01(agent.Health));
@@ -337,20 +331,5 @@ namespace EvacLogix.Sandbox.Rendering
             renderedObjects.Clear();
         }
 
-        private static Vector2 CalculateCentroid(IReadOnlyList<Vector2> points)
-        {
-            if (points == null || points.Count == 0)
-            {
-                return Vector2.zero;
-            }
-
-            var sum = Vector2.zero;
-            for (var i = 0; i < points.Count; i += 1)
-            {
-                sum += points[i];
-            }
-
-            return sum / points.Count;
-        }
     }
 }

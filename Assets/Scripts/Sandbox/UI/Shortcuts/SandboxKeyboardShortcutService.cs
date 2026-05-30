@@ -164,12 +164,27 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
             cameraController ??= FindAnyObjectByType<SandboxCameraController>();
             previewService ??= GetComponent<SandboxPreviewService>();
 
-            if (previewService != null &&
-                previewService.IsPreviewModeActive &&
-                shortcutId != SandboxShortcutId.ResetCamera &&
-                !IsPreviewAuthoringShortcut(shortcutId))
+            if (previewService != null && previewService.IsPreviewModeActive)
             {
-                return;
+                if (IsPreviewAuthoringShortcut(shortcutId))
+                {
+                    // Keep preview authoring shortcuts flowing.
+                }
+                else if (IsToolSwitchShortcut(shortcutId))
+                {
+                    previewService.ClearInteractionMode();
+                    previewService.ExitPreviewMode();
+                }
+                else if (shortcutId != SandboxShortcutId.ResetCamera &&
+                         shortcutId != SandboxShortcutId.Undo &&
+                         shortcutId != SandboxShortcutId.Redo &&
+                         shortcutId != SandboxShortcutId.CopySelection &&
+                         shortcutId != SandboxShortcutId.PasteSelection &&
+                         shortcutId != SandboxShortcutId.DuplicateSelection &&
+                         shortcutId != SandboxShortcutId.DeleteSelection)
+                {
+                    return;
+                }
             }
 
             switch (shortcutId)
@@ -284,6 +299,22 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                    shortcutId == SandboxShortcutId.SpawnPointBrushTool;
         }
 
+        private static bool IsToolSwitchShortcut(SandboxShortcutId shortcutId)
+        {
+            return shortcutId == SandboxShortcutId.SelectTool ||
+                   shortcutId == SandboxShortcutId.PanTool ||
+                   shortcutId == SandboxShortcutId.MeasureTool ||
+                   shortcutId == SandboxShortcutId.WallLineTool ||
+                   shortcutId == SandboxShortcutId.WallBrushTool ||
+                   shortcutId == SandboxShortcutId.EraseTool ||
+                   shortcutId == SandboxShortcutId.DoorTool ||
+                   shortcutId == SandboxShortcutId.WindowTool ||
+                   shortcutId == SandboxShortcutId.ExitTool ||
+                   shortcutId == SandboxShortcutId.ObstacleTool ||
+                   shortcutId == SandboxShortcutId.TeleportTool ||
+                   shortcutId == SandboxShortcutId.RegionTool;
+        }
+
         private static List<SandboxShortcutBinding> CreateDefaultBindings()
         {
             return new List<SandboxShortcutBinding>
@@ -332,8 +363,8 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 SandboxShortcutId.ExitTool => ("Tools", "Exit Tool", "Place named exit zones with width and priority inputs."),
                 SandboxShortcutId.ObstacleTool => ("Tools", "Obstacle Tool", "Place blocking or slowing obstacle geometry."),
                 SandboxShortcutId.TeleportTool => ("Tools", "Teleport Tool", "Place paired stair, elevator, or escalator transitions across floors."),
-                SandboxShortcutId.SpawnPointTool => ("Spawn", "Spawn Point Tool", "Place individual spawn points inside enclosed rooms for preview."),
-                SandboxShortcutId.SpawnPointBrushTool => ("Spawn", "Spawn Point Brush Tool", "Paint spawn points inside enclosed rooms for preview."),
+                SandboxShortcutId.SpawnPointTool => ("Spawn", "Spawn Point Tool", "Place individual spawn points in enclosed rooms that have exits or windows."),
+                SandboxShortcutId.SpawnPointBrushTool => ("Spawn", "Spawn Point Brush Tool", "Paint spawn points in enclosed rooms that have exits or windows."),
                 SandboxShortcutId.RegionTool => ("Preview", "Region Tool", "Draw named semantic regions for preview semantics."),
                 SandboxShortcutId.Undo => ("Editing", "Undo", "Revert the most recent editor command."),
                 SandboxShortcutId.Redo => ("Editing", "Redo", "Reapply the most recently undone editor command."),

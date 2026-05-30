@@ -119,7 +119,7 @@ namespace EvacLogix.Tests.EditMode
             workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
 
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out _, out var pointFailure, null, "Layout", true), Is.False);
-            Assert.That(pointFailure, Is.EqualTo("Spawn points can only be placed inside enclosed rooms."));
+            Assert.That(pointFailure, Is.EqualTo("Spawn points require at least one exit or window on the floor and must stay inside an enclosed room."));
             Assert.That(previewAuthoringService.PlaceSpawnPointBrush(
                 new[] { new Vector2(0f, 0f), new Vector2(0f, 2f), new Vector2(2f, 2f), new Vector2(2f, 0f) },
                 out _,
@@ -129,7 +129,7 @@ namespace EvacLogix.Tests.EditMode
                 null,
                 "Layout",
                 false), Is.False);
-            Assert.That(brushFailure, Is.EqualTo("Spawn point brushes must stay inside enclosed rooms."));
+            Assert.That(brushFailure, Is.EqualTo("Spawn point brushes require at least one exit or window on the floor and must stay inside an enclosed room."));
 
             CreateEnclosedRoom(wallAuthoringService);
 

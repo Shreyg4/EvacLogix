@@ -127,14 +127,20 @@ namespace EvacLogix.Tests.EditMode
             var servicesHost = new GameObject("ServicesHost");
             var history = servicesHost.AddComponent<SandboxCommandHistory>();
             var toolState = servicesHost.AddComponent<SandboxToolStateService>();
+            var workspaceService = servicesHost.AddComponent<SandboxProjectWorkspaceService>();
+            var previewService = servicesHost.AddComponent<SandboxPreviewService>();
 
             var paletteObject = new GameObject("Palette");
             var palette = paletteObject.AddComponent<SandboxToolPaletteShell>();
 
             palette.SendMessage("Awake");
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            palette.SelectTool(SandboxToolMode.SpawnPoint);
+            Assert.That(previewService.IsPreviewModeActive, Is.True);
             palette.SelectTool(SandboxToolMode.Door);
 
             Assert.That(toolState.CurrentToolMode, Is.EqualTo(SandboxToolMode.Door));
+            Assert.That(previewService.IsPreviewModeActive, Is.False);
             Assert.That(history.CanUndo, Is.True);
             Assert.That(palette.IsToolActive(SandboxToolMode.Door), Is.True);
 

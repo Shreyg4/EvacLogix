@@ -55,6 +55,7 @@ namespace EvacLogix.Sandbox.Rendering
         private SandboxSelectionService selectionService;
         private SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
         private SandboxPreviewAuthoringService previewAuthoringService;
+        private SandboxPreviewService previewService;
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxEditorQoLService editorQoLService;
         private SandboxObjectInteractionOverlay objectInteractionOverlay;
@@ -72,6 +73,7 @@ namespace EvacLogix.Sandbox.Rendering
         private bool selectionEventsSubscribed;
         private bool semanticAuthoringEventsSubscribed;
         private bool previewAuthoringEventsSubscribed;
+        private bool previewEventsSubscribed;
         private bool visualOrganizationEventsSubscribed;
         private bool editorQoLEventsSubscribed;
 
@@ -140,6 +142,12 @@ namespace EvacLogix.Sandbox.Rendering
                 previewAuthoringService.PreviewAuthoringChanged -= HandlePreviewAuthoringChanged;
             }
 
+            if (previewService != null && previewEventsSubscribed)
+            {
+                previewService.PreviewModeChanged -= HandlePreviewModeChanged;
+                previewService.PreviewStateChanged -= HandlePreviewStateChanged;
+            }
+
             if (visualOrganizationService != null && visualOrganizationEventsSubscribed)
             {
                 visualOrganizationService.VisualStateChanged -= HandleVisualStateChanged;
@@ -155,9 +163,11 @@ namespace EvacLogix.Sandbox.Rendering
         {
             var hadWorkspaceService = workspaceService != null;
             var hadPreviewAuthoringService = previewAuthoringService != null;
+            var hadPreviewService = previewService != null;
             ResolveDependencies();
             if ((!hadWorkspaceService && workspaceService != null) ||
-                (!hadPreviewAuthoringService && previewAuthoringService != null))
+                (!hadPreviewAuthoringService && previewAuthoringService != null) ||
+                (!hadPreviewService && previewService != null))
             {
                 Refresh();
             }
@@ -407,34 +417,16 @@ namespace EvacLogix.Sandbox.Rendering
                 }
             }
 
-            if (IsVisible(SandboxVisualObjectType.Spawn))
+            if (previewService == null || !previewService.IsPreviewModeActive)
             {
                 foreach (var layout in project.spawnLayouts)
                 {
                     foreach (var spawnPoint in layout.spawnPoints.Where(point => point.floorId == floor.floorId))
                     {
-                        if (IsHidden(spawnPoint.spawnPointId, SandboxVisualObjectType.Spawn))
-                        {
-                            continue;
-                        }
-
                         RenderSpawnPointMarker(
                             $"SpawnPoint_{spawnPoint.spawnPointId}",
                             spawnPoint.position,
                             ResolveSelectionColor(spawnPoint.spawnPointId, ResolveBaseColor(SandboxVisualObjectType.Spawn)));
-                    }
-
-                    foreach (var spawnBrushStroke in layout.spawnBrushStrokes.Where(stroke => stroke.floorId == floor.floorId))
-                    {
-                        if (IsHidden(spawnBrushStroke.spawnBrushStrokeId, SandboxVisualObjectType.Spawn))
-                        {
-                            continue;
-                        }
-
-                        RenderPolygon(
-                            $"SpawnBrush_{spawnBrushStroke.spawnBrushStrokeId}",
-                            spawnBrushStroke.polygonPoints,
-                            ResolveSelectionColor(spawnBrushStroke.spawnBrushStrokeId, ResolveBaseColor(SandboxVisualObjectType.Spawn)));
                     }
                 }
             }
@@ -493,6 +485,7 @@ namespace EvacLogix.Sandbox.Rendering
             selectionService ??= FindAnyObjectByType<SandboxSelectionService>();
             semanticObjectAuthoringService ??= FindAnyObjectByType<SandboxSemanticObjectAuthoringService>();
             previewAuthoringService ??= FindAnyObjectByType<SandboxPreviewAuthoringService>();
+            previewService ??= FindAnyObjectByType<SandboxPreviewService>();
             visualOrganizationService ??= FindAnyObjectByType<SandboxVisualOrganizationService>();
             editorQoLService ??= FindAnyObjectByType<SandboxEditorQoLService>();
             objectInteractionOverlay ??= FindAnyObjectByType<SandboxObjectInteractionOverlay>();
@@ -520,6 +513,13 @@ namespace EvacLogix.Sandbox.Rendering
             {
                 previewAuthoringService.PreviewAuthoringChanged += HandlePreviewAuthoringChanged;
                 previewAuthoringEventsSubscribed = true;
+            }
+
+            if (previewService != null && !previewEventsSubscribed)
+            {
+                previewService.PreviewModeChanged += HandlePreviewModeChanged;
+                previewService.PreviewStateChanged += HandlePreviewStateChanged;
+                previewEventsSubscribed = true;
             }
 
             if (visualOrganizationService != null && !visualOrganizationEventsSubscribed)
@@ -638,6 +638,16 @@ namespace EvacLogix.Sandbox.Rendering
         }
 
         private void HandlePreviewAuthoringChanged()
+        {
+            Refresh();
+        }
+
+        private void HandlePreviewModeChanged(bool isPreviewModeActive)
+        {
+            Refresh();
+        }
+
+        private void HandlePreviewStateChanged()
         {
             Refresh();
         }
@@ -764,8 +774,7 @@ namespace EvacLogix.Sandbox.Rendering
         {
             var haloColor = new Color(color.r, color.g, color.b, Mathf.Clamp01(color.a * 0.35f));
             RenderCircle($"{name}_Halo", center, markerRadius * 1.2f, haloColor);
-            RenderDiamond($"{name}_Diamond", center, color);
-            RenderCross($"{name}_Cross", center, color, markerRadius * 0.55f);
+            RenderCircle($"{name}_Ring", center, markerRadius * 0.8f, color);
         }
 
         private void RenderCircle(string name, Vector2 center, float radius, Color color)

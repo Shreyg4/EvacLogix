@@ -160,6 +160,7 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             var activeFloor = workspaceService.ActiveFloor;
+            roomDetectionService?.Recalculate();
             if (!IsValidSpawnPointPlacement(activeFloor, position))
             {
                 failureMessage = "Spawn points require at least one exit or window on the floor and must stay inside an enclosed room.";
@@ -238,6 +239,7 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             var activeFloor = workspaceService.ActiveFloor;
+            roomDetectionService?.Recalculate();
             if (!IsValidSpawnPointBrushPlacement(activeFloor, polygonPoints))
             {
                 failureMessage = "Spawn point brushes require at least one exit or window on the floor and must stay inside an enclosed room.";
