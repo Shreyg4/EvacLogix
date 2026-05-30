@@ -1711,7 +1711,10 @@ namespace EvacLogix.Sandbox.Authoring
             return true;
         }
 
-        private static bool AddWallSegment(
+        // Public so non-drawing flows (e.g. clipboard paste) can rebuild a wall with correct junction
+        // topology on a given floor. Pure/static: it only mutates the floor passed in, which is what
+        // clipboard paste needs since it operates on a cloned project.
+        public static bool AddWallSegment(
             FloorData floor,
             string wallSegmentId,
             string startJunctionId,

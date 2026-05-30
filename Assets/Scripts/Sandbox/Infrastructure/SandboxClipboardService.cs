@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Authoring.Commands;
 using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Data;
@@ -20,6 +21,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         Region = 6,
         SpawnPoint = 7,
         SpawnBrush = 8,
+        Wall = 9,
     }
 
     [Serializable]
@@ -35,6 +37,10 @@ namespace EvacLogix.Sandbox.Infrastructure
 
     public sealed class SandboxClipboardService : MonoBehaviour
     {
+        // Only endpoints that are effectively coincident (walls copied together) re-share a junction;
+        // pasted walls never weld to unrelated existing geometry.
+        private const float PasteWallJunctionReuseDistance = 0.001f;
+
         [SerializeField] private Vector2 defaultPasteOffset = new(1f, 1f);
         [SerializeField] private List<SandboxClipboardItem> clipboardItems = new();
 
@@ -113,12 +119,18 @@ namespace EvacLogix.Sandbox.Infrastructure
                     }
 
                     var newSelection = new List<string>();
-                    foreach (var item in clipboardItems)
+
+                    // Walls must paste before openings: the opening re-parent map and the host walls
+                    // they may attach to have to exist first.
+                    var wallIdRemap = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (var item in clipboardItems.Where(candidate => candidate.kind == SandboxClipboardItemKind.Wall))
                     {
-                        if (TryPasteItem(project, floor, item, requestedOffset, newSelection))
-                        {
-                            continue;
-                        }
+                        TryPasteItem(project, floor, item, requestedOffset, newSelection, wallIdRemap);
+                    }
+
+                    foreach (var item in clipboardItems.Where(candidate => candidate.kind != SandboxClipboardItemKind.Wall))
+                    {
+                        TryPasteItem(project, floor, item, requestedOffset, newSelection, wallIdRemap);
                     }
 
                     return newSelection;
@@ -379,6 +391,13 @@ namespace EvacLogix.Sandbox.Infrastructure
             bool restoreTeleportLinksOnPaste,
             ICollection<SandboxClipboardItem> items)
         {
+            var wall = floor.wallSegments.FirstOrDefault(candidate => candidate.wallSegmentId == selectedId);
+            if (wall != null)
+            {
+                items.Add(CreateItem(SandboxClipboardItemKind.Wall, floor.floorId, wall));
+                return true;
+            }
+
             var door = floor.doors.FirstOrDefault(candidate => candidate.doorId == selectedId);
             if (door != null)
             {
@@ -479,16 +498,43 @@ namespace EvacLogix.Sandbox.Infrastructure
             FloorData targetFloor,
             SandboxClipboardItem item,
             Vector2 offset,
-            ICollection<string> newSelection)
+            ICollection<string> newSelection,
+            IDictionary<string, string> wallIdRemap)
         {
             switch (item.kind)
             {
-                case SandboxClipboardItemKind.Door:
-                    if (item.sourceFloorId != targetFloor.floorId)
+                case SandboxClipboardItemKind.Wall:
+                    var wallSegment = JsonUtility.FromJson<WallSegmentData>(item.serializedPayload);
+                    if (wallSegment == null)
                     {
                         return false;
                     }
 
+                    var pastedWallId = SandboxId.NewId();
+                    // Near-zero reuse distance: endpoints coincident with another wall pasted in the
+                    // same batch re-share a junction (preserving the copied chain's connectivity),
+                    // but the paste never welds to unrelated existing geometry.
+                    if (!SandboxWallAuthoringService.AddWallSegment(
+                            targetFloor,
+                            pastedWallId,
+                            SandboxId.NewId(),
+                            SandboxId.NewId(),
+                            wallSegment.startPoint + offset,
+                            wallSegment.endPoint + offset,
+                            wallSegment.thickness,
+                            PasteWallJunctionReuseDistance))
+                    {
+                        return false;
+                    }
+
+                    if (wallIdRemap != null && !string.IsNullOrWhiteSpace(wallSegment.wallSegmentId))
+                    {
+                        wallIdRemap[wallSegment.wallSegmentId] = pastedWallId;
+                    }
+
+                    newSelection.Add(pastedWallId);
+                    return true;
+                case SandboxClipboardItemKind.Door:
                     var door = JsonUtility.FromJson<DoorData>(item.serializedPayload);
                     if (door == null)
                     {
@@ -496,7 +542,15 @@ namespace EvacLogix.Sandbox.Infrastructure
                     }
 
                     door.doorId = SandboxId.NewId();
-                    if (!TryMoveOpening(targetFloor, door.wallSegmentId, ref door.offsetAlongWall, door.width, offset))
+                    if (!TryResolveOpeningHostWall(item, ref door.wallSegmentId, targetFloor, wallIdRemap, out var doorFollowedWall))
+                    {
+                        return false;
+                    }
+
+                    // A re-parented opening rides a wall that was already shifted by the paste offset,
+                    // so its position along that wall is unchanged; a standalone opening shifts along
+                    // its original wall by the offset.
+                    if (!TryMoveOpening(targetFloor, door.wallSegmentId, ref door.offsetAlongWall, door.width, doorFollowedWall ? Vector2.zero : offset))
                     {
                         return false;
                     }
@@ -505,11 +559,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                     newSelection.Add(door.doorId);
                     return true;
                 case SandboxClipboardItemKind.Window:
-                    if (item.sourceFloorId != targetFloor.floorId)
-                    {
-                        return false;
-                    }
-
                     var window = JsonUtility.FromJson<WindowData>(item.serializedPayload);
                     if (window == null)
                     {
@@ -517,7 +566,12 @@ namespace EvacLogix.Sandbox.Infrastructure
                     }
 
                     window.windowId = SandboxId.NewId();
-                    if (!TryMoveOpening(targetFloor, window.wallSegmentId, ref window.offsetAlongWall, window.width, offset))
+                    if (!TryResolveOpeningHostWall(item, ref window.wallSegmentId, targetFloor, wallIdRemap, out var windowFollowedWall))
+                    {
+                        return false;
+                    }
+
+                    if (!TryMoveOpening(targetFloor, window.wallSegmentId, ref window.offsetAlongWall, window.width, windowFollowedWall ? Vector2.zero : offset))
                     {
                         return false;
                     }
@@ -733,6 +787,29 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             return false;
+        }
+
+        // Resolves which wall a pasted opening attaches to. If its original host wall was copied in
+        // the same batch, the opening follows the pasted wall (and may cross floors with it).
+        // Otherwise it stays on its original wall, which only exists on the source floor.
+        private static bool TryResolveOpeningHostWall(
+            SandboxClipboardItem item,
+            ref string wallSegmentId,
+            FloorData targetFloor,
+            IDictionary<string, string> wallIdRemap,
+            out bool followedCopiedWall)
+        {
+            followedCopiedWall = false;
+            if (wallIdRemap != null &&
+                !string.IsNullOrWhiteSpace(wallSegmentId) &&
+                wallIdRemap.TryGetValue(wallSegmentId, out var remappedWallId))
+            {
+                wallSegmentId = remappedWallId;
+                followedCopiedWall = true;
+                return true;
+            }
+
+            return item.sourceFloorId == targetFloor.floorId;
         }
 
         private bool TryMoveOpening(FloorData floor, string wallSegmentId, ref float offsetAlongWall, float width, Vector2 delta)

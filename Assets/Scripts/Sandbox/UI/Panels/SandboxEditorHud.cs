@@ -8,6 +8,7 @@ using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Rendering;
 using EvacLogix.Sandbox.UI.Overlays;
 using UnityEngine;
 
@@ -58,6 +59,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         private SandboxInspectorPanelShell inspectorPanelShell;
         private SandboxVisualLegendShell visualLegendShell;
         private SandboxValidationPanelShell validationPanelShell;
+        private SandboxCameraController cameraController;
         private SandboxStatusBarShell statusBarShell;
         private SandboxNewProjectDialogShell newProjectDialogShell;
         private SandboxProjectWorkspaceService workspaceService;
@@ -909,6 +911,10 @@ namespace EvacLogix.Sandbox.UI.Panels
             DrawActionButton("Refresh", () => validationPanelShell?.RefreshValidation(), workspaceService?.ActiveProject != null);
             DrawActionButton("Rebuild All", () => validationPanelShell?.RebuildAll(), workspaceService?.ActiveProject != null);
             GUILayout.EndHorizontal();
+
+            // View-recovery: snap the camera back to world origin at default zoom. Always available
+            // since it only affects the view, not project state.
+            DrawActionButton("Move to Origin", () => (cameraController ??= FindAnyObjectByType<SandboxCameraController>())?.MoveToOrigin(), true);
 
             GUILayout.Label(validationPanelShell != null && validationPanelShell.HasBlockingIssues
                 ? "Blocking issues present."
