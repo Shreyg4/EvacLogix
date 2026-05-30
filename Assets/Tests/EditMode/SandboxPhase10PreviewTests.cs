@@ -63,7 +63,7 @@ namespace EvacLogix.Tests.EditMode
                 out var workspaceService,
                 out _,
                 out var wallAuthoringService,
-                out _,
+                out var semanticObjectAuthoringService,
                 out var previewAuthoringService,
                 out _,
                 out _,
