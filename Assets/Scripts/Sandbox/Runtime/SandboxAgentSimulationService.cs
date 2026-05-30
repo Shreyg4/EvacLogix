@@ -36,6 +36,7 @@ namespace EvacLogix.Sandbox.Runtime
 
         public IReadOnlyList<SandboxEvacueeAgent> ActiveAgents => activeAgents;
         public bool SimulationActive => simulationActive;
+        public float AgentRadius => GetProfile().Radius;
 
         private void Awake()
         {
