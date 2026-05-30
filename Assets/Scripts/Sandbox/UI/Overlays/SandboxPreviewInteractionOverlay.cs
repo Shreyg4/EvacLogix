@@ -93,8 +93,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
 
             previewService.SetActiveSpawnLayout(resolvedLayoutId);
-            previewService.ClearInteractionMode();
-            UpdateStatus("Placed spawn point.");
+            UpdateStatus("Placed spawn point. Click again to add another.");
         }
 
         private void HandleSpawnPointBrushPlacement(Vector2 worldPoint)
@@ -135,9 +134,8 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 }
 
                 previewService.SetActiveSpawnLayout(resolvedLayoutId);
-                previewService.ClearInteractionMode();
                 activeBrushPoints.Clear();
-                UpdateStatus("Committed spawn point brush.");
+                UpdateStatus("Committed spawn point brush. Drag again to add more.");
                 return;
             }
 
