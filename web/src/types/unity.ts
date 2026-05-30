@@ -6,4 +6,5 @@ export type UnityBuildConfig = {
   companyName?: string;
   productName: string;
   productVersion?: string;
+  autoSyncPersistentDataPath?: boolean;
 };

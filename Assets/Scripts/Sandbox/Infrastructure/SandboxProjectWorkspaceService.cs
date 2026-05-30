@@ -44,7 +44,17 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public BuildingProjectData CreateNewProject(SandboxProjectTemplateKind templateKind)
         {
+            return CreateNewProject(templateKind, string.Empty);
+        }
+
+        public BuildingProjectData CreateNewProject(SandboxProjectTemplateKind templateKind, string projectName)
+        {
             var project = SandboxProjectFactory.Create(templateKind);
+            if (!string.IsNullOrWhiteSpace(projectName))
+            {
+                project.metadata.buildingName = projectName.Trim();
+            }
+
             SetActiveProject(project);
             return project;
         }

@@ -8,6 +8,8 @@ namespace EvacLogix.Sandbox.UI.Panels
     {
         [SerializeField] private bool isOpen = true;
         [SerializeField] private SandboxProjectTemplateKind selectedTemplate = SandboxProjectTemplateKind.DefaultTemplate;
+        [SerializeField] private string projectNameDraft = string.Empty;
+        [SerializeField] private string validationMessage = string.Empty;
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxOnboardingOverlayShell onboardingOverlay;
@@ -15,6 +17,12 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public bool IsOpen => isOpen;
         public SandboxProjectTemplateKind SelectedTemplate => selectedTemplate;
+        public string ProjectNameDraft
+        {
+            get => projectNameDraft;
+            set => projectNameDraft = value ?? string.Empty;
+        }
+        public string ValidationMessage => validationMessage;
 
         private void Awake()
         {
@@ -26,6 +34,12 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         public void Open()
         {
+            validationMessage = string.Empty;
+            if (string.IsNullOrWhiteSpace(projectNameDraft))
+            {
+                projectNameDraft = "New Project";
+            }
+
             isOpen = true;
         }
 
@@ -51,15 +65,22 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void CreateProject(SandboxProjectTemplateKind templateKind)
         {
-            workspaceService?.CreateNewProject(templateKind);
+            if (string.IsNullOrWhiteSpace(projectNameDraft))
+            {
+                validationMessage = "Project name is required.";
+                return;
+            }
+
+            workspaceService?.CreateNewProject(templateKind, projectNameDraft.Trim());
             onboardingOverlay?.ShowProjectCreationGuidance();
             if (statusBar != null)
             {
                 statusBar.StatusMessage = templateKind == SandboxProjectTemplateKind.DefaultTemplate
-                    ? "Created default sandbox project."
-                    : "Created blank sandbox project.";
+                    ? $"Created default sandbox project '{projectNameDraft.Trim()}'."
+                    : $"Created blank sandbox project '{projectNameDraft.Trim()}'.";
             }
             selectedTemplate = templateKind;
+            validationMessage = string.Empty;
             isOpen = false;
         }
     }

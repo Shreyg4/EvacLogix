@@ -9,12 +9,21 @@ using UnityEngine;
 
 namespace EvacLogix.Sandbox.Infrastructure
 {
+    public sealed class SandboxSavedProjectInfo
+    {
+        public string projectId = string.Empty;
+        public string displayName = string.Empty;
+        public string savedUtc = string.Empty;
+        public string filePath = string.Empty;
+    }
+
     public sealed class SandboxSaveLoadService : MonoBehaviour
     {
         [SerializeField] private string activeProjectId = string.Empty;
         [SerializeField] private string lastSavePath = string.Empty;
         [SerializeField] private string lastAutosavePath = string.Empty;
         [SerializeField] private string autosaveRootDirectory = string.Empty;
+        [SerializeField] private string projectLibraryRootDirectory = string.Empty;
         [SerializeField] private string recoveryAutosavePath = string.Empty;
         [SerializeField] private string recoveryPromptMessage = string.Empty;
         [SerializeField] private string lastError = string.Empty;
@@ -40,6 +49,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         public string LastSavePath => lastSavePath;
         public string LastAutosavePath => lastAutosavePath;
         public string AutosaveRootDirectory => autosaveRootDirectory;
+        public string ProjectLibraryRootDirectory => projectLibraryRootDirectory;
         public string RecoveryAutosavePath => recoveryAutosavePath;
         public string RecoveryPromptMessage => recoveryPromptMessage;
         public string LastError => lastError;
@@ -59,6 +69,9 @@ namespace EvacLogix.Sandbox.Infrastructure
             autosaveRootDirectory = string.IsNullOrWhiteSpace(autosaveRootDirectory)
                 ? Path.Combine(Application.persistentDataPath, "SandboxAutosaves")
                 : autosaveRootDirectory;
+            projectLibraryRootDirectory = string.IsNullOrWhiteSpace(projectLibraryRootDirectory)
+                ? Path.Combine(Application.persistentDataPath, "SandboxProjects")
+                : projectLibraryRootDirectory;
 
             workspaceService = GetComponent<SandboxProjectWorkspaceService>();
             if (workspaceService != null)
@@ -109,6 +122,14 @@ namespace EvacLogix.Sandbox.Infrastructure
             autosaveIntervalSeconds = Mathf.Max(1f, intervalSeconds);
             autosaveEditThreshold = Mathf.Max(1, editThreshold);
             autosaveEnabled = enabled;
+            RaiseStateChanged();
+        }
+
+        public void ConfigureProjectLibrary(string rootDirectory)
+        {
+            projectLibraryRootDirectory = string.IsNullOrWhiteSpace(rootDirectory)
+                ? Path.Combine(Application.persistentDataPath, "SandboxProjects")
+                : rootDirectory;
             RaiseStateChanged();
         }
 
@@ -195,6 +216,87 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
         }
 
+        public bool SaveActiveProjectToLibrary(string projectName = "", bool prettyPrint = true)
+        {
+            if (activeProject == null)
+            {
+                return false;
+            }
+
+            var resolvedName = string.IsNullOrWhiteSpace(projectName)
+                ? activeProject.metadata?.buildingName
+                : projectName;
+            if (string.IsNullOrWhiteSpace(resolvedName))
+            {
+                lastError = "Project name is required before saving.";
+                RaiseStateChanged();
+                return false;
+            }
+
+            activeProject.metadata ??= new ProjectMetadataData();
+            activeProject.metadata.buildingName = resolvedName.Trim();
+            SandboxProjectDataUtility.EnsureIds(activeProject);
+            return SaveActiveProjectToPath(BuildLibraryProjectPath(activeProject.projectId), prettyPrint);
+        }
+
+        public BuildingProjectData LoadProjectFromLibrary(string projectId)
+        {
+            if (string.IsNullOrWhiteSpace(projectId))
+            {
+                return null;
+            }
+
+            return LoadProjectFromPath(BuildLibraryProjectPath(projectId), true);
+        }
+
+        public bool DeleteProjectFromLibrary(string projectId)
+        {
+            if (string.IsNullOrWhiteSpace(projectId))
+            {
+                return false;
+            }
+
+            try
+            {
+                var projectDirectory = BuildLibraryProjectDirectory(projectId);
+                if (!Directory.Exists(projectDirectory))
+                {
+                    return false;
+                }
+
+                Directory.Delete(projectDirectory, true);
+                if (string.Equals(activeProjectId, projectId, StringComparison.Ordinal))
+                {
+                    lastSavePath = string.Empty;
+                    hasUnsavedChanges = true;
+                }
+
+                ClearError();
+                RaiseStateChanged();
+                return true;
+            }
+            catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+            {
+                lastError = exception.Message;
+                RaiseStateChanged();
+                return false;
+            }
+        }
+
+        public SandboxSavedProjectInfo[] GetSavedProjects()
+        {
+            if (string.IsNullOrWhiteSpace(projectLibraryRootDirectory) || !Directory.Exists(projectLibraryRootDirectory))
+            {
+                return Array.Empty<SandboxSavedProjectInfo>();
+            }
+
+            return Directory.GetFiles(projectLibraryRootDirectory, "project.json", SearchOption.AllDirectories)
+                .Select(TryReadSavedProjectInfo)
+                .Where(info => info != null)
+                .OrderByDescending(info => TryParseUtc(info.savedUtc, out var savedUtc) ? savedUtc : DateTime.MinValue)
+                .ToArray();
+        }
+
         public bool ForceAutosaveNow()
         {
             if (!autosaveEnabled || activeProject == null)
@@ -255,6 +357,8 @@ namespace EvacLogix.Sandbox.Infrastructure
             {
                 var project = SandboxProjectSerializer.Deserialize(json);
                 ApplyLoadedProject(project, setAsWorkingSavePath ? workingSavePath : lastSavePath, false);
+                hasUnsavedChanges = true;
+                RaiseStateChanged();
                 return project;
             }
             catch (Exception exception) when (exception is IOException || exception is SandboxMigrationException || exception is ArgumentException)
@@ -436,6 +540,17 @@ namespace EvacLogix.Sandbox.Infrastructure
             return Path.Combine(autosaveRootDirectory, safeProjectId, "autosave.json");
         }
 
+        private string BuildLibraryProjectDirectory(string projectId)
+        {
+            var safeProjectId = string.IsNullOrWhiteSpace(projectId) ? "unsaved-project" : projectId;
+            return Path.Combine(projectLibraryRootDirectory, safeProjectId);
+        }
+
+        private string BuildLibraryProjectPath(string projectId)
+        {
+            return Path.Combine(BuildLibraryProjectDirectory(projectId), "project.json");
+        }
+
         private void ClearAutosaveSnapshotForActiveProject()
         {
             var autosavePath = BuildAutosavePath(activeProjectId);
@@ -468,6 +583,34 @@ namespace EvacLogix.Sandbox.Infrastructure
             var timestamp = project?.metadata?.updatedUtc;
             return !string.IsNullOrWhiteSpace(timestamp) &&
                    DateTime.TryParse(timestamp, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out updatedUtc);
+        }
+
+        private static bool TryParseUtc(string timestamp, out DateTime parsed)
+        {
+            return DateTime.TryParse(timestamp, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out parsed);
+        }
+
+        private static SandboxSavedProjectInfo TryReadSavedProjectInfo(string path)
+        {
+            try
+            {
+                var project = SandboxProjectFileStorage.ReadProjectFromPath(path);
+                return new SandboxSavedProjectInfo
+                {
+                    projectId = project.projectId,
+                    displayName = string.IsNullOrWhiteSpace(project.metadata?.buildingName)
+                        ? "Untitled Project"
+                        : project.metadata.buildingName,
+                    savedUtc = string.IsNullOrWhiteSpace(project.metadata?.lastManualSaveUtc)
+                        ? project.metadata?.updatedUtc ?? string.Empty
+                        : project.metadata.lastManualSaveUtc,
+                    filePath = path,
+                };
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static bool IsRecoveryNewerThanManualSave(BuildingProjectData project, DateTime updatedUtc)
