@@ -149,6 +149,12 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(semanticObjectAuthoringService.PlaceExit(new Vector2(1f, 1f), out _, new Vector2(1.5f, 1.5f), 0f, 1.5f, 50f, 1f, "Lobby Exit"), Is.True);
 
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out _, out _, null, "Layout", true), Is.True);
+            Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1.2f, 1f), out _, out _, out var overlapFailure, null, "Layout", true), Is.False);
+            Assert.That(overlapFailure, Does.Contain("agent circles"));
+            Assert.That(validationService.Issues.Any(issue =>
+                issue.issueType == ValidationIssueType.Conflict &&
+                issue.message.Contains("agent circles") &&
+                issue.message.Contains("1.20")), Is.True);
 
             Object.DestroyImmediate(host);
         }

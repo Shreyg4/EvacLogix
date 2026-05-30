@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Data.Validation;
+using EvacLogix.Sandbox.Runtime;
 using UnityEngine;
 
 namespace EvacLogix.Sandbox.Infrastructure
@@ -18,6 +19,7 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxColliderRebuildService colliderRebuildService;
+        private SandboxAgentSimulationService agentSimulationService;
         private SandboxWorkspaceStateService workspaceStateService;
 
         public event Action<IReadOnlyList<ValidationIssueData>> ValidationIssuesChanged;
@@ -62,6 +64,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         {
             workspaceService ??= GetComponent<SandboxProjectWorkspaceService>();
             colliderRebuildService ??= GetComponent<SandboxColliderRebuildService>();
+            agentSimulationService ??= GetComponent<SandboxAgentSimulationService>();
             workspaceStateService ??= GetComponent<SandboxWorkspaceStateService>();
 
             if (!subscribedToColliders && colliderRebuildService != null)
@@ -142,6 +145,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                 project,
                 colliderRebuildService?.GeneratedColliders,
                 workspaceStateService != null ? workspaceStateService.GridSize : 0.5f);
+            AddAgentSpacingIssues(project, nextIssues);
             ReplaceIssues(nextIssues);
             return issues;
         }
@@ -161,6 +165,54 @@ namespace EvacLogix.Sandbox.Infrastructure
         private void HandleCollidersRebuilt(IReadOnlyList<SandboxGeneratedColliderData> generatedColliders, bool wasFullRebuild, string floorId)
         {
             ValidateActiveProject();
+        }
+
+        private void AddAgentSpacingIssues(BuildingProjectData project, ICollection<ValidationIssueData> issues)
+        {
+            if (project == null || project.spawnLayouts == null || project.spawnLayouts.Count == 0)
+            {
+                return;
+            }
+
+            var agentRadius = agentSimulationService != null ? agentSimulationService.AgentRadius : 0.25f;
+            var minimumSpacing = Mathf.Max(0.1f, agentRadius * 2f);
+            var floorSpawnPoints = project.spawnLayouts
+                .Where(layout => layout?.spawnPoints != null)
+                .SelectMany(layout => layout.spawnPoints.Select(point => new SpawnPointPlacementContext(point)))
+                .Where(context => context.point != null && !string.IsNullOrWhiteSpace(context.point.floorId))
+                .GroupBy(context => context.point.floorId, StringComparer.Ordinal);
+
+            foreach (var floorGroup in floorSpawnPoints)
+            {
+                var points = floorGroup.ToList();
+                for (var leftIndex = 0; leftIndex < points.Count; leftIndex += 1)
+                {
+                    for (var rightIndex = leftIndex + 1; rightIndex < points.Count; rightIndex += 1)
+                    {
+                        var left = points[leftIndex];
+                        var right = points[rightIndex];
+                        var distance = Vector2.Distance(left.point.position, right.point.position);
+                        if (distance >= minimumSpacing)
+                        {
+                            continue;
+                        }
+
+                        var pairId = string.CompareOrdinal(left.point.spawnPointId, right.point.spawnPointId) <= 0
+                            ? $"{left.point.spawnPointId}:{right.point.spawnPointId}"
+                            : $"{right.point.spawnPointId}:{left.point.spawnPointId}";
+                        issues.Add(new ValidationIssueData
+                        {
+                            issueId = $"agent-spacing-{floorGroup.Key}-{pairId}",
+                            floorId = floorGroup.Key,
+                            objectId = pairId,
+                            severity = ValidationIssueSeverity.BlockingError,
+                            issueType = ValidationIssueType.Conflict,
+                            title = "Spawn point agents overlap",
+                            message = $"Spawn points '{left.point.spawnPointId}' and '{right.point.spawnPointId}' are only {distance:0.00} units apart, but agent circles need at least {minimumSpacing:0.00} units of spacing."
+                        });
+                    }
+                }
+            }
         }
 
         private static List<SandboxValidationFloorGroup> BuildGroups(
@@ -195,6 +247,16 @@ namespace EvacLogix.Sandbox.Infrastructure
                 })
                 .OrderBy(group => group.label, StringComparer.Ordinal)
                 .ToList();
+        }
+
+        private readonly struct SpawnPointPlacementContext
+        {
+            public SpawnPointPlacementContext(SpawnPointData point)
+            {
+                this.point = point;
+            }
+
+            public SpawnPointData point { get; }
         }
 
         private void PublishIssues()
