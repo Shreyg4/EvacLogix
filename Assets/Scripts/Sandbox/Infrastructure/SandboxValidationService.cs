@@ -10,8 +10,6 @@ namespace EvacLogix.Sandbox.Infrastructure
     public sealed class SandboxValidationService : MonoBehaviour
     {
         [SerializeField] private List<ValidationIssueData> issues = new();
-        [SerializeField] private List<ValidationIssueData> structuralIssues = new();
-        [SerializeField] private List<ValidationIssueData> previewPlacementIssues = new();
         [SerializeField] private List<SandboxValidationFloorGroup> groupedIssues = new();
         [SerializeField] private bool hasBlockingIssues;
         [SerializeField] private string lastValidatedUtc = string.Empty;
@@ -83,48 +81,20 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public void ReplaceIssues(IEnumerable<ValidationIssueData> nextIssues)
         {
-            structuralIssues = nextIssues == null ? new List<ValidationIssueData>() : new List<ValidationIssueData>(nextIssues);
-            PublishIssues();
-        }
+            issues = nextIssues == null ? new List<ValidationIssueData>() : new List<ValidationIssueData>(nextIssues);
+            groupedIssues = BuildGroups(issues, workspaceService?.ActiveProject);
+            hasBlockingIssues = issues.Any(issue => issue.severity == ValidationIssueSeverity.BlockingError);
+            lastValidatedUtc = DateTime.UtcNow.ToString("O");
 
-        public void SetPreviewPlacementValidationIssue(
-            string floorId,
-            string objectId,
-            string title,
-            string message)
-        {
-            if (string.IsNullOrWhiteSpace(message))
+            var project = workspaceService?.ActiveProject;
+            if (project != null)
             {
-                ClearPreviewPlacementValidationIssue();
-                return;
+                project.validationSnapshot ??= new ValidationSnapshotData();
+                project.validationSnapshot.lastValidatedUtc = lastValidatedUtc;
+                project.validationSnapshot.issues = new List<ValidationIssueData>(issues);
             }
 
-            previewPlacementIssues = new List<ValidationIssueData>
-            {
-                new()
-                {
-                    issueId = "preview-spawn-placement",
-                    floorId = floorId ?? string.Empty,
-                    objectId = objectId ?? string.Empty,
-                    severity = ValidationIssueSeverity.BlockingError,
-                    issueType = ValidationIssueType.Preview,
-                    title = string.IsNullOrWhiteSpace(title) ? "Preview placement error" : title,
-                    message = message
-                }
-            };
-
-            PublishIssues();
-        }
-
-        public void ClearPreviewPlacementValidationIssue()
-        {
-            if (previewPlacementIssues.Count == 0)
-            {
-                return;
-            }
-
-            previewPlacementIssues = new List<ValidationIssueData>();
-            PublishIssues();
+            ValidationIssuesChanged?.Invoke(issues);
         }
 
         public IReadOnlyList<ValidationIssueData> ValidateActiveProject()
@@ -152,8 +122,6 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public void Clear()
         {
-            structuralIssues = new List<ValidationIssueData>();
-            previewPlacementIssues = new List<ValidationIssueData>();
             ReplaceIssues(Array.Empty<ValidationIssueData>());
         }
 
@@ -194,26 +162,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                 })
                 .OrderBy(group => group.label, StringComparer.Ordinal)
                 .ToList();
-        }
-
-        private void PublishIssues()
-        {
-            issues = structuralIssues
-                .Concat(previewPlacementIssues)
-                .ToList();
-            groupedIssues = BuildGroups(issues, workspaceService?.ActiveProject);
-            hasBlockingIssues = issues.Any(issue => issue.severity == ValidationIssueSeverity.BlockingError);
-            lastValidatedUtc = DateTime.UtcNow.ToString("O");
-
-            var project = workspaceService?.ActiveProject;
-            if (project != null)
-            {
-                project.validationSnapshot ??= new ValidationSnapshotData();
-                project.validationSnapshot.lastValidatedUtc = lastValidatedUtc;
-                project.validationSnapshot.issues = new List<ValidationIssueData>(structuralIssues);
-            }
-
-            ValidationIssuesChanged?.Invoke(issues);
         }
     }
 }

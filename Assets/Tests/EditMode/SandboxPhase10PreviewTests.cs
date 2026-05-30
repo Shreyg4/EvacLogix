@@ -104,7 +104,7 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
-        public void PreviewAuthoring_ReportsDistinctSpawnPlacementFailures()
+        public void PreviewAuthoring_RequiresAnEnclosedRoomForSpawnPoints()
         {
             var host = CreatePhase10Host(
                 out var workspaceService,
@@ -115,13 +115,11 @@ namespace EvacLogix.Tests.EditMode
                 out _,
                 out _,
                 out _);
-            var validationService = host.GetComponent<SandboxValidationService>();
 
             workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
 
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out _, out var pointFailure, null, "Layout", true), Is.False);
-            Assert.That(pointFailure, Is.EqualTo("Spawn points must be placed inside a detected room."));
-            Assert.That(validationService.Issues.Any(issue => issue.message == pointFailure && issue.issueType == ValidationIssueType.Preview), Is.True);
+            Assert.That(pointFailure, Is.EqualTo("Spawn points require at least one exit or window on the floor and must stay inside an enclosed room."));
             Assert.That(previewAuthoringService.PlaceSpawnPointBrush(
                 new[] { new Vector2(0f, 0f), new Vector2(0f, 2f), new Vector2(2f, 2f), new Vector2(2f, 0f) },
                 out _,
@@ -131,25 +129,9 @@ namespace EvacLogix.Tests.EditMode
                 null,
                 "Layout",
                 false), Is.False);
-            Assert.That(brushFailure, Is.EqualTo("Spawn point brushes must stay inside detected rooms."));
-            Assert.That(validationService.Issues.Any(issue => issue.message == brushFailure && issue.issueType == ValidationIssueType.Preview), Is.True);
+            Assert.That(brushFailure, Is.EqualTo("Spawn point brushes require at least one exit or window on the floor and must stay inside an enclosed room."));
 
             CreateEnclosedRoom(wallAuthoringService);
-
-            Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out _, out var pointNoAccessFailure, null, "Layout", true), Is.False);
-            Assert.That(pointNoAccessFailure, Is.EqualTo("Spawn points require at least one exit or window on the floor."));
-            Assert.That(previewAuthoringService.PlaceSpawnPointBrush(
-                new[] { new Vector2(0f, 0f), new Vector2(0f, 2f), new Vector2(2f, 2f), new Vector2(2f, 0f) },
-                out _,
-                out _,
-                out var brushNoAccessFailure,
-                1f,
-                null,
-                "Layout",
-                false), Is.False);
-            Assert.That(brushNoAccessFailure, Is.EqualTo("Spawn point brushes require at least one exit or window on the floor."));
-
-            Assert.That(semanticObjectAuthoringService.PlaceExit(new Vector2(1f, 1f), out _, new Vector2(1.5f, 1.5f), 0f, 1.5f, 50f, 1f, "Lobby Exit"), Is.True);
 
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out _, out _, null, "Layout", true), Is.True);
 

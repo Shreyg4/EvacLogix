@@ -161,13 +161,9 @@ namespace EvacLogix.Sandbox.Authoring
 
             var activeFloor = workspaceService.ActiveFloor;
             roomDetectionService?.Recalculate();
-            if (!TryValidateSpawnPointPlacement(activeFloor, position, out failureMessage))
+            if (!IsValidSpawnPointPlacement(activeFloor, position))
             {
-                validationService?.SetPreviewPlacementValidationIssue(
-                    activeFloor.floorId,
-                    string.Empty,
-                    "Spawn point placement failed",
-                    failureMessage);
+                failureMessage = "Spawn points require at least one exit or window on the floor and must stay inside an enclosed room.";
                 return false;
             }
 
@@ -196,7 +192,6 @@ namespace EvacLogix.Sandbox.Authoring
 
             if (didPlace)
             {
-                validationService?.ClearPreviewPlacementValidationIssue();
                 spawnPointId = createdSpawnPointId;
                 resolvedSpawnLayoutId = capturedLayoutId;
             }
@@ -245,13 +240,9 @@ namespace EvacLogix.Sandbox.Authoring
 
             var activeFloor = workspaceService.ActiveFloor;
             roomDetectionService?.Recalculate();
-            if (!TryValidateSpawnPointBrushPlacement(activeFloor, polygonPoints, out failureMessage))
+            if (!IsValidSpawnPointBrushPlacement(activeFloor, polygonPoints))
             {
-                validationService?.SetPreviewPlacementValidationIssue(
-                    activeFloor.floorId,
-                    string.Empty,
-                    "Spawn point brush placement failed",
-                    failureMessage);
+                failureMessage = "Spawn point brushes require at least one exit or window on the floor and must stay inside an enclosed room.";
                 return false;
             }
 
@@ -292,7 +283,6 @@ namespace EvacLogix.Sandbox.Authoring
 
             if (didPlace)
             {
-                validationService?.ClearPreviewPlacementValidationIssue();
                 spawnPointIds = createdSpawnPointIds;
                 resolvedSpawnLayoutId = capturedLayoutId;
             }
@@ -590,40 +580,18 @@ namespace EvacLogix.Sandbox.Authoring
             return true;
         }
 
-        private bool TryValidateSpawnPointPlacement(FloorData floor, Vector2 position, out string failureMessage)
+        private bool IsValidSpawnPointPlacement(FloorData floor, Vector2 position)
         {
-            failureMessage = string.Empty;
-            if (!HasSpawnAccessPoints(floor))
-            {
-                failureMessage = "Spawn points require at least one exit or window on the floor.";
-                return false;
-            }
-
-            if (roomDetectionService == null || !roomDetectionService.IsPointInsideCompleteRoom(floor.floorId, position))
-            {
-                failureMessage = "Spawn points must be placed inside a detected room.";
-                return false;
-            }
-
-            return true;
+            return HasSpawnAccessPoints(floor) &&
+                   roomDetectionService != null &&
+                   roomDetectionService.IsPointInsideCompleteRoom(floor.floorId, position);
         }
 
-        private bool TryValidateSpawnPointBrushPlacement(FloorData floor, IReadOnlyList<Vector2> polygonPoints, out string failureMessage)
+        private bool IsValidSpawnPointBrushPlacement(FloorData floor, IReadOnlyList<Vector2> polygonPoints)
         {
-            failureMessage = string.Empty;
-            if (!HasSpawnAccessPoints(floor))
-            {
-                failureMessage = "Spawn point brushes require at least one exit or window on the floor.";
-                return false;
-            }
-
-            if (roomDetectionService == null || !roomDetectionService.ArePointsInsideCompleteRooms(floor.floorId, polygonPoints))
-            {
-                failureMessage = "Spawn point brushes must stay inside detected rooms.";
-                return false;
-            }
-
-            return true;
+            return HasSpawnAccessPoints(floor) &&
+                   roomDetectionService != null &&
+                   roomDetectionService.ArePointsInsideCompleteRooms(floor.floorId, polygonPoints);
         }
 
         private static bool HasSpawnAccessPoints(FloorData floor)
