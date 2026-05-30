@@ -34,7 +34,6 @@ namespace EvacLogix.Sandbox.Core
         private const string ValidationHighlightRootName = "ValidationHighlightRoot";
         private const string DiagnosticsOverlayRootName = "DiagnosticsOverlayRoot";
         private const string RoomOverlayRootName = "RoomOverlayRoot";
-        private const string NavMeshPlaneRootName = "NavMeshPlaneRoot";
 
         [SerializeField] private string editorCameraName = "Main Camera";
 
@@ -96,7 +95,6 @@ namespace EvacLogix.Sandbox.Core
             var semanticRoot = FindOrCreateNestedRoot(WorldRootName, "SemanticRoot");
             FindOrCreateNestedRoot(WorldRootName, HandleRootName);
             FindOrCreateNestedRoot(WorldRootName, ColliderRootName);
-            FindOrCreateNestedRoot(WorldRootName, NavMeshPlaneRootName);
             EnsureComponent<SandboxOverviewNavigator>(overlayRoot);
             EnsureComponent<SandboxOnboardingOverlayShell>(overlayRoot);
             EnsureComponent<SandboxCalibrationCaptureOverlay>(overlayRoot);
