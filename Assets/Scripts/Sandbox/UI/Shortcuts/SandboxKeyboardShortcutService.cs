@@ -164,12 +164,27 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
             cameraController ??= FindAnyObjectByType<SandboxCameraController>();
             previewService ??= GetComponent<SandboxPreviewService>();
 
-            if (previewService != null &&
-                previewService.IsPreviewModeActive &&
-                shortcutId != SandboxShortcutId.ResetCamera &&
-                !IsPreviewAuthoringShortcut(shortcutId))
+            if (previewService != null && previewService.IsPreviewModeActive)
             {
-                return;
+                if (IsPreviewAuthoringShortcut(shortcutId))
+                {
+                    // Keep preview authoring shortcuts flowing.
+                }
+                else if (IsToolSwitchShortcut(shortcutId))
+                {
+                    previewService.ClearInteractionMode();
+                    previewService.ExitPreviewMode();
+                }
+                else if (shortcutId != SandboxShortcutId.ResetCamera &&
+                         shortcutId != SandboxShortcutId.Undo &&
+                         shortcutId != SandboxShortcutId.Redo &&
+                         shortcutId != SandboxShortcutId.CopySelection &&
+                         shortcutId != SandboxShortcutId.PasteSelection &&
+                         shortcutId != SandboxShortcutId.DuplicateSelection &&
+                         shortcutId != SandboxShortcutId.DeleteSelection)
+                {
+                    return;
+                }
             }
 
             switch (shortcutId)
@@ -279,6 +294,22 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
         {
             return shortcutId == SandboxShortcutId.SpawnPointTool ||
                    shortcutId == SandboxShortcutId.SpawnPointBrushTool;
+        }
+
+        private static bool IsToolSwitchShortcut(SandboxShortcutId shortcutId)
+        {
+            return shortcutId == SandboxShortcutId.SelectTool ||
+                   shortcutId == SandboxShortcutId.PanTool ||
+                   shortcutId == SandboxShortcutId.MeasureTool ||
+                   shortcutId == SandboxShortcutId.WallLineTool ||
+                   shortcutId == SandboxShortcutId.WallBrushTool ||
+                   shortcutId == SandboxShortcutId.EraseTool ||
+                   shortcutId == SandboxShortcutId.DoorTool ||
+                   shortcutId == SandboxShortcutId.WindowTool ||
+                   shortcutId == SandboxShortcutId.ExitTool ||
+                   shortcutId == SandboxShortcutId.ObstacleTool ||
+                   shortcutId == SandboxShortcutId.TeleportTool ||
+                   shortcutId == SandboxShortcutId.RegionTool;
         }
 
         private static List<SandboxShortcutBinding> CreateDefaultBindings()
