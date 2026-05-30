@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using EvacLogix.Sandbox.Authoring;
@@ -25,9 +26,16 @@ namespace EvacLogix.Sandbox.UI.Panels
             Window = 6,
         }
 
+        private enum FloorLevelView
+        {
+            All = 0,
+            Surface = 1,
+            Basement = 2,
+        }
+
         [SerializeField] private string blueprintImportPath = string.Empty;
         [SerializeField] private string calibrationDistanceText = "10";
-        [SerializeField] private string pendingFloorName = "Floor";
+        [SerializeField] private string pendingFloorName = string.Empty;
         [SerializeField] private string selectionSizeXText = string.Empty;
         [SerializeField] private string selectionSizeYText = string.Empty;
         [SerializeField] private string windowEscapeCostText = "1";
@@ -39,6 +47,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         [SerializeField] private bool inspectorCollapsed;
         [SerializeField] private bool validationCollapsed;
         [SerializeField] private bool statusBarCollapsed;
+        [SerializeField] private FloorLevelView selectedFloorLevelView = FloorLevelView.All;
         [SerializeField] private Vector2 toolScrollPosition;
         [SerializeField] private Vector2 inspectorScrollPosition;
         [SerializeField] private Vector2 validationScrollPosition;
@@ -99,6 +108,15 @@ namespace EvacLogix.Sandbox.UI.Panels
         private Vector2 panelDragGrabOffset;
         private Vector2 pendingPanelPressPoint;
         private Vector2 panelDragGhostPosition;
+
+        private const float FloorTabDragThresholdPixels = 6f;
+        private readonly Dictionary<string, Rect> floorTabRects = new();
+        private bool hasPendingFloorTabPress;
+        private bool isFloorTabDragActive;
+        private string draggedFloorTabId = string.Empty;
+        private Vector2 floorTabPressPoint;
+        private Vector2 floorTabGhostPosition;
+        private string floorTabGhostLabel = string.Empty;
         private Rect modalRect;
         private string selectionEditorTargetId = string.Empty;
         private SelectionEditableKind selectionEditorKind = SelectionEditableKind.None;
@@ -111,6 +129,10 @@ namespace EvacLogix.Sandbox.UI.Panels
         private string lastGuiExceptionMessage = string.Empty;
         private bool hasLoggedWebGlDependencyStatus;
         private bool hasLoggedBrowserActionMode;
+        private float uiScale = 1f;
+
+        private const float MinUiScale = 1f;
+        private const float MaxUiScale = 2f;
 
         public bool IsFullyWired =>
             topBarShell != null &&
@@ -173,6 +195,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void OnGUI()
         {
+            var previousMatrix = GUI.matrix;
             try
             {
                 RefreshDependenciesIfNeeded();
@@ -180,8 +203,14 @@ namespace EvacLogix.Sandbox.UI.Panels
                 EnsureDefaultFieldValues();
                 EnsurePanelLayoutLoaded();
                 RecalculateLayout();
-                ProcessPanelDragEvents();
 
+                // Panel rects (RecalculateLayout) are in logical/pre-scale coordinates. Event mouse
+                // positions are only reported in that same space once GUI.matrix is applied, so drag
+                // handling must run after the matrix is set — otherwise it hit-tests physical mouse
+                // coords against logical rects and breaks whenever the web UI-size buttons push
+                // uiScale above 1.
+                GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(uiScale, uiScale, 1f));
+                ProcessPanelDragEvents();
                 DrawTopBar();
                 DrawToolPalette();
                 DrawFloorTabs();
@@ -197,6 +226,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
             catch (Exception exception)
             {
+                GUI.matrix = previousMatrix;
                 lastGuiExceptionMessage = exception.ToString();
                 if (!hasLoggedGuiException)
                 {
@@ -206,6 +236,26 @@ namespace EvacLogix.Sandbox.UI.Panels
 
                 DrawGuiExceptionFallback();
             }
+            finally
+            {
+                GUI.matrix = previousMatrix;
+            }
+        }
+
+        public void SetUiScale(string scaleText)
+        {
+            if (!float.TryParse(scaleText, NumberStyles.Float, CultureInfo.InvariantCulture, out var nextScale))
+            {
+                return;
+            }
+
+            uiScale = Mathf.Clamp(nextScale, MinUiScale, MaxUiScale);
+        }
+
+        public void SelectDefaultTool()
+        {
+            RefreshDependenciesIfNeeded();
+            toolPaletteShell?.SelectTool(SandboxToolMode.Select);
         }
 
         private void DrawTopBar()
@@ -336,15 +386,36 @@ namespace EvacLogix.Sandbox.UI.Panels
                 return;
             }
 
+            // Drag-to-reorder level tabs (uses last frame's captured rects so the press can be
+            // consumed before the buttons see it).
+            ProcessFloorTabReorderEvents();
+
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Floors", subheaderStyle, GUILayout.Width(50f));
+            GUILayout.Label("Levels", subheaderStyle, GUILayout.Width(50f));
+            DrawFloorLevelViewButton("All", FloorLevelView.All);
+            DrawFloorLevelViewButton("Surface", FloorLevelView.Surface);
+            DrawFloorLevelViewButton("Basement", FloorLevelView.Basement);
+            GUILayout.Space(10f);
 
             if (floorTabsBarShell?.FloorTabs != null)
             {
-                foreach (var tab in floorTabsBarShell.FloorTabs)
+                if (Event.current.type == EventType.Repaint)
+                {
+                    floorTabRects.Clear();
+                }
+
+                foreach (var tab in GetVisibleFloorTabs())
                 {
                     var buttonStyle = tab.isActive ? activeToolButtonStyle : GUI.skin.button;
-                    if (GUILayout.Button(tab.name, buttonStyle, GUILayout.Height(28f)))
+                    var clicked = GUILayout.Button(BuildFloorTabLabel(tab), buttonStyle, GUILayout.Height(28f));
+                    if (Event.current.type == EventType.Repaint)
+                    {
+                        floorTabRects[tab.floorId] = GUILayoutUtility.GetLastRect();
+                    }
+
+                    // A real click only reaches the button when no drag press was consumed
+                    // (e.g. the first interaction before rects are cached).
+                    if (clicked && !isFloorTabDragActive)
                     {
                         floorTabsBarShell.SelectFloor(tab.floorId);
                     }
@@ -352,8 +423,16 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             GUILayout.FlexibleSpace();
+            GUILayout.Space(30f);
+            GUILayout.EndHorizontal();
+
+            DrawFloorTabGhost();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Add", subheaderStyle, GUILayout.Width(50f));
             pendingFloorName = GUILayout.TextField(pendingFloorName, GUILayout.Width(120f));
-            DrawActionButton("Add Floor", () => { floorTabsBarShell?.AddFloor(pendingFloorName, 0f); }, workspaceService?.ActiveProject != null);
+            DrawActionButton("Add Surface", () => { floorTabsBarShell?.AddSurfaceFloor(pendingFloorName); }, workspaceService?.ActiveProject != null);
+            DrawActionButton("Add Basement", () => { floorTabsBarShell?.AddBasementFloor(pendingFloorName); }, workspaceService?.ActiveProject != null);
 
             var activeFloor = workspaceService?.ActiveFloor;
             DrawActionButton("Duplicate", () => { floorTabsBarShell?.DuplicateFloor(activeFloor.floorId); }, activeFloor != null);
@@ -372,6 +451,188 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             GUILayout.EndArea();
+        }
+
+        private void DrawFloorLevelViewButton(string label, FloorLevelView view)
+        {
+            var buttonStyle = selectedFloorLevelView == view ? activeToolButtonStyle : GUI.skin.button;
+            if (GUILayout.Button(label, buttonStyle, GUILayout.Height(28f), GUILayout.Width(82f)))
+            {
+                selectedFloorLevelView = view;
+            }
+        }
+
+        private System.Collections.Generic.IEnumerable<SandboxFloorTabEntry> GetVisibleFloorTabs()
+        {
+            var floorTabs = floorTabsBarShell?.FloorTabs ?? Array.Empty<SandboxFloorTabEntry>();
+            return selectedFloorLevelView switch
+            {
+                FloorLevelView.Surface => floorTabs.Where(tab => tab.elevation >= 0f),
+                FloorLevelView.Basement => floorTabs.Where(tab => tab.elevation < 0f),
+                _ => floorTabs
+            };
+        }
+
+        private static string BuildFloorTabLabel(SandboxFloorTabEntry tab)
+        {
+            if (tab == null)
+            {
+                return "Floor";
+            }
+
+            return tab.elevation < 0f ? $"{tab.name} ↓" : tab.name;
+        }
+
+        // Press/drag disambiguation for the level tabs. Runs before the tab buttons are drawn so a
+        // press over a tab can be consumed here; a quick tap selects, a drag past the threshold
+        // reorders. All coordinates are local to the floor-tabs GUI area.
+        private void ProcessFloorTabReorderEvents()
+        {
+            if (floorTabsBarShell?.FloorTabs == null)
+            {
+                if (hasPendingFloorTabPress)
+                {
+                    ClearFloorTabDragState();
+                }
+
+                return;
+            }
+
+            var e = Event.current;
+            switch (e.type)
+            {
+                case EventType.MouseDown when e.button == 0 && !hasPendingFloorTabPress:
+                    foreach (var entry in floorTabRects)
+                    {
+                        if (!entry.Value.Contains(e.mousePosition))
+                        {
+                            continue;
+                        }
+
+                        hasPendingFloorTabPress = true;
+                        isFloorTabDragActive = false;
+                        draggedFloorTabId = entry.Key;
+                        floorTabPressPoint = e.mousePosition;
+                        floorTabGhostLabel = ResolveFloorTabLabel(entry.Key);
+                        e.Use();
+                        break;
+                    }
+
+                    break;
+
+                case EventType.MouseDrag when hasPendingFloorTabPress:
+                    if (!isFloorTabDragActive &&
+                        Vector2.Distance(e.mousePosition, floorTabPressPoint) >= FloorTabDragThresholdPixels)
+                    {
+                        isFloorTabDragActive = true;
+                    }
+
+                    if (isFloorTabDragActive)
+                    {
+                        floorTabGhostPosition = e.mousePosition;
+                    }
+
+                    e.Use();
+                    break;
+
+                case EventType.MouseUp when hasPendingFloorTabPress && e.button == 0:
+                    if (isFloorTabDragActive)
+                    {
+                        CommitFloorTabReorder(e.mousePosition);
+                    }
+                    else
+                    {
+                        floorTabsBarShell.SelectFloor(draggedFloorTabId);
+                    }
+
+                    ClearFloorTabDragState();
+                    e.Use();
+                    break;
+
+                case EventType.MouseDown when e.button == 1 && hasPendingFloorTabPress:
+                case EventType.KeyDown when e.keyCode == KeyCode.Escape && hasPendingFloorTabPress:
+                    ClearFloorTabDragState();
+                    e.Use();
+                    break;
+            }
+        }
+
+        private void CommitFloorTabReorder(Vector2 dropPosition)
+        {
+            if (floorTabsBarShell?.FloorTabs == null || string.IsNullOrEmpty(draggedFloorTabId))
+            {
+                return;
+            }
+
+            // Drop onto whichever visible tab's center is horizontally closest to the cursor.
+            var targetFloorId = string.Empty;
+            var bestDx = float.MaxValue;
+            foreach (var entry in floorTabRects)
+            {
+                var dx = Mathf.Abs(entry.Value.center.x - dropPosition.x);
+                if (dx < bestDx)
+                {
+                    bestDx = dx;
+                    targetFloorId = entry.Key;
+                }
+            }
+
+            if (string.IsNullOrEmpty(targetFloorId) || targetFloorId == draggedFloorTabId)
+            {
+                return;
+            }
+
+            var tabs = floorTabsBarShell.FloorTabs;
+            for (var i = 0; i < tabs.Count; i++)
+            {
+                if (tabs[i].floorId == targetFloorId)
+                {
+                    floorTabsBarShell.ReorderFloor(draggedFloorTabId, i);
+                    return;
+                }
+            }
+        }
+
+        private string ResolveFloorTabLabel(string floorId)
+        {
+            var tabs = floorTabsBarShell?.FloorTabs;
+            if (tabs == null)
+            {
+                return "Floor";
+            }
+
+            for (var i = 0; i < tabs.Count; i++)
+            {
+                if (tabs[i].floorId == floorId)
+                {
+                    return BuildFloorTabLabel(tabs[i]);
+                }
+            }
+
+            return "Floor";
+        }
+
+        private void ClearFloorTabDragState()
+        {
+            hasPendingFloorTabPress = false;
+            isFloorTabDragActive = false;
+            draggedFloorTabId = string.Empty;
+            floorTabGhostLabel = string.Empty;
+        }
+
+        private void DrawFloorTabGhost()
+        {
+            if (!isFloorTabDragActive || Event.current.type != EventType.Repaint)
+            {
+                return;
+            }
+
+            var ghostRect = new Rect(floorTabGhostPosition.x - 45f, floorTabGhostPosition.y - 14f, 90f, 28f);
+            var previousColor = GUI.color;
+            GUI.color = new Color(0.4f, 0.62f, 0.95f, 0.5f);
+            GUI.DrawTexture(ghostRect, Texture2D.whiteTexture);
+            GUI.color = previousColor;
+            GUI.Label(ghostRect, floorTabGhostLabel, activeToolButtonStyle ?? GUI.skin.button);
         }
 
         private void DrawInspector()
@@ -829,6 +1090,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             var pairStateLabel = IsBrokenTeleport(teleportPortal) ? "Broken Pair" : (teleportPortal.isPairEnabled ? "On" : "Off");
             GUILayout.Label($"Pair State: {pairStateLabel}", bodyStyle);
+            DrawTeleportTargetFloorControls(teleportPortal);
 
             GUILayout.Label("Type", bodyStyle);
             GUILayout.BeginHorizontal();
@@ -864,10 +1126,42 @@ namespace EvacLogix.Sandbox.UI.Panels
                     semanticObjectAuthoringOverlay != null);
                 GUILayout.Label("Broken pairs stay in the project until you place the missing endpoint.", bodyStyle);
             }
-            else
+        }
+
+        private void DrawTeleportTargetFloorControls(TeleportPortalData teleportPortal)
+        {
+            var floors = workspaceService?.ActiveProject?.floors?
+                .OrderBy(floor => floor.order)
+                .ThenBy(floor => floor.name, StringComparer.Ordinal)
+                .ToList();
+            if (floors == null || floors.Count <= 1)
             {
-                GUILayout.Label($"Linked floor: {teleportPortal.targetFloorId}", bodyStyle);
+                GUILayout.Label("Add another floor before setting a teleport target.", bodyStyle);
+                return;
             }
+
+            var sourceFloorId = ResolveTeleportSourceFloorId(teleportPortal);
+            var linkedFloorName = ResolveFloorName(teleportPortal.targetFloorId);
+            GUILayout.Label(
+                string.IsNullOrWhiteSpace(linkedFloorName)
+                    ? "Target Floor: Not set"
+                    : $"Target Floor: {linkedFloorName}",
+                bodyStyle);
+
+            GUILayout.BeginHorizontal();
+            foreach (var floor in floors)
+            {
+                if (string.Equals(floor.floorId, sourceFloorId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                DrawActionButton(
+                    floor.name,
+                    () => TrySetTeleportTargetFloor(teleportPortal, floor.floorId),
+                    !string.Equals(teleportPortal.targetFloorId, floor.floorId, StringComparison.Ordinal));
+            }
+            GUILayout.EndHorizontal();
         }
 
         private void DrawEditableSelectionSizeFields(string objectTypeLabel, string objectLabel, Action applyAction)
@@ -1020,6 +1314,16 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             return didUpdate;
+        }
+
+        private bool TrySetTeleportTargetFloor(TeleportPortalData teleportPortal, string targetFloorId)
+        {
+            if (teleportPortal == null || string.IsNullOrWhiteSpace(targetFloorId))
+            {
+                return false;
+            }
+
+            return inspectorPanelShell != null && inspectorPanelShell.SetTeleportTargetFloor(teleportPortal.teleportPortalId, targetFloorId);
         }
 
         private bool TryApplyDoor(DoorData door, DoorState state)
@@ -1296,6 +1600,36 @@ namespace EvacLogix.Sandbox.UI.Panels
                 string.Equals(candidate.teleportPortalId, teleportPortal.targetTeleportPortalId, StringComparison.Ordinal));
         }
 
+        private string ResolveTeleportSourceFloorId(TeleportPortalData teleportPortal)
+        {
+            if (teleportPortal == null)
+            {
+                return string.Empty;
+            }
+
+            if (!string.IsNullOrWhiteSpace(teleportPortal.sourceFloorId))
+            {
+                return teleportPortal.sourceFloorId;
+            }
+
+            var sourceFloor = workspaceService?.ActiveProject?.floors?.FirstOrDefault(floor =>
+                floor.teleportPortals.Any(candidate =>
+                    string.Equals(candidate.teleportPortalId, teleportPortal.teleportPortalId, StringComparison.Ordinal)));
+            return sourceFloor?.floorId ?? string.Empty;
+        }
+
+        private string ResolveFloorName(string floorId)
+        {
+            if (string.IsNullOrWhiteSpace(floorId))
+            {
+                return string.Empty;
+            }
+
+            return workspaceService?.ActiveProject?.floors?
+                .FirstOrDefault(floor => string.Equals(floor.floorId, floorId, StringComparison.Ordinal))
+                ?.name ?? string.Empty;
+        }
+
         private bool TryFindSelectedWindow(string selectedId, out WindowData window)
         {
             window = null;
@@ -1556,12 +1890,6 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void EnsureDefaultFieldValues()
         {
-            if (string.IsNullOrWhiteSpace(pendingFloorName))
-            {
-                var floorCount = workspaceService?.ActiveProject?.floors.Count ?? 1;
-                pendingFloorName = $"Floor {floorCount + 1}";
-            }
-
             if (string.IsNullOrWhiteSpace(calibrationDistanceText))
             {
                 calibrationDistanceText = "10";
@@ -1695,31 +2023,33 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void RecalculateLayout()
         {
             var margin = 12f;
+            var logicalScreenWidth = Screen.width / uiScale;
+            var logicalScreenHeight = Screen.height / uiScale;
             var topBarHeight = topBarCollapsed ? CollapsedPanelHeight : 110f;
-            var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : 60f;
+            var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : 92f;
             var statusBarHeight = statusBarCollapsed ? CollapsedPanelHeight : 58f;
             var toolWidth = 180f;
             var inspectorWidth = 340f;
-            var toolHeight = toolPaletteCollapsed ? CollapsedPanelHeight : Screen.height - topBarHeight - statusBarHeight - (margin * 4f);
+            var toolHeight = toolPaletteCollapsed ? CollapsedPanelHeight : logicalScreenHeight - topBarHeight - statusBarHeight - (margin * 4f);
             var validationHeight = validationCollapsed ? CollapsedPanelHeight : 220f;
             var inspectorHeight = inspectorCollapsed
                 ? CollapsedPanelHeight
-                : Screen.height - topBarHeight - statusBarHeight - validationHeight - (margin * 5f);
+                : logicalScreenHeight - topBarHeight - statusBarHeight - validationHeight - (margin * 5f);
 
-            topBarRect = new Rect(margin, margin, Screen.width - (margin * 2f), topBarHeight);
+            topBarRect = new Rect(margin, margin, logicalScreenWidth - (margin * 2f), topBarHeight);
             toolPaletteRect = new Rect(margin, topBarRect.yMax + margin, toolWidth, toolHeight);
-            floorTabsRect = new Rect(toolPaletteRect.xMax + margin, topBarRect.yMax + margin, Screen.width - toolWidth - inspectorWidth - (margin * 4f), floorTabsHeight);
-            inspectorRect = new Rect(Screen.width - inspectorWidth - margin, topBarRect.yMax + margin, inspectorWidth, inspectorHeight);
-            validationRect = new Rect(Screen.width - inspectorWidth - margin, inspectorRect.yMax + margin, inspectorWidth, validationHeight);
-            statusBarRect = new Rect(margin, Screen.height - statusBarHeight - margin, Screen.width - (margin * 2f), statusBarHeight);
+            floorTabsRect = new Rect(toolPaletteRect.xMax + margin, topBarRect.yMax + margin, logicalScreenWidth - toolWidth - inspectorWidth - (margin * 4f), floorTabsHeight);
+            inspectorRect = new Rect(logicalScreenWidth - inspectorWidth - margin, topBarRect.yMax + margin, inspectorWidth, inspectorHeight);
+            validationRect = new Rect(logicalScreenWidth - inspectorWidth - margin, inspectorRect.yMax + margin, inspectorWidth, validationHeight);
+            statusBarRect = new Rect(margin, logicalScreenHeight - statusBarHeight - margin, logicalScreenWidth - (margin * 2f), statusBarHeight);
 
             ApplyCustomPanelPositions();
 
-            var modalWidth = Mathf.Min(480f, Screen.width - 40f);
+            var modalWidth = Mathf.Min(480f, logicalScreenWidth - 40f);
             var modalHeight = 210f;
             modalRect = new Rect(
-                (Screen.width - modalWidth) * 0.5f,
-                (Screen.height - modalHeight) * 0.5f,
+                (logicalScreenWidth - modalWidth) * 0.5f,
+                (logicalScreenHeight - modalHeight) * 0.5f,
                 modalWidth,
                 modalHeight);
         }
@@ -1769,10 +2099,13 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
         }
 
-        private static Vector2 ClampPanelPosition(Vector2 position, Vector2 size)
+        private Vector2 ClampPanelPosition(Vector2 position, Vector2 size)
         {
-            var maxX = Mathf.Max(0f, Screen.width - 60f);
-            var maxY = Mathf.Max(0f, Screen.height - 30f);
+            // Positions are stored/used in logical (pre-scale) space, so clamp against the logical
+            // screen bounds rather than the physical pixel dimensions.
+            var scale = Mathf.Approximately(uiScale, 0f) ? 1f : uiScale;
+            var maxX = Mathf.Max(0f, (Screen.width / scale) - 60f);
+            var maxY = Mathf.Max(0f, (Screen.height / scale) - 30f);
             return new Vector2(Mathf.Clamp(position.x, 0f, maxX), Mathf.Clamp(position.y, 0f, maxY));
         }
 
@@ -1937,7 +2270,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             RecalculateLayout();
             var pointer = SandboxInputAdapter.PointerScreenPosition;
-            var guiPoint = new Vector2(pointer.x, Screen.height - pointer.y);
+            var guiPoint = new Vector2(pointer.x / uiScale, (Screen.height - pointer.y) / uiScale);
             var isOverHud = topBarRect.Contains(guiPoint)
                 || toolPaletteRect.Contains(guiPoint)
                 || floorTabsRect.Contains(guiPoint)

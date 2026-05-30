@@ -12,7 +12,7 @@ export const unityAppProfiles: UnityAppProfile[] = [
     fallbackMessage: "Simulation unavailable",
     fallbackExplanation:
       "The current build could not be launched from this embedded frame. The page remains usable, and a secondary backup path can still be provided.",
-    allowedBridgeCommands: [],
+    allowedBridgeCommands: ["ImportBlueprintImage", "ImportProjectJson", "ExportProjectJson"],
     hidden: false
   },
   {
@@ -44,4 +44,3 @@ export function getDefaultUnityAppProfile(): UnityAppProfile {
 export function getVisibleUnityAppProfiles(): UnityAppProfile[] {
   return unityAppProfiles.filter((profile) => !profile.hidden);
 }
-

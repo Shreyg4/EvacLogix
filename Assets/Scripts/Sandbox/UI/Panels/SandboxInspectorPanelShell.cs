@@ -723,6 +723,13 @@ namespace EvacLogix.Sandbox.UI.Panels
                 "Linked teleport endpoints.");
         }
 
+        public bool SetTeleportTargetFloor(string sourcePortalId, string targetFloorId)
+        {
+            return UpdateSemanticActionStatus(
+                semanticObjectAuthoringService != null && semanticObjectAuthoringService.SetTeleportTargetFloor(sourcePortalId, targetFloorId),
+                "Updated teleport target floor.");
+        }
+
         public bool AddFloor(string name = "", float elevation = 0f)
         {
             return UpdateFloorActionStatus(
