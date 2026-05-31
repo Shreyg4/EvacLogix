@@ -25,6 +25,13 @@ namespace EvacLogix.Sandbox.UI.Panels
             Window = 6,
         }
 
+        private enum FloorCategory
+        {
+            All = 0,
+            Surface = 1,
+            Basement = 2,
+        }
+
         [SerializeField] private string blueprintImportPath = string.Empty;
         [SerializeField] private string calibrationDistanceText = "10";
         [SerializeField] private string pendingFloorName = "Floor";
@@ -40,8 +47,10 @@ namespace EvacLogix.Sandbox.UI.Panels
         [SerializeField] private bool validationCollapsed;
         [SerializeField] private bool statusBarCollapsed;
         [SerializeField] private Vector2 toolScrollPosition;
+        [SerializeField] private Vector2 floorTabsScrollPosition;
         [SerializeField] private Vector2 inspectorScrollPosition;
         [SerializeField] private Vector2 validationScrollPosition;
+        [SerializeField] private FloorCategory selectedFloorCategory = FloorCategory.All;
 
         private SandboxTopBarShell topBarShell;
         private SandboxToolPaletteShell toolPaletteShell;
@@ -338,20 +347,26 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("Floors", subheaderStyle, GUILayout.Width(50f));
+            DrawFloorCategoryButton(FloorCategory.All, "All");
+            DrawFloorCategoryButton(FloorCategory.Surface, "Surface");
+            DrawFloorCategoryButton(FloorCategory.Basement, "Basement");
+            GUILayout.EndHorizontal();
 
-            if (floorTabsBarShell?.FloorTabs != null)
-            {
-                foreach (var tab in floorTabsBarShell.FloorTabs)
-                {
-                    var buttonStyle = tab.isActive ? activeToolButtonStyle : GUI.skin.button;
-                    if (GUILayout.Button(tab.name, buttonStyle, GUILayout.Height(28f)))
-                    {
-                        floorTabsBarShell.SelectFloor(tab.floorId);
-                    }
-                }
-            }
+            GUILayout.Space(4f);
 
-            GUILayout.FlexibleSpace();
+            var visibleTabs = GetVisibleFloorTabs();
+            var tabsViewportHeight = Mathf.Max(72f, floorTabsRect.height - 128f);
+            var tabsViewportRect = GUILayoutUtility.GetRect(floorTabsRect.width - 24f, tabsViewportHeight);
+            var tabsContentWidth = Mathf.Max(0f, tabsViewportRect.width - 18f);
+            var tabsContentHeight = CalculateFloorTabsContentHeight(visibleTabs, tabsContentWidth);
+            var tabsContentRect = new Rect(0f, 0f, tabsContentWidth, tabsContentHeight);
+
+            floorTabsScrollPosition = GUI.BeginScrollView(tabsViewportRect, floorTabsScrollPosition, tabsContentRect, false, true);
+            DrawWrappedFloorTabs(visibleTabs, tabsContentWidth);
+            GUI.EndScrollView();
+
+            GUILayout.Space(4f);
+            GUILayout.BeginHorizontal();
             pendingFloorName = GUILayout.TextField(pendingFloorName, GUILayout.Width(120f));
             DrawActionButton("Add Floor", () => { floorTabsBarShell?.AddFloor(pendingFloorName, 0f); }, workspaceService?.ActiveProject != null);
 
@@ -372,6 +387,108 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             GUILayout.EndArea();
+        }
+
+        private void DrawFloorCategoryButton(FloorCategory category, string label)
+        {
+            var isSelected = selectedFloorCategory == category;
+            var style = isSelected ? activeToolButtonStyle : GUI.skin.button;
+            if (GUILayout.Button(label, style, GUILayout.Width(70f), GUILayout.Height(28f)))
+            {
+                selectedFloorCategory = category;
+                floorTabsScrollPosition = Vector2.zero;
+            }
+        }
+
+        private IReadOnlyList<SandboxFloorTabEntry> GetVisibleFloorTabs()
+        {
+            if (floorTabsBarShell?.FloorTabs == null)
+            {
+                return Array.Empty<SandboxFloorTabEntry>();
+            }
+
+            return floorTabsBarShell.FloorTabs
+                .Where(tab => IsFloorVisibleInCategory(tab))
+                .ToList();
+        }
+
+        private bool IsFloorVisibleInCategory(SandboxFloorTabEntry tab)
+        {
+            return selectedFloorCategory switch
+            {
+                FloorCategory.Surface => tab.elevation >= 0f || Mathf.Approximately(tab.elevation, 0f),
+                FloorCategory.Basement => tab.elevation < 0f,
+                _ => true,
+            };
+        }
+
+        private void DrawWrappedFloorTabs(IReadOnlyList<SandboxFloorTabEntry> visibleTabs, float availableWidth)
+        {
+            var buttonStyle = GUI.skin?.button ?? GUIStyle.none;
+            var activeButtonStyle = activeToolButtonStyle ?? buttonStyle;
+            var x = 0f;
+            var y = 0f;
+            var rowHeight = 32f;
+            var spacing = 6f;
+
+            if (visibleTabs.Count == 0)
+            {
+                GUI.Label(new Rect(0f, 0f, Mathf.Max(140f, availableWidth), 24f), "No floors in this category.", bodyStyle);
+                return;
+            }
+
+            for (var index = 0; index < visibleTabs.Count; index += 1)
+            {
+                var tab = visibleTabs[index];
+                var style = tab.isActive ? activeButtonStyle : buttonStyle;
+                var label = new GUIContent(tab.name);
+                var size = style.CalcSize(label);
+                var buttonWidth = Mathf.Clamp(size.x + 26f, 72f, Mathf.Max(72f, availableWidth));
+
+                if (x > 0f && x + buttonWidth > availableWidth)
+                {
+                    x = 0f;
+                    y += rowHeight + spacing;
+                }
+
+                var buttonRect = new Rect(x, y, buttonWidth, rowHeight);
+                if (GUI.Button(buttonRect, label, style))
+                {
+                    floorTabsBarShell?.SelectFloor(tab.floorId);
+                }
+
+                x += buttonWidth + spacing;
+            }
+        }
+
+        private float CalculateFloorTabsContentHeight(IReadOnlyList<SandboxFloorTabEntry> visibleTabs, float availableWidth)
+        {
+            if (visibleTabs.Count == 0)
+            {
+                return 32f;
+            }
+
+            var buttonStyle = GUI.skin?.button ?? GUIStyle.none;
+            var rowHeight = 32f;
+            var spacing = 6f;
+            var x = 0f;
+            var rows = 1;
+
+            for (var index = 0; index < visibleTabs.Count; index += 1)
+            {
+                var tab = visibleTabs[index];
+                var size = buttonStyle.CalcSize(new GUIContent(tab.name));
+                var buttonWidth = Mathf.Clamp(size.x + 26f, 72f, Mathf.Max(72f, availableWidth));
+                if (x > 0f && x + buttonWidth > availableWidth)
+                {
+                    rows += 1;
+                    x = 0f;
+                }
+
+                x += buttonWidth + spacing;
+            }
+
+            return (rows * rowHeight) + ((rows - 1) * spacing);
         }
 
         private void DrawInspector()
@@ -1701,7 +1818,8 @@ namespace EvacLogix.Sandbox.UI.Panels
         {
             var margin = 12f;
             var topBarHeight = topBarCollapsed ? CollapsedPanelHeight : 110f;
-            var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : 60f;
+            var floorTabsAvailableHeight = Mathf.Max(CollapsedPanelHeight, Screen.height - topBarHeight - (margin * 4f) - 58f);
+            var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : Mathf.Min(220f, floorTabsAvailableHeight);
             var statusBarHeight = statusBarCollapsed ? CollapsedPanelHeight : 58f;
             var toolWidth = 180f;
             var inspectorWidth = 340f;
@@ -1776,8 +1894,8 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private static Vector2 ClampPanelPosition(Vector2 position, Vector2 size)
         {
-            var maxX = Mathf.Max(0f, Screen.width - 60f);
-            var maxY = Mathf.Max(0f, Screen.height - 30f);
+            var maxX = Mathf.Max(0f, Screen.width - size.x);
+            var maxY = Mathf.Max(0f, Screen.height - size.y);
             return new Vector2(Mathf.Clamp(position.x, 0f, maxX), Mathf.Clamp(position.y, 0f, maxY));
         }
 
