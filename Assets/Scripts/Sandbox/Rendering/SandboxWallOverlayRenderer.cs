@@ -200,6 +200,7 @@ namespace EvacLogix.Sandbox.Rendering
                     IsSelectedHandle(junction.wallJunctionId));
             }
 
+            RenderSelectedWallEndpoints(floor);
             RenderSelectionDragGhosts(floor);
             RenderPreviewState();
             // Alignment guides are now drawn by the centralized SandboxAlignmentGuideOverlay,
@@ -354,6 +355,61 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.SetPosition(2, basePosition + new Vector3(0f, -halfSize, 0f));
             lineRenderer.SetPosition(3, basePosition + new Vector3(0f, halfSize, 0f));
             renderedObjects.Add(handleObject);
+        }
+
+        // When a single wall is selected, mark its two ends distinctly (Start = green square,
+        // End = blue diamond) so the inspector's "anchored/adjusted end" labels are identifiable.
+        private void RenderSelectedWallEndpoints(FloorData floor)
+        {
+            if (selectionService == null || selectionService.SelectedObjectIds.Count != 1 || handleRoot == null)
+            {
+                return;
+            }
+
+            var wall = floor.wallSegments.FirstOrDefault(candidate =>
+                string.Equals(candidate.wallSegmentId, selectionService.SelectedObjectIds[0], System.StringComparison.Ordinal));
+            if (wall == null)
+            {
+                return;
+            }
+
+            var preview = ResolvePreviewWall(wall);
+            RenderEndpointMarker($"WallStartMarker_{wall.wallSegmentId}", preview.startPoint, false, new Color(0.3f, 0.95f, 0.5f, 1f));
+            RenderEndpointMarker($"WallEndMarker_{wall.wallSegmentId}", preview.endPoint, true, new Color(0.3f, 0.8f, 1f, 1f));
+        }
+
+        private void RenderEndpointMarker(string name, Vector2 position, bool diamond, Color color)
+        {
+            var markerObject = new GameObject(name);
+            markerObject.transform.SetParent(handleRoot, false);
+
+            var lineRenderer = markerObject.AddComponent<LineRenderer>();
+            lineRenderer.useWorldSpace = false;
+            lineRenderer.positionCount = 4;
+            lineRenderer.loop = true;
+            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            lineRenderer.widthMultiplier = ResolveLineWidth(minimumLineWidth);
+            lineRenderer.startColor = color;
+            lineRenderer.endColor = color;
+
+            var halfSize = handleSize * 0.9f;
+            var basePosition = new Vector3(position.x, position.y, 0f);
+            if (diamond)
+            {
+                lineRenderer.SetPosition(0, basePosition + new Vector3(0f, halfSize, 0f));
+                lineRenderer.SetPosition(1, basePosition + new Vector3(halfSize, 0f, 0f));
+                lineRenderer.SetPosition(2, basePosition + new Vector3(0f, -halfSize, 0f));
+                lineRenderer.SetPosition(3, basePosition + new Vector3(-halfSize, 0f, 0f));
+            }
+            else
+            {
+                lineRenderer.SetPosition(0, basePosition + new Vector3(-halfSize, -halfSize, 0f));
+                lineRenderer.SetPosition(1, basePosition + new Vector3(halfSize, -halfSize, 0f));
+                lineRenderer.SetPosition(2, basePosition + new Vector3(halfSize, halfSize, 0f));
+                lineRenderer.SetPosition(3, basePosition + new Vector3(-halfSize, halfSize, 0f));
+            }
+
+            renderedObjects.Add(markerObject);
         }
 
         private WallSegmentData ResolvePreviewWall(WallSegmentData wall)

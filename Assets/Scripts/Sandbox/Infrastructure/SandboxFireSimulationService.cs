@@ -121,7 +121,8 @@ namespace EvacLogix.Sandbox.Infrastructure
                     origin.floorId,
                     origin.position,
                     Mathf.Max(0.1f, origin.spreadIntensity),
-                    Mathf.Max(0f, origin.startDelaySeconds)));
+                    Mathf.Max(0f, origin.startDelaySeconds),
+                    new Vector2(Mathf.Max(0f, origin.size.x * 0.5f), Mathf.Max(0f, origin.size.y * 0.5f))));
             }
 
             simulationActive = pendingSeeds.Count > 0;
@@ -205,7 +206,41 @@ namespace EvacLogix.Sandbox.Infrastructure
 
                 var seed = pendingSeeds[i];
                 pendingSeeds.RemoveAt(i);
+                IgniteSeedArea(seed);
+            }
+        }
+
+        // Origin seeds ignite the whole initial burn area (every cell inside the origin's ellipse);
+        // spread seeds have zero radii and ignite a single cell.
+        private void IgniteSeedArea(FireSeed seed)
+        {
+            var radiusX = seed.radii.x;
+            var radiusY = seed.radii.y;
+            if (radiusX <= cellSize * 0.5f && radiusY <= cellSize * 0.5f)
+            {
                 IgniteCell(seed, seed.position, 1f);
+                return;
+            }
+
+            var stepsX = Mathf.CeilToInt(radiusX / cellSize);
+            var stepsY = Mathf.CeilToInt(radiusY / cellSize);
+            var safeX = Mathf.Max(0.01f, radiusX);
+            var safeY = Mathf.Max(0.01f, radiusY);
+            for (var ix = -stepsX; ix <= stepsX; ix += 1)
+            {
+                for (var iy = -stepsY; iy <= stepsY; iy += 1)
+                {
+                    var dx = ix * cellSize;
+                    var dy = iy * cellSize;
+                    var normalizedX = dx / safeX;
+                    var normalizedY = dy / safeY;
+                    if ((normalizedX * normalizedX) + (normalizedY * normalizedY) > 1f)
+                    {
+                        continue;
+                    }
+
+                    IgniteCell(seed, seed.position + new Vector2(dx, dy), 1f);
+                }
             }
         }
 
@@ -545,13 +580,14 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         private readonly struct FireSeed
         {
-            public FireSeed(string fireOriginId, string floorId, Vector2 position, float spreadIntensity, float activateAtSeconds)
+            public FireSeed(string fireOriginId, string floorId, Vector2 position, float spreadIntensity, float activateAtSeconds, Vector2 radii = default)
             {
                 this.fireOriginId = fireOriginId;
                 this.floorId = floorId;
                 this.position = position;
                 this.spreadIntensity = spreadIntensity;
                 this.activateAtSeconds = activateAtSeconds;
+                this.radii = radii;
             }
 
             public readonly string fireOriginId;
@@ -559,6 +595,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             public readonly Vector2 position;
             public readonly float spreadIntensity;
             public readonly float activateAtSeconds;
+            public readonly Vector2 radii;
         }
     }
 }
