@@ -6,6 +6,7 @@ using System.Linq;
 using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Authoring.Tools;
+using EvacLogix.Sandbox.Core;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
 using EvacLogix.Sandbox.Rendering;
@@ -83,6 +84,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         private GUIStyle panelBoxStyle;
         private GUIStyle insetPanelBoxStyle;
         private GUIStyle modalWindowStyle;
+        private GUIStyle noticeStyle;
         private RectOffset buttonPadding;
         private Texture2D solidTexture;
         private Texture2D hudPanelTexture;
@@ -105,7 +107,9 @@ namespace EvacLogix.Sandbox.UI.Panels
         private enum MovablePanel { TopBar, Floors, Tools, Inspector, Validation, StatusBar }
 
         private const float PanelDragThresholdPixels = 5f;
-        private const string PanelLayoutPrefPrefix = "Sandbox.PanelLayout.";
+        // v2: the validation panel moved to a bottom band and the status bar shrank to a bottom-left
+        // box; bumping the prefix discards pre-v2 saved positions so everyone gets the new defaults.
+        private const string PanelLayoutPrefPrefix = "Sandbox.PanelLayout.v2.";
         private readonly Dictionary<MovablePanel, Vector2> customPanelPositions = new();
         private bool panelLayoutLoaded;
         private bool hasPendingPanelPress;
@@ -233,6 +237,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 DrawInspector();
                 DrawValidationPanel();
                 DrawStatusBar();
+                DrawTransientNotice();
                 DrawPanelDragGhost();
 
                 if (newProjectDialogShell != null && newProjectDialogShell.IsOpen)
@@ -333,6 +338,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             GUILayout.FlexibleSpace();
+            DrawActionButton("Simulate", LaunchSimulation, workspaceService?.ActiveProject != null);
             DrawActionButton("Main Menu", () => showReturnToMenuConfirm = true);
             GUILayout.EndHorizontal();
 
@@ -929,6 +935,10 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             GUILayout.BeginHorizontal();
+
+            // Left control column: actions + room overlay controls.
+            GUILayout.BeginVertical(GUILayout.Width(196f));
+            GUILayout.BeginHorizontal();
             DrawActionButton("Refresh", () => validationPanelShell?.RefreshValidation(), workspaceService?.ActiveProject != null);
             DrawActionButton("Rebuild All", () => validationPanelShell?.RebuildAll(), workspaceService?.ActiveProject != null);
             GUILayout.EndHorizontal();
@@ -959,13 +969,21 @@ namespace EvacLogix.Sandbox.UI.Panels
                 GUILayout.Label(validationPanelShell.RoomDetectionStatus, bodyStyle);
                 GUILayout.EndHorizontal();
                 GUILayout.Label(
-                    $"Room overlay: sealed {validationPanelShell.SealedRoomCount}, penetrated {validationPanelShell.PenetratedRoomCount}.",
+                    $"Rooms: sealed {validationPanelShell.SealedRoomCount}, penetrated {validationPanelShell.PenetratedRoomCount}.",
                     bodyStyle);
             }
 
+            GUILayout.EndVertical();
+
+            GUILayout.Space(10f);
+
+            // Right side: the issue list fills the remaining (wide) area at full band height.
+            GUILayout.BeginVertical();
             validationScrollPosition = GUILayout.BeginScrollView(validationScrollPosition);
+            var hasIssues = false;
             foreach (var floorGroup in validationPanelShell?.IssueGroups ?? Enumerable.Empty<SandboxValidationFloorGroup>())
             {
+                hasIssues = true;
                 GUILayout.Label(floorGroup.label, subheaderStyle);
                 foreach (var objectGroup in floorGroup.objectGroups)
                 {
@@ -976,7 +994,16 @@ namespace EvacLogix.Sandbox.UI.Panels
                     }
                 }
             }
+
+            if (!hasIssues)
+            {
+                GUILayout.Label("No issues to display. Run Refresh to validate the project.", bodyStyle);
+            }
+
             GUILayout.EndScrollView();
+            GUILayout.EndVertical();
+
+            GUILayout.EndHorizontal();
             GUILayout.EndArea();
         }
 
@@ -1945,23 +1972,58 @@ namespace EvacLogix.Sandbox.UI.Panels
                 return;
             }
 
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(statusBarShell?.StatusMessage ?? "Ready", bodyStyle);
-            GUILayout.FlexibleSpace();
-            GUILayout.Label(statusBarShell?.PersistenceSummary ?? "Unsaved", bodyStyle);
-            GUILayout.Space(16f);
-            GUILayout.Label(statusBarShell?.LifecycleStateLabel ?? "Draft", bodyStyle);
-            GUILayout.Space(16f);
-            GUILayout.Label(statusBarShell?.ModeLabel ?? "Edit Mode", bodyStyle);
-            GUILayout.Space(30f);
-            GUILayout.EndHorizontal();
+            // Slim bottom-left box: transient message on top, a compact state line beneath.
+            var labelWidth = Mathf.Max(40f, statusBarRect.width - 12f);
+            GUILayout.Label(statusBarShell?.StatusMessage ?? "Ready", bodyStyle, GUILayout.Width(labelWidth));
+            var persistence = statusBarShell?.PersistenceSummary ?? "Unsaved";
+            var lifecycle = statusBarShell?.LifecycleStateLabel ?? "Draft";
+            var mode = statusBarShell?.ModeLabel ?? "Edit Mode";
+            GUILayout.Label($"{persistence} · {lifecycle} · {mode}", bodyStyle, GUILayout.Width(labelWidth));
 
             if (!string.IsNullOrWhiteSpace(statusBarShell?.RecoveryPromptLabel))
             {
-                GUILayout.Label(statusBarShell.RecoveryPromptLabel, bodyStyle);
+                GUILayout.Label(statusBarShell.RecoveryPromptLabel, bodyStyle, GUILayout.Width(labelWidth));
             }
 
             GUILayout.EndArea();
+        }
+
+        // A prominent, auto-fading banner over the top-center of the canvas for important transient
+        // messages (e.g. "Add at least one exit before placing spawns") so rejections are impossible
+        // to miss, unlike the slim bottom-left status box.
+        private void DrawTransientNotice()
+        {
+            if (statusBarShell == null)
+            {
+                return;
+            }
+
+            var age = statusBarShell.NoticeAgeSeconds;
+            const float holdSeconds = 2.5f;
+            const float fadeSeconds = 0.6f;
+            if (string.IsNullOrWhiteSpace(statusBarShell.NoticeMessage) || age > holdSeconds + fadeSeconds)
+            {
+                return;
+            }
+
+            var alpha = age <= holdSeconds ? 1f : Mathf.Clamp01(1f - ((age - holdSeconds) / fadeSeconds));
+
+            var content = new GUIContent(statusBarShell.NoticeMessage);
+            var style = noticeStyle ?? bodyStyle;
+            var logicalWidth = Screen.width / uiScale;
+            var width = Mathf.Min(560f, logicalWidth - 40f);
+            var height = Mathf.Max(40f, style.CalcHeight(content, width - 28f) + 20f);
+            var rect = new Rect((logicalWidth - width) * 0.5f, topBarRect.yMax + 16f, width, height);
+
+            var previousColor = GUI.color;
+            var background = statusBarShell.NoticeIsError ? new Color(0.6f, 0.12f, 0.12f, 0.96f) : new Color(0.12f, 0.18f, 0.28f, 0.96f);
+            background.a *= alpha;
+            GUI.color = background;
+            GUI.DrawTexture(rect, solidTexture ?? Texture2D.whiteTexture);
+
+            GUI.color = new Color(1f, 1f, 1f, alpha);
+            GUI.Label(rect, statusBarShell.NoticeMessage, style);
+            GUI.color = previousColor;
         }
 
         private void DrawNewProjectModal()
@@ -2014,6 +2076,23 @@ namespace EvacLogix.Sandbox.UI.Panels
         {
             GUILayout.Space(8f);
             GUILayout.Label(title, subheaderStyle);
+        }
+
+        // Hands the current in-memory project (including unsaved edits) to the simulation scene and
+        // returns here when the user leaves the simulation.
+        private void LaunchSimulation()
+        {
+            var project = workspaceService?.ActiveProject;
+            if (project == null)
+            {
+                return;
+            }
+
+            SandboxSimulationLaunchContext.SetFromProject(project, "SandboxEditor", $"Project: {project.metadata?.buildingName}");
+            // Preserve the editor's project so returning from the simulation restores it instead of
+            // booting a fresh default project.
+            SandboxSimulationLaunchContext.SetReturnProject(project);
+            SceneManager.LoadScene(SandboxSimulationLaunchContext.SimulationSceneName, LoadSceneMode.Single);
         }
 
         // Draws a small triangle toggle in the panel's top-right corner. The triangle points
@@ -2231,6 +2310,16 @@ namespace EvacLogix.Sandbox.UI.Panels
                 wordWrap = true
             };
 
+            noticeStyle ??= new GUIStyle(labelStyle)
+            {
+                fontSize = 14,
+                fontStyle = FontStyle.Bold,
+                wordWrap = true,
+                alignment = TextAnchor.MiddleCenter,
+                padding = new RectOffset(14, 14, 10, 10),
+                normal = { textColor = Color.white }
+            };
+
             activeToolButtonStyle ??= new GUIStyle(buttonStyle)
             {
                 fontStyle = FontStyle.Bold,
@@ -2327,21 +2416,37 @@ namespace EvacLogix.Sandbox.UI.Panels
             var logicalScreenHeight = Screen.height / uiScale;
             var topBarHeight = topBarCollapsed ? CollapsedPanelHeight : 110f;
             var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : 92f;
-            var statusBarHeight = statusBarCollapsed ? CollapsedPanelHeight : 58f;
+            var statusBarHeight = statusBarCollapsed ? CollapsedPanelHeight : 72f;
             var toolWidth = 180f;
             var inspectorWidth = 340f;
-            var toolHeight = toolPaletteCollapsed ? CollapsedPanelHeight : logicalScreenHeight - topBarHeight - statusBarHeight - (margin * 4f);
-            var validationHeight = validationCollapsed ? CollapsedPanelHeight : 220f;
-            var inspectorHeight = inspectorCollapsed
-                ? CollapsedPanelHeight
-                : logicalScreenHeight - topBarHeight - statusBarHeight - validationHeight - (margin * 5f);
+
+            var contentTop = topBarHeight + (margin * 2f);
+            var centerX = (margin * 2f) + toolWidth;
+            var centerWidth = logicalScreenWidth - toolWidth - inspectorWidth - (margin * 4f);
+
+            // Validation is a wide band across the center-bottom; clamp its height so the canvas keeps
+            // a usable minimum on short windows.
+            const float minCanvasHeight = 220f;
+            var maxValidationHeight = Mathf.Max(
+                CollapsedPanelHeight,
+                logicalScreenHeight - contentTop - floorTabsHeight - minCanvasHeight - (margin * 3f));
+            var validationHeight = validationCollapsed ? CollapsedPanelHeight : Mathf.Min(220f, maxValidationHeight);
+
+            var statusY = logicalScreenHeight - statusBarHeight - margin;
+            var validationY = logicalScreenHeight - validationHeight - margin;
 
             topBarRect = new Rect(margin, margin, logicalScreenWidth - (margin * 2f), topBarHeight);
-            toolPaletteRect = new Rect(margin, topBarRect.yMax + margin, toolWidth, toolHeight);
-            floorTabsRect = new Rect(toolPaletteRect.xMax + margin, topBarRect.yMax + margin, logicalScreenWidth - toolWidth - inspectorWidth - (margin * 4f), floorTabsHeight);
-            inspectorRect = new Rect(logicalScreenWidth - inspectorWidth - margin, topBarRect.yMax + margin, inspectorWidth, inspectorHeight);
-            validationRect = new Rect(logicalScreenWidth - inspectorWidth - margin, inspectorRect.yMax + margin, inspectorWidth, validationHeight);
-            statusBarRect = new Rect(margin, logicalScreenHeight - statusBarHeight - margin, logicalScreenWidth - (margin * 2f), statusBarHeight);
+            // Inspector now owns the full right column height.
+            var inspectorHeight = inspectorCollapsed ? CollapsedPanelHeight : logicalScreenHeight - contentTop - margin;
+            inspectorRect = new Rect(logicalScreenWidth - inspectorWidth - margin, contentTop, inspectorWidth, inspectorHeight);
+            // Tools runs down the left column to just above the slim status box.
+            var toolHeight = toolPaletteCollapsed ? CollapsedPanelHeight : Mathf.Max(CollapsedPanelHeight, statusY - margin - contentTop);
+            toolPaletteRect = new Rect(margin, contentTop, toolWidth, toolHeight);
+            floorTabsRect = new Rect(centerX, contentTop, centerWidth, floorTabsHeight);
+            // Validation: wide center-bottom band (controls left, error list right).
+            validationRect = new Rect(centerX, validationY, centerWidth, validationHeight);
+            // Status: small box, bottom-left under the tools column.
+            statusBarRect = new Rect(margin, statusY, toolWidth, statusBarHeight);
 
             ApplyCustomPanelPositions();
 

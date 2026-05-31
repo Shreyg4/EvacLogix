@@ -531,6 +531,11 @@ namespace EvacLogix.Sandbox.Authoring
             return true;
         }
 
+        private static bool HasSpawnAccessPoints(FloorData floor)
+        {
+            return floor != null && (floor.exits.Count > 0 || floor.windows.Count > 0);
+        }
+
         private bool TryValidateSpawnPointBrushPlacement(FloorData floor, IReadOnlyList<Vector2> polygonPoints, out string failureMessage)
         {
             failureMessage = string.Empty;
@@ -547,11 +552,6 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             return true;
-        }
-
-        private static bool HasSpawnAccessPoints(FloorData floor)
-        {
-            return floor != null && (floor.exits.Count > 0 || floor.windows.Count > 0);
         }
 
         private bool TryValidateSpawnPointSpacing(string floorId, Vector2 position, out string failureMessage)

@@ -58,7 +58,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     previewService.ActivePreviewParameters.startDelaySeconds,
                     previewService.PendingFireOriginIsPersistent))
             {
-                UpdateStatus("Could not place fire origin on the active floor.");
+                ShowError("Could not place fire origin on the active floor.");
                 return;
             }
 
@@ -82,7 +82,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     previewService.PendingSpawnLayoutName,
                     previewService.PendingSpawnLayoutIsPersistent))
             {
-                UpdateStatus(string.IsNullOrWhiteSpace(failureMessage) ? "Could not place spawn point." : failureMessage);
+                ShowError(string.IsNullOrWhiteSpace(failureMessage) ? "Could not place spawn point." : failureMessage);
                 return;
             }
 
@@ -129,7 +129,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     previewService.PendingSpawnLayoutName,
                     previewService.PendingSpawnLayoutIsPersistent))
             {
-                UpdateStatus(string.IsNullOrWhiteSpace(failureMessage) ? "Could not place spawn point." : failureMessage);
+                ShowError(string.IsNullOrWhiteSpace(failureMessage) ? "Could not place spawn point." : failureMessage);
                 return;
             }
 
@@ -151,9 +151,22 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void UpdateStatus(string message)
         {
+            // Resolve lazily: this overlay is created before the status-bar shell exists, so the
+            // Awake-time lookup can come back null.
+            statusBar ??= FindAnyObjectByType<SandboxStatusBarShell>();
             if (statusBar != null)
             {
                 statusBar.StatusMessage = message;
+            }
+        }
+
+        // Surfaces a rejection as a prominent, auto-fading banner over the canvas (plus the status box).
+        private void ShowError(string message)
+        {
+            statusBar ??= FindAnyObjectByType<SandboxStatusBarShell>();
+            if (statusBar != null)
+            {
+                statusBar.ShowNotice(message, true);
             }
         }
     }

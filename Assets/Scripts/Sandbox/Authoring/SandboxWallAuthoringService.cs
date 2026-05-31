@@ -1160,6 +1160,13 @@ namespace EvacLogix.Sandbox.Authoring
 
                     break;
                 }
+                case SandboxWallSnapTargetKind.Intersection:
+                {
+                    // Placing on a wall crossing: create/reuse a junction there and split every wall
+                    // passing through it, so the new wall actually ties into the intersection instead
+                    // of leaving a disconnected junction floating on top of it.
+                    return SplitWallsAtIntersection(floor, snapResult.position, preferredJunctionId, exclusions);
+                }
             }
 
             return FindOrCreateJunction(
@@ -1243,6 +1250,43 @@ namespace EvacLogix.Sandbox.Authoring
             AddConnection(midJunction, splitWallId);
             ReassignAttachedOpeningsForSplit(workspaceService?.ActiveProject, floor, wall.wallSegmentId, splitWallId, Vector2.Distance(wall.startPoint, midJunction.position), originalWallLength);
             return midJunction;
+        }
+
+        // Resolves the junction for a point that snapped to a wall crossing: create/reuse a junction
+        // at the point, then split every wall whose interior passes through it so they all connect
+        // there. Returns the shared junction the new wall should attach to.
+        private WallJunctionData SplitWallsAtIntersection(
+            FloorData floor,
+            Vector2 point,
+            string preferredJunctionId,
+            string[] excludedJunctionIds)
+        {
+            var reuseDistance = wallSnappingService != null ? wallSnappingService.JunctionReuseDistance : nearJoinCleanupDistance;
+            var junction = FindOrCreateJunction(floor, point, reuseDistance, preferredJunctionId, excludedJunctionIds);
+            if (junction == null)
+            {
+                return null;
+            }
+
+            var wallsSnapshot = floor.wallSegments.ToArray();
+            for (var i = 0; i < wallsSnapshot.Length; i += 1)
+            {
+                var wall = wallsSnapshot[i];
+                if (junction.connectedWallSegmentIds.Contains(wall.wallSegmentId))
+                {
+                    continue;
+                }
+
+                var projected = ProjectPointOntoSegment(point, wall.startPoint, wall.endPoint);
+                if (Vector2.Distance(projected, point) > 0.06f)
+                {
+                    continue;
+                }
+
+                SplitWallAtProjectedPointUsingExistingJunction(floor, wall.wallSegmentId, junction, projected);
+            }
+
+            return junction;
         }
 
         private void SplitWallAtProjectedPointUsingExistingJunction(
