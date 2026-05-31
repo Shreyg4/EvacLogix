@@ -170,8 +170,11 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 {
                     // Keep preview authoring shortcuts flowing.
                 }
-                else if (IsToolSwitchShortcut(shortcutId))
+                else if (IsToolSwitchShortcut(shortcutId) || shortcutId == SandboxShortcutId.CancelTool)
                 {
+                    // Tool switches and Escape leave preview authoring: clear the spawn/fire
+                    // interaction and exit preview so the request below selects the editor tool
+                    // (Escape -> Select). Without this, Escape was swallowed in preview mode.
                     previewService.ClearInteractionMode();
                     previewService.ExitPreviewMode();
                 }

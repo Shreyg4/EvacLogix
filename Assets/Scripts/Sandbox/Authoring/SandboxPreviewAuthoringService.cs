@@ -19,7 +19,6 @@ namespace EvacLogix.Sandbox.Authoring
         private SandboxSelectionService selectionService;
         private SandboxValidationService validationService;
         private SandboxPreviewService previewService;
-        private SandboxRoomDetectionService roomDetectionService;
 
         public event Action PreviewAuthoringChanged;
 
@@ -30,7 +29,6 @@ namespace EvacLogix.Sandbox.Authoring
             selectionService = GetComponent<SandboxSelectionService>();
             validationService = GetComponent<SandboxValidationService>();
             previewService = GetComponent<SandboxPreviewService>();
-            roomDetectionService = GetComponent<SandboxRoomDetectionService>();
         }
 
         public IReadOnlyList<SpawnLayoutData> GetSpawnLayouts()
@@ -159,11 +157,9 @@ namespace EvacLogix.Sandbox.Authoring
                 return false;
             }
 
-            var activeFloor = workspaceService.ActiveFloor;
-            roomDetectionService?.Recalculate();
-            if (!IsValidSpawnPointPlacement(activeFloor, position))
+            if (!HasProjectExit())
             {
-                failureMessage = "Spawn points require at least one exit or window on the floor and must stay inside an enclosed room.";
+                failureMessage = "Add at least one exit before placing spawns.";
                 return false;
             }
 
@@ -238,11 +234,9 @@ namespace EvacLogix.Sandbox.Authoring
                 return false;
             }
 
-            var activeFloor = workspaceService.ActiveFloor;
-            roomDetectionService?.Recalculate();
-            if (!IsValidSpawnPointBrushPlacement(activeFloor, polygonPoints))
+            if (!HasProjectExit())
             {
-                failureMessage = "Spawn point brushes require at least one exit or window on the floor and must stay inside an enclosed room.";
+                failureMessage = "Add at least one exit before placing spawns.";
                 return false;
             }
 
@@ -480,23 +474,26 @@ namespace EvacLogix.Sandbox.Authoring
             return true;
         }
 
-        private bool IsValidSpawnPointPlacement(FloorData floor, Vector2 position)
+        // Spawns need a real evacuation goal: at least one exit anywhere in the PROJECT (not the
+        // spawn's own floor, since agents can reach other floors via stair/teleport portals). Escape
+        // windows are an in-sim fallback, not a substitute for an exit when authoring spawns.
+        private bool HasProjectExit()
         {
-            return HasSpawnAccessPoints(floor) &&
-                   roomDetectionService != null &&
-                   roomDetectionService.IsPointInsideCompleteRoom(floor.floorId, position);
-        }
+            var project = workspaceService?.ActiveProject;
+            if (project?.floors == null)
+            {
+                return false;
+            }
 
-        private bool IsValidSpawnPointBrushPlacement(FloorData floor, IReadOnlyList<Vector2> polygonPoints)
-        {
-            return HasSpawnAccessPoints(floor) &&
-                   roomDetectionService != null &&
-                   roomDetectionService.ArePointsInsideCompleteRooms(floor.floorId, polygonPoints);
-        }
+            for (var i = 0; i < project.floors.Count; i += 1)
+            {
+                if (project.floors[i].exits.Count > 0)
+                {
+                    return true;
+                }
+            }
 
-        private static bool HasSpawnAccessPoints(FloorData floor)
-        {
-            return floor != null && (floor.exits.Count > 0 || floor.windows.Count > 0);
+            return false;
         }
 
         private static List<Vector2> GenerateSpawnPointBrushSamples(IReadOnlyList<Vector2> polygonPoints, float density)
