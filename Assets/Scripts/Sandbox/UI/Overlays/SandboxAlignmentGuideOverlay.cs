@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Authoring.Tools;
@@ -21,8 +22,12 @@ namespace EvacLogix.Sandbox.UI.Overlays
         [SerializeField] private Color intersectionGuideColor = new(0.55f, 0.95f, 0.6f, 0.85f);
         [SerializeField] private Color gridGuideColor = new(0.82f, 0.88f, 0.96f, 0.4f);
         [SerializeField] private Color labelColor = new(0.98f, 1f, 1f, 1f);
+        [SerializeField] private Color angleHelperColor = new(1f, 0.95f, 0.4f, 0.95f);
         [SerializeField] private float guidePixelTolerance = 8f;
         [SerializeField] private float guideLinePixelThickness = 2f;
+        [SerializeField] private float angleHelperRadiusPixels = 42f;
+        [SerializeField] private float angleHelperLinePixelThickness = 2f;
+        [SerializeField] private float rightAngleBandDegrees = 1f;
 
         private const int GuiDepthBehindHud = 50;
 
@@ -130,6 +135,11 @@ namespace EvacLogix.Sandbox.UI.Overlays
             {
                 statusBar.StatusMessage = manipulation.Label.Replace('\n', ' ');
             }
+
+            // Visual-only angle helper: while drawing a wall line whose anchor sits on or meets an
+            // existing wall, draw a protractor arc + number for the angle between the new wall and
+            // the nearest existing wall. Swaps to a right-angle square at ~90 degrees. No snapping.
+            TryDrawWallAngleHelper(floor, worldTolerance);
         }
 
         private bool TryGetActiveManipulation(FloorData floor, out Manipulation manipulation)
@@ -430,6 +440,195 @@ namespace EvacLogix.Sandbox.UI.Overlays
             var rect = new Rect(guiPoint.x - (size.x * 0.5f) - 8f, guiPoint.y - (18f * lineCount) - 18f, size.x + 16f, Mathf.Max(24f, 20f * lineCount));
             DrawFilledRect(rect, new Color(0.05f, 0.08f, 0.12f, 0.92f));
             GUI.Label(rect, text, labelStyle);
+        }
+
+        // While the wall LINE tool is dragging a segment, resolve the nearest existing wall at the
+        // anchor and draw the relative angle indicator. Returns silently in open space (no wall at
+        // the anchor) and at zero length.
+        private void TryDrawWallAngleHelper(FloorData floor, float anchorTolerance)
+        {
+            if (wallAuthoringService == null || !wallAuthoringService.HasPendingLineStart || wallAuthoringOverlay == null)
+            {
+                return;
+            }
+
+            var anchor = wallAuthoringService.PendingLineStart;
+            var newDirection = wallAuthoringOverlay.CurrentLinePreviewPoint - anchor;
+            if (newDirection.sqrMagnitude < 1e-5f)
+            {
+                return;
+            }
+
+            if (!TryResolveAngleReferenceRay(floor, anchor, newDirection, anchorTolerance, out var referenceRay))
+            {
+                return;
+            }
+
+            var angle = Vector2.Angle(referenceRay, newDirection);
+            DrawWallAngleHelper(anchor, referenceRay, newDirection, angle);
+        }
+
+        // Per-frame lookup of the reference ray: scans every wall for one whose endpoint coincides
+        // with the anchor (junction/chaining arm pointing outward) or whose interior passes through
+        // the anchor (mid-wall host, contributing both directions), then keeps the ray with the
+        // smallest angle to the new wall. This covers mid-wall starts, intersections, and the
+        // just-drawn previous segment while chaining.
+        private static bool TryResolveAngleReferenceRay(FloorData floor, Vector2 anchor, Vector2 newDirection, float tolerance, out Vector2 referenceRay)
+        {
+            referenceRay = Vector2.zero;
+            var newDirectionNormalized = newDirection.normalized;
+            var found = false;
+            var bestAngle = float.PositiveInfinity;
+
+            foreach (var wall in floor.wallSegments)
+            {
+                var start = wall.startPoint;
+                var end = wall.endPoint;
+                if ((end - start).sqrMagnitude < 1e-6f)
+                {
+                    continue;
+                }
+
+                if (Vector2.Distance(anchor, start) <= tolerance)
+                {
+                    ConsiderReferenceRay((end - start).normalized, newDirectionNormalized, ref bestAngle, ref referenceRay, ref found);
+                }
+                else if (Vector2.Distance(anchor, end) <= tolerance)
+                {
+                    ConsiderReferenceRay((start - end).normalized, newDirectionNormalized, ref bestAngle, ref referenceRay, ref found);
+                }
+                else if (TryAnchorOnSegmentInterior(anchor, start, end, tolerance, out var hostDirection))
+                {
+                    ConsiderReferenceRay(hostDirection, newDirectionNormalized, ref bestAngle, ref referenceRay, ref found);
+                    ConsiderReferenceRay(-hostDirection, newDirectionNormalized, ref bestAngle, ref referenceRay, ref found);
+                }
+            }
+
+            return found;
+        }
+
+        private static void ConsiderReferenceRay(Vector2 ray, Vector2 newDirectionNormalized, ref float bestAngle, ref Vector2 best, ref bool found)
+        {
+            var angle = Vector2.Angle(ray, newDirectionNormalized);
+            if (angle < bestAngle)
+            {
+                bestAngle = angle;
+                best = ray;
+                found = true;
+            }
+        }
+
+        private static bool TryAnchorOnSegmentInterior(Vector2 anchor, Vector2 start, Vector2 end, float tolerance, out Vector2 direction)
+        {
+            direction = Vector2.zero;
+            var span = end - start;
+            var lengthSquared = span.sqrMagnitude;
+            if (lengthSquared < 1e-6f)
+            {
+                return false;
+            }
+
+            var t = Vector2.Dot(anchor - start, span) / lengthSquared;
+            if (t <= 0.001f || t >= 0.999f)
+            {
+                return false;
+            }
+
+            var projection = start + (t * span);
+            if (Vector2.Distance(projection, anchor) > tolerance)
+            {
+                return false;
+            }
+
+            direction = span.normalized;
+            return true;
+        }
+
+        private void DrawWallAngleHelper(Vector2 anchorWorld, Vector2 referenceRay, Vector2 newDirection, float angle)
+        {
+            EnsureGuiResources();
+
+            // Project into GUI space and recover screen-space ray directions (world->screen flips Y,
+            // so the angle must be measured in screen space for the arc to render correctly).
+            var anchorGui = SandboxAlignmentGuideUtility.ToGuiPoint(targetCamera, anchorWorld);
+            var referenceTipGui = SandboxAlignmentGuideUtility.ToGuiPoint(targetCamera, anchorWorld + referenceRay);
+            var newTipGui = SandboxAlignmentGuideUtility.ToGuiPoint(targetCamera, anchorWorld + newDirection.normalized);
+            var referenceScreen = referenceTipGui - anchorGui;
+            var newScreen = newTipGui - anchorGui;
+            if (referenceScreen.sqrMagnitude < 1e-4f || newScreen.sqrMagnitude < 1e-4f)
+            {
+                return;
+            }
+
+            referenceScreen.Normalize();
+            newScreen.Normalize();
+            var radius = Mathf.Max(8f, angleHelperRadiusPixels);
+
+            if (Mathf.Abs(angle - 90f) <= Mathf.Max(0.01f, rightAngleBandDegrees))
+            {
+                // Right-angle corner symbol (small square) instead of the arc.
+                var legLength = radius * 0.45f;
+                var corner1 = anchorGui + (referenceScreen * legLength);
+                var corner2 = corner1 + (newScreen * legLength);
+                var corner3 = anchorGui + (newScreen * legLength);
+                DrawScreenLine(corner1, corner2, angleHelperLinePixelThickness, angleHelperColor);
+                DrawScreenLine(corner2, corner3, angleHelperLinePixelThickness, angleHelperColor);
+            }
+            else
+            {
+                // Arc sweeping the shortest way from the reference ray to the new wall direction.
+                var startAngle = Mathf.Atan2(referenceScreen.y, referenceScreen.x);
+                var endAngle = Mathf.Atan2(newScreen.y, newScreen.x);
+                var sweep = Mathf.DeltaAngle(startAngle * Mathf.Rad2Deg, endAngle * Mathf.Rad2Deg) * Mathf.Deg2Rad;
+                const int segments = 24;
+                var previous = anchorGui + (new Vector2(Mathf.Cos(startAngle), Mathf.Sin(startAngle)) * radius);
+                for (var i = 1; i <= segments; i += 1)
+                {
+                    var sampleAngle = startAngle + (sweep * (i / (float)segments));
+                    var point = anchorGui + (new Vector2(Mathf.Cos(sampleAngle), Mathf.Sin(sampleAngle)) * radius);
+                    DrawScreenLine(previous, point, angleHelperLinePixelThickness, angleHelperColor);
+                    previous = point;
+                }
+            }
+
+            DrawAngleLabel(anchorGui, referenceScreen, newScreen, radius, angle);
+        }
+
+        private void DrawAngleLabel(Vector2 anchorGui, Vector2 referenceScreen, Vector2 newScreen, float radius, float angle)
+        {
+            var bisector = referenceScreen + newScreen;
+            if (bisector.sqrMagnitude < 1e-4f)
+            {
+                // Straight (180-degree) reading: place the label perpendicular to the reference ray.
+                bisector = new Vector2(-referenceScreen.y, referenceScreen.x);
+            }
+
+            bisector.Normalize();
+            var labelCenter = anchorGui + (bisector * (radius + 16f));
+            var text = $"{angle.ToString("0.#", CultureInfo.InvariantCulture)}°";
+            var content = new GUIContent(text);
+            var size = labelStyle.CalcSize(content);
+            var rect = new Rect(labelCenter.x - (size.x * 0.5f) - 4f, labelCenter.y - (size.y * 0.5f) - 2f, size.x + 8f, size.y + 4f);
+            DrawFilledRect(rect, new Color(0.05f, 0.08f, 0.12f, 0.92f));
+            GUI.Label(rect, text, labelStyle);
+        }
+
+        // Draws a straight line between two GUI-space points by rotating a thin filled rect.
+        private void DrawScreenLine(Vector2 from, Vector2 to, float thickness, Color color)
+        {
+            var delta = to - from;
+            var length = delta.magnitude;
+            if (length < 0.5f)
+            {
+                return;
+            }
+
+            var angleDegrees = Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg;
+            var lineThickness = Mathf.Max(1f, thickness);
+            var previousMatrix = GUI.matrix;
+            GUIUtility.RotateAroundPivot(angleDegrees, from);
+            DrawFilledRect(new Rect(from.x, from.y - (lineThickness * 0.5f), length, lineThickness), color);
+            GUI.matrix = previousMatrix;
         }
 
         private void DrawFilledRect(Rect rect, Color color)

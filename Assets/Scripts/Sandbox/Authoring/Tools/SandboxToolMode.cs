@@ -15,6 +15,6 @@ namespace EvacLogix.Sandbox.Authoring.Tools
         Teleport = 11,
         SpawnPoint = 12,
         SpawnPointBrush = 13,
-        Region = 14,
+        FireStart = 14,
     }
 }

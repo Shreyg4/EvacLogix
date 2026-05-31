@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Authoring.Commands;
 using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Data;
@@ -17,9 +18,10 @@ namespace EvacLogix.Sandbox.Infrastructure
         Obstacle = 3,
         Stair = 4,
         Teleport = 5,
-        Region = 6,
+        FireStart = 6,
         SpawnPoint = 7,
         SpawnBrush = 8,
+        Wall = 9,
     }
 
     [Serializable]
@@ -28,10 +30,17 @@ namespace EvacLogix.Sandbox.Infrastructure
         public SandboxClipboardItemKind kind;
         public string sourceFloorId = string.Empty;
         public string serializedPayload = string.Empty;
+        public bool restoreTeleportLinkOnPaste;
+        public string linkedFloorId = string.Empty;
+        public string serializedLinkedPayload = string.Empty;
     }
 
     public sealed class SandboxClipboardService : MonoBehaviour
     {
+        // Only endpoints that are effectively coincident (walls copied together) re-share a junction;
+        // pasted walls never weld to unrelated existing geometry.
+        private const float PasteWallJunctionReuseDistance = 0.001f;
+
         [SerializeField] private Vector2 defaultPasteOffset = new(1f, 1f);
         [SerializeField] private List<SandboxClipboardItem> clipboardItems = new();
 
@@ -60,6 +69,11 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public bool CopySelection()
         {
+            return CopySelection(false);
+        }
+
+        private bool CopySelection(bool restoreTeleportLinksOnPaste)
+        {
             var floor = workspaceService?.ActiveFloor;
             if (floor == null || selectionService == null)
             {
@@ -69,7 +83,8 @@ namespace EvacLogix.Sandbox.Infrastructure
             var items = new List<SandboxClipboardItem>();
             foreach (var selectedId in selectionService.SelectedObjectIds)
             {
-                var didCopy = TryCopyFloorItem(floor, selectedId, items) || TryCopySpawnItem(workspaceService.ActiveProject, floor.floorId, selectedId, items);
+                var didCopy = TryCopyFloorItem(workspaceService.ActiveProject, floor, selectedId, restoreTeleportLinksOnPaste, items) ||
+                              TryCopySpawnItem(workspaceService.ActiveProject, floor.floorId, selectedId, items);
                 if (!didCopy)
                 {
                     continue;
@@ -104,12 +119,18 @@ namespace EvacLogix.Sandbox.Infrastructure
                     }
 
                     var newSelection = new List<string>();
-                    foreach (var item in clipboardItems)
+
+                    // Walls must paste before openings: the opening re-parent map and the host walls
+                    // they may attach to have to exist first.
+                    var wallIdRemap = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (var item in clipboardItems.Where(candidate => candidate.kind == SandboxClipboardItemKind.Wall))
                     {
-                        if (TryPasteItem(project, floor, item, requestedOffset, newSelection))
-                        {
-                            continue;
-                        }
+                        TryPasteItem(project, floor, item, requestedOffset, newSelection, wallIdRemap);
+                    }
+
+                    foreach (var item in clipboardItems.Where(candidate => candidate.kind != SandboxClipboardItemKind.Wall))
+                    {
+                        TryPasteItem(project, floor, item, requestedOffset, newSelection, wallIdRemap);
                     }
 
                     return newSelection;
@@ -119,6 +140,11 @@ namespace EvacLogix.Sandbox.Infrastructure
         public bool DuplicateSelection(Vector2? offset = null)
         {
             return CopySelection() && PasteSelection(offset);
+        }
+
+        public bool CutSelection()
+        {
+            return CopySelection(true) && DeleteSelection();
         }
 
         public bool DeleteSelection()
@@ -147,7 +173,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                     didChange |= RemoveAll(floor.obstacles, candidate => selectedIds.Contains(candidate.obstacleId) && !IsLocked(SandboxVisualObjectType.Obstacle, candidate.obstacleId));
                     didChange |= RemoveAll(floor.stairPortals, candidate => selectedIds.Contains(candidate.stairPortalId) && !IsLocked(SandboxVisualObjectType.Stair, candidate.stairPortalId));
                     didChange |= RemoveAll(floor.teleportPortals, candidate => selectedIds.Contains(candidate.teleportPortalId) && !IsLocked(SandboxVisualObjectType.Teleport, candidate.teleportPortalId));
-                    didChange |= RemoveAll(floor.regions, candidate => selectedIds.Contains(candidate.regionId) && !IsLocked(SandboxVisualObjectType.Region, candidate.regionId));
+                    didChange |= RemoveAll(project.fireOrigins, candidate => candidate.floorId == floor.floorId && selectedIds.Contains(candidate.fireOriginId) && !IsLocked(SandboxVisualObjectType.FireStart, candidate.fireOriginId));
 
                     foreach (var layout in project.spawnLayouts)
                     {
@@ -231,18 +257,15 @@ namespace EvacLogix.Sandbox.Infrastructure
                         movedIds.Add(teleportPortal.teleportPortalId);
                     }
 
-                    foreach (var region in floor.regions.Where(candidate => selectedIds.Contains(candidate.regionId)))
+                    foreach (var fireOrigin in project.fireOrigins.Where(candidate => candidate.floorId == floor.floorId && selectedIds.Contains(candidate.fireOriginId)))
                     {
-                        if (IsLocked(SandboxVisualObjectType.Region, region.regionId))
+                        if (IsLocked(SandboxVisualObjectType.FireStart, fireOrigin.fireOriginId))
                         {
                             continue;
                         }
 
-                        for (var i = 0; i < region.polygonPoints.Count; i += 1)
-                        {
-                            region.polygonPoints[i] += delta;
-                        }
-                        movedIds.Add(region.regionId);
+                        fireOrigin.position += delta;
+                        movedIds.Add(fireOrigin.fireOriginId);
                     }
 
                     foreach (var door in floor.doors.Where(candidate => selectedIds.Contains(candidate.doorId)))
@@ -358,8 +381,20 @@ namespace EvacLogix.Sandbox.Infrastructure
             return true;
         }
 
-        private static bool TryCopyFloorItem(FloorData floor, string selectedId, ICollection<SandboxClipboardItem> items)
+        private static bool TryCopyFloorItem(
+            BuildingProjectData project,
+            FloorData floor,
+            string selectedId,
+            bool restoreTeleportLinksOnPaste,
+            ICollection<SandboxClipboardItem> items)
         {
+            var wall = floor.wallSegments.FirstOrDefault(candidate => candidate.wallSegmentId == selectedId);
+            if (wall != null)
+            {
+                items.Add(CreateItem(SandboxClipboardItemKind.Wall, floor.floorId, wall));
+                return true;
+            }
+
             var door = floor.doors.FirstOrDefault(candidate => candidate.doorId == selectedId);
             if (door != null)
             {
@@ -398,14 +433,24 @@ namespace EvacLogix.Sandbox.Infrastructure
             var teleportPortal = floor.teleportPortals.FirstOrDefault(candidate => candidate.teleportPortalId == selectedId);
             if (teleportPortal != null)
             {
-                items.Add(CreateItem(SandboxClipboardItemKind.Teleport, floor.floorId, teleportPortal));
+                var item = CreateItem(SandboxClipboardItemKind.Teleport, floor.floorId, teleportPortal);
+                if (restoreTeleportLinksOnPaste &&
+                    TryFindTeleportPortal(project, teleportPortal.targetTeleportPortalId, out var linkedFloor, out var linkedPortal))
+                {
+                    item.restoreTeleportLinkOnPaste = true;
+                    item.linkedFloorId = linkedFloor.floorId;
+                    item.serializedLinkedPayload = JsonUtility.ToJson(linkedPortal);
+                }
+
+                items.Add(item);
                 return true;
             }
 
-            var region = floor.regions.FirstOrDefault(candidate => candidate.regionId == selectedId);
-            if (region != null)
+            var fireOrigin = project.fireOrigins.FirstOrDefault(candidate =>
+                candidate.floorId == floor.floorId && candidate.fireOriginId == selectedId);
+            if (fireOrigin != null)
             {
-                items.Add(CreateItem(SandboxClipboardItemKind.Region, floor.floorId, region));
+                items.Add(CreateItem(SandboxClipboardItemKind.FireStart, floor.floorId, fireOrigin));
                 return true;
             }
 
@@ -451,16 +496,43 @@ namespace EvacLogix.Sandbox.Infrastructure
             FloorData targetFloor,
             SandboxClipboardItem item,
             Vector2 offset,
-            ICollection<string> newSelection)
+            ICollection<string> newSelection,
+            IDictionary<string, string> wallIdRemap)
         {
             switch (item.kind)
             {
-                case SandboxClipboardItemKind.Door:
-                    if (item.sourceFloorId != targetFloor.floorId)
+                case SandboxClipboardItemKind.Wall:
+                    var wallSegment = JsonUtility.FromJson<WallSegmentData>(item.serializedPayload);
+                    if (wallSegment == null)
                     {
                         return false;
                     }
 
+                    var pastedWallId = SandboxId.NewId();
+                    // Near-zero reuse distance: endpoints coincident with another wall pasted in the
+                    // same batch re-share a junction (preserving the copied chain's connectivity),
+                    // but the paste never welds to unrelated existing geometry.
+                    if (!SandboxWallAuthoringService.AddWallSegment(
+                            targetFloor,
+                            pastedWallId,
+                            SandboxId.NewId(),
+                            SandboxId.NewId(),
+                            wallSegment.startPoint + offset,
+                            wallSegment.endPoint + offset,
+                            wallSegment.thickness,
+                            PasteWallJunctionReuseDistance))
+                    {
+                        return false;
+                    }
+
+                    if (wallIdRemap != null && !string.IsNullOrWhiteSpace(wallSegment.wallSegmentId))
+                    {
+                        wallIdRemap[wallSegment.wallSegmentId] = pastedWallId;
+                    }
+
+                    newSelection.Add(pastedWallId);
+                    return true;
+                case SandboxClipboardItemKind.Door:
                     var door = JsonUtility.FromJson<DoorData>(item.serializedPayload);
                     if (door == null)
                     {
@@ -468,7 +540,15 @@ namespace EvacLogix.Sandbox.Infrastructure
                     }
 
                     door.doorId = SandboxId.NewId();
-                    if (!TryMoveOpening(targetFloor, door.wallSegmentId, ref door.offsetAlongWall, door.width, offset))
+                    if (!TryResolveOpeningHostWall(item, ref door.wallSegmentId, targetFloor, wallIdRemap, out var doorFollowedWall))
+                    {
+                        return false;
+                    }
+
+                    // A re-parented opening rides a wall that was already shifted by the paste offset,
+                    // so its position along that wall is unchanged; a standalone opening shifts along
+                    // its original wall by the offset.
+                    if (!TryMoveOpening(targetFloor, door.wallSegmentId, ref door.offsetAlongWall, door.width, doorFollowedWall ? Vector2.zero : offset))
                     {
                         return false;
                     }
@@ -477,11 +557,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                     newSelection.Add(door.doorId);
                     return true;
                 case SandboxClipboardItemKind.Window:
-                    if (item.sourceFloorId != targetFloor.floorId)
-                    {
-                        return false;
-                    }
-
                     var window = JsonUtility.FromJson<WindowData>(item.serializedPayload);
                     if (window == null)
                     {
@@ -489,7 +564,12 @@ namespace EvacLogix.Sandbox.Infrastructure
                     }
 
                     window.windowId = SandboxId.NewId();
-                    if (!TryMoveOpening(targetFloor, window.wallSegmentId, ref window.offsetAlongWall, window.width, offset))
+                    if (!TryResolveOpeningHostWall(item, ref window.wallSegmentId, targetFloor, wallIdRemap, out var windowFollowedWall))
+                    {
+                        return false;
+                    }
+
+                    if (!TryMoveOpening(targetFloor, window.wallSegmentId, ref window.offsetAlongWall, window.width, windowFollowedWall ? Vector2.zero : offset))
                     {
                         return false;
                     }
@@ -543,30 +623,46 @@ namespace EvacLogix.Sandbox.Infrastructure
                         return false;
                     }
 
-                    teleportPortal.teleportPortalId = SandboxId.NewId();
-                    teleportPortal.pairId = SandboxId.NewId();
+                    var pastedTeleportPortalId = SandboxId.NewId();
+                    var pairId = item.restoreTeleportLinkOnPaste && !string.IsNullOrWhiteSpace(teleportPortal.pairId)
+                        ? teleportPortal.pairId
+                        : SandboxId.NewId();
+
+                    teleportPortal.teleportPortalId = pastedTeleportPortalId;
+                    teleportPortal.pairId = pairId;
                     teleportPortal.sourceFloorId = targetFloor.floorId;
-                    teleportPortal.targetFloorId = string.Empty;
-                    teleportPortal.targetTeleportPortalId = string.Empty;
                     teleportPortal.localPosition += offset;
+                    if (item.restoreTeleportLinkOnPaste &&
+                        TryResolveLinkedTeleportForPaste(project, item, out var linkedFloor, out var linkedPortal))
+                    {
+                        teleportPortal.targetFloorId = linkedFloor.floorId;
+                        teleportPortal.targetTeleportPortalId = linkedPortal.teleportPortalId;
+                        linkedPortal.pairId = pairId;
+                        linkedPortal.pairColorIndex = teleportPortal.pairColorIndex;
+                        linkedPortal.targetFloorId = targetFloor.floorId;
+                        linkedPortal.targetTeleportPortalId = pastedTeleportPortalId;
+                    }
+                    else
+                    {
+                        teleportPortal.targetFloorId = string.Empty;
+                        teleportPortal.targetTeleportPortalId = string.Empty;
+                    }
+
                     targetFloor.teleportPortals.Add(teleportPortal);
                     newSelection.Add(teleportPortal.teleportPortalId);
                     return true;
-                case SandboxClipboardItemKind.Region:
-                    var region = JsonUtility.FromJson<RegionData>(item.serializedPayload);
-                    if (region == null)
+                case SandboxClipboardItemKind.FireStart:
+                    var fireOrigin = JsonUtility.FromJson<FireOriginData>(item.serializedPayload);
+                    if (fireOrigin == null)
                     {
                         return false;
                     }
 
-                    region.regionId = SandboxId.NewId();
-                    region.floorId = targetFloor.floorId;
-                    for (var i = 0; i < region.polygonPoints.Count; i += 1)
-                    {
-                        region.polygonPoints[i] += offset;
-                    }
-                    targetFloor.regions.Add(region);
-                    newSelection.Add(region.regionId);
+                    fireOrigin.fireOriginId = SandboxId.NewId();
+                    fireOrigin.floorId = targetFloor.floorId;
+                    fireOrigin.position += offset;
+                    project.fireOrigins.Add(fireOrigin);
+                    newSelection.Add(fireOrigin.fireOriginId);
                     return true;
                 case SandboxClipboardItemKind.SpawnPoint:
                     var spawnPoint = JsonUtility.FromJson<SpawnPointData>(item.serializedPayload);
@@ -618,6 +714,97 @@ namespace EvacLogix.Sandbox.Infrastructure
             };
             project.spawnLayouts.Add(pasteLayout);
             return pasteLayout;
+        }
+
+        private static bool TryResolveLinkedTeleportForPaste(
+            BuildingProjectData project,
+            SandboxClipboardItem item,
+            out FloorData linkedFloor,
+            out TeleportPortalData linkedPortal)
+        {
+            linkedFloor = null;
+            linkedPortal = null;
+            if (project?.floors == null || item == null || string.IsNullOrWhiteSpace(item.serializedLinkedPayload))
+            {
+                return false;
+            }
+
+            var savedLinkedPortal = JsonUtility.FromJson<TeleportPortalData>(item.serializedLinkedPayload);
+            if (savedLinkedPortal == null || string.IsNullOrWhiteSpace(savedLinkedPortal.teleportPortalId))
+            {
+                return false;
+            }
+
+            if (TryFindTeleportPortal(project, savedLinkedPortal.teleportPortalId, out linkedFloor, out linkedPortal))
+            {
+                return true;
+            }
+
+            var floorId = !string.IsNullOrWhiteSpace(item.linkedFloorId)
+                ? item.linkedFloorId
+                : savedLinkedPortal.sourceFloorId;
+            linkedFloor = project.floors.FirstOrDefault(floor => string.Equals(floor.floorId, floorId, StringComparison.Ordinal));
+            if (linkedFloor == null)
+            {
+                return false;
+            }
+
+            savedLinkedPortal.sourceFloorId = linkedFloor.floorId;
+            linkedFloor.teleportPortals.Add(savedLinkedPortal);
+            linkedPortal = savedLinkedPortal;
+            return true;
+        }
+
+        private static bool TryFindTeleportPortal(
+            BuildingProjectData project,
+            string teleportPortalId,
+            out FloorData floor,
+            out TeleportPortalData teleportPortal)
+        {
+            floor = null;
+            teleportPortal = null;
+            if (project?.floors == null || string.IsNullOrWhiteSpace(teleportPortalId))
+            {
+                return false;
+            }
+
+            for (var i = 0; i < project.floors.Count; i += 1)
+            {
+                teleportPortal = project.floors[i].teleportPortals.FirstOrDefault(candidate =>
+                    string.Equals(candidate.teleportPortalId, teleportPortalId, StringComparison.Ordinal));
+                if (teleportPortal == null)
+                {
+                    continue;
+                }
+
+                floor = project.floors[i];
+                return true;
+            }
+
+            return false;
+        }
+
+        // Resolves which wall a pasted opening attaches to. If its original host wall was copied in
+        // the same batch, the opening follows the pasted wall (and may cross floors with it).
+        // Otherwise it stays on its original wall, which only exists on the source floor.
+        private static bool TryResolveOpeningHostWall(
+            SandboxClipboardItem item,
+            ref string wallSegmentId,
+            FloorData targetFloor,
+            IDictionary<string, string> wallIdRemap,
+            out bool followedCopiedWall)
+        {
+            followedCopiedWall = false;
+            if (wallIdRemap != null &&
+                !string.IsNullOrWhiteSpace(wallSegmentId) &&
+                wallIdRemap.TryGetValue(wallSegmentId, out var remappedWallId))
+            {
+                wallSegmentId = remappedWallId;
+                followedCopiedWall = true;
+                return true;
+            }
+
+            return item.sourceFloorId == targetFloor.floorId;
         }
 
         private bool TryMoveOpening(FloorData floor, string wallSegmentId, ref float offsetAlongWall, float width, Vector2 delta)

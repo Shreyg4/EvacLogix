@@ -22,6 +22,7 @@ namespace EvacLogix.Sandbox.Runtime
         private GameObject navAgentObject;
         private NavMeshAgent navMeshAgent;
         private float floorElevation;
+        private float speedMultiplier = 1f;
 
         public string AgentId => agentId;
         public string FloorId => floorId;
@@ -68,6 +69,38 @@ namespace EvacLogix.Sandbox.Runtime
             SyncNavAgentPosition(startPosition);
             SyncVisualPosition();
             RefreshTint();
+        }
+
+        // Scales movement speed (used to slow agents crossing soft obstacles). 1 = full speed.
+        public void SetSpeedMultiplier(float multiplier)
+        {
+            speedMultiplier = Mathf.Clamp(multiplier, 0.05f, 1f);
+            if (navMeshAgent != null)
+            {
+                navMeshAgent.speed = GetProfileSpeed() * speedMultiplier;
+            }
+        }
+
+        // Immediate health loss (used for escape-window fall injuries). Marks the agent dead at zero.
+        public void ApplyInjury(float amount)
+        {
+            health = Mathf.Clamp01(health - Mathf.Max(0f, amount));
+            if (health <= 0f)
+            {
+                hasExited = true;
+            }
+
+            RefreshTint();
+        }
+
+        // Warps the agent to a new floor/position (used when stepping through a portal). Keeps its
+        // health and identity; the caller re-routes afterwards.
+        public void Relocate(string newFloorId, Vector2 worldPosition)
+        {
+            floorId = newFloorId;
+            repathTimer = 0f;
+            SyncNavAgentPosition(worldPosition);
+            SyncVisualPosition();
         }
 
         public void SetDestination(string exitId, Vector2 destination)

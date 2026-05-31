@@ -67,7 +67,6 @@ namespace EvacLogix.Sandbox.Data.Validation
                 AddDuplicateIdIssues(floor.obstacles.Select(obstacle => (obstacle.obstacleId, obstacle.obstacleId, floor.floorId, "Obstacle")), issues);
                 AddDuplicateIdIssues(floor.stairPortals.Select(portal => (portal.stairPortalId, portal.stairPortalId, floor.floorId, "Stair portal")), issues);
                 AddDuplicateIdIssues(floor.teleportPortals.Select(portal => (portal.teleportPortalId, portal.teleportPortalId, floor.floorId, "Teleport portal")), issues);
-                AddDuplicateIdIssues(floor.regions.Select(region => (region.regionId, region.regionId, floor.floorId, "Region")), issues);
             }
         }
 

@@ -83,6 +83,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         }
 
         public bool SnappingEnabled => workspaceStateService != null && workspaceStateService.SnappingEnabled;
+        public float CurrentGridSize => workspaceStateService != null ? Mathf.Max(0.05f, workspaceStateService.GridSize) : 0.5f;
 
         public IReadOnlyList<string> GetMissingDependencies()
         {
@@ -125,7 +126,6 @@ namespace EvacLogix.Sandbox.UI.Panels
                 CreateAuditEntry("exit", "Exit Zone", 1, 6, true, "exit.advanced"),
                 CreateAuditEntry("obstacle", "Obstacle", 1, 4, true, "obstacle.advanced"),
                 CreateAuditEntry("stair", "Stair Portal", 1, 4, true, "stair.advanced"),
-                CreateAuditEntry("region", "Region", 1, 0, true, "region.advanced"),
                 CreateAuditEntry("spawn", "Spawn Layout", 1, 0, true, "spawn.advanced"),
                 CreateAuditEntry("preview", "Fire Origin", 0, 2, false, "preview.advanced"),
                 CreateAuditEntry("scenario", "Scenario Preset", 1, 2, true, "scenario.advanced"),
@@ -723,6 +723,13 @@ namespace EvacLogix.Sandbox.UI.Panels
                 "Linked teleport endpoints.");
         }
 
+        public bool SetTeleportTargetFloor(string sourcePortalId, string targetFloorId)
+        {
+            return UpdateSemanticActionStatus(
+                semanticObjectAuthoringService != null && semanticObjectAuthoringService.SetTeleportTargetFloor(sourcePortalId, targetFloorId),
+                "Updated teleport target floor.");
+        }
+
         public bool AddFloor(string name = "", float elevation = 0f)
         {
             return UpdateFloorActionStatus(
@@ -758,18 +765,6 @@ namespace EvacLogix.Sandbox.UI.Panels
                 "Updated floor metadata.");
         }
 
-        public bool UpdateRegion(
-            string regionId,
-            string name,
-            RegionSemanticType semanticType,
-            IReadOnlyList<Vector2> polygonPoints,
-            IEnumerable<MetadataFieldData> metadataFields)
-        {
-            return UpdateVisualActionStatus(
-                previewAuthoringService != null && previewAuthoringService.UpdateRegion(regionId, name, semanticType, polygonPoints, metadataFields),
-                "Updated region metadata.");
-        }
-
         public bool UpdateSpawnLayout(
             string spawnLayoutId,
             string name,
@@ -786,11 +781,28 @@ namespace EvacLogix.Sandbox.UI.Panels
             Vector2 position,
             float spreadIntensity,
             float startDelaySeconds,
-            bool isPersistent)
+            bool isPersistent,
+            Vector2? size = null)
         {
             return UpdateVisualActionStatus(
-                previewAuthoringService != null && previewAuthoringService.UpdateFireOrigin(fireOriginId, position, spreadIntensity, startDelaySeconds, isPersistent),
+                previewAuthoringService != null && previewAuthoringService.UpdateFireOrigin(fireOriginId, position, spreadIntensity, startDelaySeconds, isPersistent, size),
                 "Updated fire origin parameters.");
+        }
+
+        public bool TrySetWallLength(string wallSegmentId, float newLength, bool anchorAtStart, out string error, out float minWorldLength, out string offenderLabel)
+        {
+            error = string.Empty;
+            minWorldLength = 0f;
+            offenderLabel = null;
+            if (wallAuthoringService == null)
+            {
+                error = "Wall service unavailable.";
+                return false;
+            }
+
+            var didUpdate = wallAuthoringService.TrySetWallLength(wallSegmentId, newLength, anchorAtStart, out error, out minWorldLength, out offenderLabel);
+            UpdateVisualActionStatus(didUpdate, didUpdate ? "Updated wall length." : error);
+            return didUpdate;
         }
 
         public bool RequestDeleteFloor(string floorId)
@@ -1160,19 +1172,6 @@ namespace EvacLogix.Sandbox.UI.Panels
         public bool BeginSpawnBrushPlacement(float density = 1f, string spawnLayoutName = "", bool isPersistent = false, string spawnLayoutId = null)
         {
             return BeginSpawnPointBrushPlacement(density, spawnLayoutName, isPersistent, spawnLayoutId);
-        }
-
-        public bool BeginRegionPlacement(string regionName, RegionSemanticType semanticType)
-        {
-            if (previewService == null)
-            {
-                return false;
-            }
-
-            previewService.EnterPreviewMode();
-            previewService.ConfigureRegionPlacement(regionName, semanticType);
-            previewService.SetInteractionMode(SandboxPreviewInteractionMode.PlaceRegion);
-            return UpdateVisualActionStatus(true, "Drag to place a named preview region.");
         }
 
         public bool SetIsolateSelectedObjects(bool enabled)

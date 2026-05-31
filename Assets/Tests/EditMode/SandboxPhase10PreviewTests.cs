@@ -57,7 +57,7 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
-        public void PreviewAuthoring_CreatesFireOriginsLayoutsSpawnPointBrushesAndNamedRegions()
+        public void PreviewAuthoring_CreatesFireOriginsLayoutsAndSpawnPointBrushes()
         {
             var host = CreatePhase10Host(
                 out var workspaceService,
@@ -83,7 +83,6 @@ namespace EvacLogix.Tests.EditMode
                 null,
                 "Temporary Layout",
                 false), Is.True);
-            Assert.That(previewAuthoringService.PlaceRegion(new Vector2(4f, 4f), new Vector2(2f, 3f), out var regionId, "North Spawn Zone", RegionSemanticType.SpawnZone), Is.True);
 
             var project = workspaceService.ActiveProject;
             Assert.That(project.fireOrigins.Single(origin => origin.fireOriginId == fireOriginId).isPersistent, Is.True);
@@ -91,8 +90,6 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(project.spawnLayouts.Single(layout => layout.spawnLayoutId == temporaryLayoutId).isPersistent, Is.False);
             Assert.That(project.spawnLayouts.SelectMany(layout => layout.spawnPoints).Any(point => point.spawnPointId == spawnPointId), Is.True);
             Assert.That(project.spawnLayouts.SelectMany(layout => layout.spawnPoints).Count(point => brushedSpawnPointIds.Contains(point.spawnPointId)), Is.EqualTo(brushedSpawnPointIds.Count));
-            Assert.That(project.floors.Single().regions.Single(region => region.regionId == regionId).name, Is.EqualTo("North Spawn Zone"));
-            Assert.That(project.floors.Single().regions.Single(region => region.regionId == regionId).semanticType, Is.EqualTo(RegionSemanticType.SpawnZone));
 
             var semanticRendererObject = new GameObject("SemanticRenderer");
             var semanticRenderer = semanticRendererObject.AddComponent<SandboxSemanticObjectRenderer>();

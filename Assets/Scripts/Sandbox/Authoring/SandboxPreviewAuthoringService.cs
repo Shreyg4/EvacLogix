@@ -418,7 +418,8 @@ namespace EvacLogix.Sandbox.Authoring
             Vector2 position,
             float spreadIntensity,
             float startDelaySeconds,
-            bool isPersistent)
+            bool isPersistent,
+            Vector2? size = null)
         {
             if (workspaceService?.ActiveProject == null || string.IsNullOrWhiteSpace(fireOriginId))
             {
@@ -440,115 +441,14 @@ namespace EvacLogix.Sandbox.Authoring
                     fireOrigin.spreadIntensity = Mathf.Max(0.1f, spreadIntensity);
                     fireOrigin.startDelaySeconds = Mathf.Max(0f, startDelaySeconds);
                     fireOrigin.isPersistent = isPersistent;
+                    if (size.HasValue)
+                    {
+                        fireOrigin.size = new Vector2(Mathf.Max(0.2f, size.Value.x), Mathf.Max(0.2f, size.Value.y));
+                    }
+
                     return true;
                 },
                 new[] { fireOriginId });
-        }
-
-        public bool PlaceRegion(
-            Vector2 center,
-            Vector2 size,
-            out string regionId,
-            string name = "",
-            RegionSemanticType semanticType = RegionSemanticType.SpawnZone)
-        {
-            regionId = string.Empty;
-            if (workspaceService?.ActiveFloor == null || size.x <= 0f || size.y <= 0f)
-            {
-                return false;
-            }
-
-            var activeFloorId = workspaceService.ActiveFloor.floorId;
-            var createdRegionId = SandboxId.NewId();
-            var half = size * 0.5f;
-            var polygonPoints = new List<Vector2>
-            {
-                center + new Vector2(-half.x, -half.y),
-                center + new Vector2(-half.x, half.y),
-                center + new Vector2(half.x, half.y),
-                center + new Vector2(half.x, -half.y)
-            };
-
-            var didPlace = ExecuteProjectMutation(
-                "Place Region",
-                project =>
-                {
-                    var floor = project.floors.FirstOrDefault(candidate =>
-                        string.Equals(candidate.floorId, activeFloorId, StringComparison.Ordinal));
-                    if (floor == null)
-                    {
-                        return false;
-                    }
-
-                    floor.regions.Add(new RegionData
-                    {
-                        regionId = createdRegionId,
-                        floorId = activeFloorId,
-                        name = string.IsNullOrWhiteSpace(name)
-                            ? BuildDefaultRegionName(semanticType, floor.regions.Count + 1)
-                            : name.Trim(),
-                        semanticType = semanticType,
-                        polygonPoints = polygonPoints
-                    });
-                    return true;
-                },
-                new[] { createdRegionId });
-
-            if (didPlace)
-            {
-                regionId = createdRegionId;
-            }
-
-            return didPlace;
-        }
-
-        public bool UpdateRegion(
-            string regionId,
-            string name,
-            RegionSemanticType semanticType,
-            IReadOnlyList<Vector2> polygonPoints,
-            IEnumerable<MetadataFieldData> metadataFields)
-        {
-            if (workspaceService?.ActiveProject == null || string.IsNullOrWhiteSpace(regionId))
-            {
-                return false;
-            }
-
-            return ExecuteProjectMutation(
-                "Update Region",
-                project =>
-                {
-                    foreach (var floor in project.floors)
-                    {
-                        var region = floor.regions.FirstOrDefault(candidate =>
-                            string.Equals(candidate.regionId, regionId, StringComparison.Ordinal));
-                        if (region == null)
-                        {
-                            continue;
-                        }
-
-                        if (name != null)
-                        {
-                            region.name = string.IsNullOrWhiteSpace(name) ? region.name : name.Trim();
-                        }
-
-                        region.semanticType = semanticType;
-                        if (polygonPoints != null && polygonPoints.Count >= 3)
-                        {
-                            region.polygonPoints = polygonPoints.ToList();
-                        }
-
-                        if (metadataFields != null)
-                        {
-                            region.metadataFields = CloneMetadataFields(metadataFields);
-                        }
-
-                        return true;
-                    }
-
-                    return false;
-                },
-                new[] { regionId });
         }
 
         private bool ExecuteProjectMutation(
@@ -631,6 +531,11 @@ namespace EvacLogix.Sandbox.Authoring
             return true;
         }
 
+        private static bool HasSpawnAccessPoints(FloorData floor)
+        {
+            return floor != null && (floor.exits.Count > 0 || floor.windows.Count > 0);
+        }
+
         private bool TryValidateSpawnPointBrushPlacement(FloorData floor, IReadOnlyList<Vector2> polygonPoints, out string failureMessage)
         {
             failureMessage = string.Empty;
@@ -647,11 +552,6 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             return true;
-        }
-
-        private static bool HasSpawnAccessPoints(FloorData floor)
-        {
-            return floor != null && (floor.exits.Count > 0 || floor.windows.Count > 0);
         }
 
         private bool TryValidateSpawnPointSpacing(string floorId, Vector2 position, out string failureMessage)
@@ -825,17 +725,6 @@ namespace EvacLogix.Sandbox.Authoring
             };
             project.spawnLayouts.Add(layout);
             return true;
-        }
-
-        private static string BuildDefaultRegionName(RegionSemanticType semanticType, int index)
-        {
-            return semanticType switch
-            {
-                RegionSemanticType.SpawnZone => $"Spawn Zone {index}",
-                RegionSemanticType.RestrictedZone => $"Restricted Zone {index}",
-                RegionSemanticType.Annotation => $"Annotation {index}",
-                _ => $"Region {index}"
-            };
         }
 
         private static List<MetadataFieldData> CloneMetadataFields(IEnumerable<MetadataFieldData> metadataFields)

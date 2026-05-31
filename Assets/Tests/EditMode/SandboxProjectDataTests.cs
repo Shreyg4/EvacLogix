@@ -30,13 +30,6 @@ namespace EvacLogix.Tests.EditMode
                     new FloorData
                     {
                         name = "Floor A",
-                        regions =
-                        {
-                            new RegionData
-                            {
-                                name = "Spawn Zone"
-                            }
-                        },
                         wallSegments =
                         {
                             new WallSegmentData()
@@ -68,8 +61,6 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(project.projectId, Is.Not.Empty);
             Assert.That(project.metadata.distanceUnit, Is.EqualTo(DistanceUnit.Feet));
             Assert.That(project.floors[0].floorId, Is.Not.Empty);
-            Assert.That(project.floors[0].regions[0].regionId, Is.Not.Empty);
-            Assert.That(project.floors[0].regions[0].floorId, Is.EqualTo(project.floors[0].floorId));
             Assert.That(project.floors[0].wallSegments[0].wallSegmentId, Is.Not.Empty);
             Assert.That(project.spawnLayouts[0].spawnLayoutId, Is.Not.Empty);
             Assert.That(project.spawnLayouts[0].spawnPoints[0].spawnPointId, Is.Not.Empty);
@@ -367,23 +358,6 @@ namespace EvacLogix.Tests.EditMode
                         travelCost = 1.2f
                     }
                 },
-                regions =
-                {
-                    new RegionData
-                    {
-                        regionId = "region-1",
-                        floorId = "floor-1",
-                        name = "Lobby Spawn Zone",
-                        semanticType = RegionSemanticType.SpawnZone,
-                        polygonPoints =
-                        {
-                            new Vector2(1f, 1f),
-                            new Vector2(4f, 1f),
-                            new Vector2(4f, 4f),
-                            new Vector2(1f, 4f)
-                        }
-                    }
-                }
             };
         }
 
@@ -469,23 +443,6 @@ namespace EvacLogix.Tests.EditMode
                         travelCost = 1.2f
                     }
                 },
-                regions =
-                {
-                    new RegionData
-                    {
-                        regionId = "region-2",
-                        floorId = "floor-2",
-                        name = "Upper Restriction",
-                        semanticType = RegionSemanticType.RestrictedZone,
-                        polygonPoints =
-                        {
-                            new Vector2(6f, 6f),
-                            new Vector2(8f, 6f),
-                            new Vector2(8f, 8f),
-                            new Vector2(6f, 8f)
-                        }
-                    }
-                }
             };
         }
     }

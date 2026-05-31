@@ -24,7 +24,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private const float OpeningHitRadius = 0.5f;
         private const float StairHitRadius = 0.55f;
         private const float RectangleHandleHitRadius = 0.28f;
-        private const float RegionEdgeHitRadius = 0.35f;
+        private const float FireStartHitRadius = 0.5f;
         private const float SelectionDragThreshold = 0.2f;
         private const float AlignmentSnapPixelTolerance = 8f;
         private const float MinEraseBrushRadius = 0.35f;
@@ -46,7 +46,8 @@ namespace EvacLogix.Sandbox.UI.Overlays
             Obstacle = 5,
             Stair = 6,
             Teleport = 7,
-            Region = 8,
+            FireStart = 8,
+            Spawn = 9,
         }
 
         private struct SandboxHitResult
@@ -69,6 +70,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxPreviewService previewService;
         private SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
+        private SandboxPreviewAuthoringService previewAuthoringService;
         private Texture2D solidTexture;
         private Font overlayFont;
         private GUIStyle erasePanelStyle;
@@ -176,6 +178,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             SandboxHitKind.Exit => SandboxVisualObjectType.Exit,
             SandboxHitKind.Obstacle => SandboxVisualObjectType.Obstacle,
             SandboxHitKind.Teleport => SandboxVisualObjectType.Teleport,
+            SandboxHitKind.FireStart => SandboxVisualObjectType.FireStart,
             _ => null,
         };
         public int DraggedRectangleHandleIndex => draggedRectangleHandleIndex;
@@ -247,6 +250,11 @@ namespace EvacLogix.Sandbox.UI.Overlays
             if (semanticObjectAuthoringService == null)
             {
                 semanticObjectAuthoringService = FindAnyObjectByType<SandboxSemanticObjectAuthoringService>();
+            }
+
+            if (previewAuthoringService == null)
+            {
+                previewAuthoringService = FindAnyObjectByType<SandboxPreviewAuthoringService>();
             }
         }
 
@@ -915,6 +923,19 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     }
 
                     break;
+                case SandboxHitKind.FireStart:
+                    if (previewAuthoringService != null && TryFindFireOrigin(draggedRectangleObjectId, out var fireOrigin))
+                    {
+                        didUpdate = previewAuthoringService.UpdateFireOrigin(
+                            fireOrigin.fireOriginId,
+                            draggedRectanglePreviewCenter,
+                            fireOrigin.spreadIntensity,
+                            fireOrigin.startDelaySeconds,
+                            fireOrigin.isPersistent,
+                            draggedRectanglePreviewSize);
+                    }
+
+                    break;
             }
 
             ClearRectangleHandleDragState();
@@ -1199,7 +1220,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             CollectObstaclesInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
             CollectStairsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
             CollectTeleportsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
-            CollectRegionsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
+            CollectFireStartsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
 
             return hits
                 .OrderBy(hit => GetBrushErasePriority(hit.kind))
@@ -1421,23 +1442,28 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
         }
 
-        private void CollectRegionsInBrush(
+        private void CollectFireStartsInBrush(
             FloorData floor,
             Vector2 worldPoint,
             float brushRadius,
             List<SandboxHitResult> hits,
             HashSet<string> knownObjectIds)
         {
-            foreach (var region in floor.regions)
+            var project = workspaceService?.ActiveProject;
+            if (project == null)
             {
-                if (!IsInteractable(SandboxVisualObjectType.Region, region.regionId) || region.polygonPoints.Count < 2)
+                return;
+            }
+
+            foreach (var fireOrigin in project.fireOrigins)
+            {
+                if (fireOrigin.floorId != floor.floorId || !IsInteractable(SandboxVisualObjectType.FireStart, fireOrigin.fireOriginId))
                 {
                     continue;
                 }
 
-                var isInside = IsPointInsidePolygon(worldPoint, region.polygonPoints);
-                var score = isInside ? 0f : DistanceToPolygonEdges(worldPoint, region.polygonPoints);
-                if (!isInside && score > RegionEdgeHitRadius + brushRadius)
+                var distance = Vector2.Distance(worldPoint, fireOrigin.position);
+                if (distance > FireStartHitRadius + brushRadius)
                 {
                     continue;
                 }
@@ -1447,10 +1473,10 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     knownObjectIds,
                     new SandboxHitResult
                     {
-                        kind = SandboxHitKind.Region,
-                        objectId = region.regionId,
-                        label = string.IsNullOrWhiteSpace(region.name) ? "region" : $"region '{region.name}'",
-                        score = score
+                        kind = SandboxHitKind.FireStart,
+                        objectId = fireOrigin.fireOriginId,
+                        label = "fire start",
+                        score = distance
                     });
             }
         }
@@ -1475,7 +1501,8 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 SandboxHitKind.Obstacle => 3,
                 SandboxHitKind.Stair => 4,
                 SandboxHitKind.Teleport => 5,
-                SandboxHitKind.Region => 6,
+                SandboxHitKind.FireStart => 6,
+                SandboxHitKind.Spawn => 6,
                 SandboxHitKind.Wall => 7,
                 _ => 8
             };
@@ -1509,7 +1536,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             EvaluateObstacles(floor, worldPoint, ref hit);
             EvaluateStairs(floor, worldPoint, ref hit);
             EvaluateTeleports(floor, worldPoint, ref hit);
-            EvaluateRegions(floor, worldPoint, ref hit);
+            EvaluateFireStarts(floor, worldPoint, ref hit);
             return hit.kind != SandboxHitKind.None;
         }
 
@@ -1558,13 +1585,13 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return true;
             }
 
-            if (floor.regions.Any(candidate => candidate.regionId == objectId))
+            var project = workspaceService?.ActiveProject;
+            if (project != null && project.fireOrigins.Any(candidate => candidate.floorId == floor.floorId && candidate.fireOriginId == objectId))
             {
-                hit = new SandboxHitResult { kind = SandboxHitKind.Region, objectId = objectId, label = "region" };
+                hit = new SandboxHitResult { kind = SandboxHitKind.FireStart, objectId = objectId, label = "fire start" };
                 return true;
             }
 
-            var project = workspaceService?.ActiveProject;
             if (project != null)
             {
                 foreach (var layout in project.spawnLayouts)
@@ -1572,7 +1599,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     if (layout.spawnPoints.Any(candidate => candidate.floorId == floor.floorId && candidate.spawnPointId == objectId) ||
                         layout.spawnBrushStrokes.Any(candidate => candidate.floorId == floor.floorId && candidate.spawnBrushStrokeId == objectId))
                     {
-                        hit = new SandboxHitResult { kind = SandboxHitKind.Region, objectId = objectId, label = "spawn object" };
+                        hit = new SandboxHitResult { kind = SandboxHitKind.Spawn, objectId = objectId, label = "spawn object" };
                         return true;
                     }
                 }
@@ -1631,7 +1658,31 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return true;
             }
 
+            if (TryFindFireOrigin(objectId, out var fireOrigin))
+            {
+                hitKind = SandboxHitKind.FireStart;
+                center = fireOrigin.position;
+                size = fireOrigin.size;
+                rotationDegrees = 0f;
+                return true;
+            }
+
             return false;
+        }
+
+        private bool TryFindFireOrigin(string objectId, out FireOriginData fireOrigin)
+        {
+            fireOrigin = null;
+            var floor = workspaceService?.ActiveFloor;
+            var project = workspaceService?.ActiveProject;
+            if (floor == null || project == null || string.IsNullOrWhiteSpace(objectId))
+            {
+                return false;
+            }
+
+            fireOrigin = project.fireOrigins.FirstOrDefault(candidate =>
+                candidate.floorId == floor.floorId && string.Equals(candidate.fireOriginId, objectId, StringComparison.Ordinal));
+            return fireOrigin != null;
         }
 
         private bool TryFindObstacle(string objectId, out FloorData floor, out ObstacleData obstacle)
@@ -1934,18 +1985,23 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
         }
 
-        private void EvaluateRegions(FloorData floor, Vector2 worldPoint, ref SandboxHitResult bestHit)
+        private void EvaluateFireStarts(FloorData floor, Vector2 worldPoint, ref SandboxHitResult bestHit)
         {
-            foreach (var region in floor.regions)
+            var project = workspaceService?.ActiveProject;
+            if (project == null)
             {
-                if (!IsInteractable(SandboxVisualObjectType.Region, region.regionId) || region.polygonPoints.Count < 2)
+                return;
+            }
+
+            foreach (var fireOrigin in project.fireOrigins)
+            {
+                if (fireOrigin.floorId != floor.floorId || !IsInteractable(SandboxVisualObjectType.FireStart, fireOrigin.fireOriginId))
                 {
                     continue;
                 }
 
-                var isInside = IsPointInsidePolygon(worldPoint, region.polygonPoints);
-                var edgeDistance = DistanceToPolygonEdges(worldPoint, region.polygonPoints);
-                if (!isInside && edgeDistance > RegionEdgeHitRadius)
+                var distance = Vector2.Distance(worldPoint, fireOrigin.position);
+                if (distance > FireStartHitRadius)
                 {
                     continue;
                 }
@@ -1954,10 +2010,10 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     ref bestHit,
                     new SandboxHitResult
                     {
-                        kind = SandboxHitKind.Region,
-                        objectId = region.regionId,
-                        label = string.IsNullOrWhiteSpace(region.name) ? "region" : $"region '{region.name}'",
-                        score = isInside ? 0.1f : edgeDistance
+                        kind = SandboxHitKind.FireStart,
+                        objectId = fireOrigin.fireOriginId,
+                        label = "fire start",
+                        score = distance
                     });
             }
         }
@@ -1992,7 +2048,11 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 openingWidth);
             var halfWidth = worldWidth * 0.5f;
             var projectionDistance = Vector2.Dot(worldPoint - wall.startPoint, wallDirection);
-            if (projectionDistance < openingOffset - halfWidth - OpeningHitRadius || projectionDistance > openingOffset + halfWidth + OpeningHitRadius)
+
+            // Accept only within the opening's actual footprint along the wall (no along-wall
+            // padding). Clicks on the solid wall beside an opening fall through to the wall instead
+            // of being grabbed by the opening's hit area.
+            if (projectionDistance < openingOffset - halfWidth || projectionDistance > openingOffset + halfWidth)
             {
                 return false;
             }

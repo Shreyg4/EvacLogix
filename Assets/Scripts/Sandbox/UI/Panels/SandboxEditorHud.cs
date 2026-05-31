@@ -1,14 +1,18 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Authoring.Tools;
+using EvacLogix.Sandbox.Core;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Rendering;
 using EvacLogix.Sandbox.UI.Overlays;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace EvacLogix.Sandbox.UI.Panels
 {
@@ -23,6 +27,15 @@ namespace EvacLogix.Sandbox.UI.Panels
             Teleport = 4,
             Door = 5,
             Window = 6,
+            FireStart = 7,
+            Wall = 8,
+        }
+
+        private enum FloorLevelView
+        {
+            All = 0,
+            Surface = 1,
+            Basement = 2,
         }
 
         private enum FloorCategory
@@ -34,7 +47,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         [SerializeField] private string blueprintImportPath = string.Empty;
         [SerializeField] private string calibrationDistanceText = "10";
-        [SerializeField] private string pendingFloorName = "Floor";
+        [SerializeField] private string pendingFloorName = string.Empty;
         [SerializeField] private string selectionSizeXText = string.Empty;
         [SerializeField] private string selectionSizeYText = string.Empty;
         [SerializeField] private string windowEscapeCostText = "1";
@@ -46,6 +59,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         [SerializeField] private bool inspectorCollapsed;
         [SerializeField] private bool validationCollapsed;
         [SerializeField] private bool statusBarCollapsed;
+        [SerializeField] private FloorLevelView selectedFloorLevelView = FloorLevelView.All;
         [SerializeField] private Vector2 toolScrollPosition;
         [SerializeField] private Vector2 floorTabsScrollPosition;
         [SerializeField] private Vector2 inspectorScrollPosition;
@@ -58,6 +72,8 @@ namespace EvacLogix.Sandbox.UI.Panels
         private SandboxInspectorPanelShell inspectorPanelShell;
         private SandboxVisualLegendShell visualLegendShell;
         private SandboxValidationPanelShell validationPanelShell;
+        private SandboxCameraController cameraController;
+        private bool showReturnToMenuConfirm;
         private SandboxStatusBarShell statusBarShell;
         private SandboxNewProjectDialogShell newProjectDialogShell;
         private SandboxProjectWorkspaceService workspaceService;
@@ -77,6 +93,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         private GUIStyle panelBoxStyle;
         private GUIStyle insetPanelBoxStyle;
         private GUIStyle modalWindowStyle;
+        private GUIStyle noticeStyle;
         private RectOffset buttonPadding;
         private Texture2D solidTexture;
         private Texture2D hudPanelTexture;
@@ -99,7 +116,9 @@ namespace EvacLogix.Sandbox.UI.Panels
         private enum MovablePanel { TopBar, Floors, Tools, Inspector, Validation, StatusBar }
 
         private const float PanelDragThresholdPixels = 5f;
-        private const string PanelLayoutPrefPrefix = "Sandbox.PanelLayout.";
+        // v2: the validation panel moved to a bottom band and the status bar shrank to a bottom-left
+        // box; bumping the prefix discards pre-v2 saved positions so everyone gets the new defaults.
+        private const string PanelLayoutPrefPrefix = "Sandbox.PanelLayout.v2.";
         private readonly Dictionary<MovablePanel, Vector2> customPanelPositions = new();
         private bool panelLayoutLoaded;
         private bool hasPendingPanelPress;
@@ -108,6 +127,15 @@ namespace EvacLogix.Sandbox.UI.Panels
         private Vector2 panelDragGrabOffset;
         private Vector2 pendingPanelPressPoint;
         private Vector2 panelDragGhostPosition;
+
+        private const float FloorTabDragThresholdPixels = 6f;
+        private readonly Dictionary<string, Rect> floorTabRects = new();
+        private bool hasPendingFloorTabPress;
+        private bool isFloorTabDragActive;
+        private string draggedFloorTabId = string.Empty;
+        private Vector2 floorTabPressPoint;
+        private Vector2 floorTabGhostPosition;
+        private string floorTabGhostLabel = string.Empty;
         private Rect modalRect;
         private string selectionEditorTargetId = string.Empty;
         private SelectionEditableKind selectionEditorKind = SelectionEditableKind.None;
@@ -116,10 +144,24 @@ namespace EvacLogix.Sandbox.UI.Panels
         private string obstacleBehaviorSyncedId = string.Empty;
         private float selectionObstacleWeight = 1f;
         private float selectionObstacleSpeedPenalty;
+        private string fireBehaviorSyncedId = string.Empty;
+        private float selectionFireIntensity = 1f;
+        private float selectionFireStartDelay;
+        private string selectionFireWidthText = "1";
+        private string selectionFireLengthText = "1";
+        private bool dimensionsInGridUnits = true;
+        private string wallSyncedId = string.Empty;
+        private string selectionWallLengthText = "1";
+        private bool selectionWallAnchorAtStart = true;
+        private string wallLengthError = string.Empty;
         private bool hasLoggedGuiException;
         private string lastGuiExceptionMessage = string.Empty;
         private bool hasLoggedWebGlDependencyStatus;
         private bool hasLoggedBrowserActionMode;
+        private float uiScale = 1f;
+
+        private const float MinUiScale = 1f;
+        private const float MaxUiScale = 2f;
 
         public bool IsFullyWired =>
             topBarShell != null &&
@@ -182,6 +224,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void OnGUI()
         {
+            var previousMatrix = GUI.matrix;
             try
             {
                 RefreshDependenciesIfNeeded();
@@ -189,23 +232,36 @@ namespace EvacLogix.Sandbox.UI.Panels
                 EnsureDefaultFieldValues();
                 EnsurePanelLayoutLoaded();
                 RecalculateLayout();
-                ProcessPanelDragEvents();
 
+                // Panel rects (RecalculateLayout) are in logical/pre-scale coordinates. Event mouse
+                // positions are only reported in that same space once GUI.matrix is applied, so drag
+                // handling must run after the matrix is set — otherwise it hit-tests physical mouse
+                // coords against logical rects and breaks whenever the web UI-size buttons push
+                // uiScale above 1.
+                GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(uiScale, uiScale, 1f));
+                ProcessPanelDragEvents();
                 DrawTopBar();
                 DrawToolPalette();
                 DrawFloorTabs();
                 DrawInspector();
                 DrawValidationPanel();
                 DrawStatusBar();
+                DrawTransientNotice();
                 DrawPanelDragGhost();
 
                 if (newProjectDialogShell != null && newProjectDialogShell.IsOpen)
                 {
                     DrawNewProjectModal();
                 }
+
+                if (showReturnToMenuConfirm)
+                {
+                    DrawReturnToMenuModal();
+                }
             }
             catch (Exception exception)
             {
+                GUI.matrix = previousMatrix;
                 lastGuiExceptionMessage = exception.ToString();
                 if (!hasLoggedGuiException)
                 {
@@ -215,6 +271,26 @@ namespace EvacLogix.Sandbox.UI.Panels
 
                 DrawGuiExceptionFallback();
             }
+            finally
+            {
+                GUI.matrix = previousMatrix;
+            }
+        }
+
+        public void SetUiScale(string scaleText)
+        {
+            if (!float.TryParse(scaleText, NumberStyles.Float, CultureInfo.InvariantCulture, out var nextScale))
+            {
+                return;
+            }
+
+            uiScale = Mathf.Clamp(nextScale, MinUiScale, MaxUiScale);
+        }
+
+        public void SelectDefaultTool()
+        {
+            RefreshDependenciesIfNeeded();
+            toolPaletteShell?.SelectTool(SandboxToolMode.Select);
         }
 
         private void DrawTopBar()
@@ -269,6 +345,10 @@ namespace EvacLogix.Sandbox.UI.Panels
                 var canPreview = topBarShell != null && topBarShell.CanOpenPreview();
                 DrawActionButton("Enter Preview", () => { topBarShell?.EnterPreviewMode(); }, workspaceService?.ActiveProject != null && canPreview);
             }
+
+            GUILayout.FlexibleSpace();
+            DrawActionButton("Simulate", LaunchSimulation, workspaceService?.ActiveProject != null);
+            DrawActionButton("Main Menu", () => showReturnToMenuConfirm = true);
             GUILayout.EndHorizontal();
 
             GUILayout.Label(topBarShell?.PersistenceModeSummary ?? $"Working files: {GetStorageDirectoryPath()}", bodyStyle);
@@ -641,7 +721,6 @@ namespace EvacLogix.Sandbox.UI.Panels
                     GUILayout.EndHorizontal();
 
                     GUILayout.BeginHorizontal();
-                    DrawActionButton("Region Tool", ActivateRegionPlacement);
                     DrawActionButton("Clear Mode", () => previewService.ClearInteractionMode());
                     GUILayout.EndHorizontal();
 
@@ -653,7 +732,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 }
                 else
                 {
-                    GUILayout.Label("Enter preview mode from the top bar to place fire origins, spawn points, regions, and run diagnostics.", bodyStyle);
+                    GUILayout.Label("Enter preview mode from the top bar to place spawn points and run diagnostics.", bodyStyle);
                 }
             }
 
@@ -782,9 +861,17 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             GUILayout.BeginHorizontal();
+
+            // Left control column: actions + room overlay controls.
+            GUILayout.BeginVertical(GUILayout.Width(196f));
+            GUILayout.BeginHorizontal();
             DrawActionButton("Refresh", () => validationPanelShell?.RefreshValidation(), workspaceService?.ActiveProject != null);
             DrawActionButton("Rebuild All", () => validationPanelShell?.RebuildAll(), workspaceService?.ActiveProject != null);
             GUILayout.EndHorizontal();
+
+            // View-recovery: snap the camera back to world origin at default zoom. Always available
+            // since it only affects the view, not project state.
+            DrawActionButton("Move to Origin", () => (cameraController ??= FindAnyObjectByType<SandboxCameraController>())?.MoveToOrigin(), true);
 
             GUILayout.Label(validationPanelShell != null && validationPanelShell.HasBlockingIssues
                 ? "Blocking issues present."
@@ -808,13 +895,21 @@ namespace EvacLogix.Sandbox.UI.Panels
                 GUILayout.Label(validationPanelShell.RoomDetectionStatus, bodyStyle);
                 GUILayout.EndHorizontal();
                 GUILayout.Label(
-                    $"Room overlay: sealed {validationPanelShell.SealedRoomCount}, penetrated {validationPanelShell.PenetratedRoomCount}.",
+                    $"Rooms: sealed {validationPanelShell.SealedRoomCount}, penetrated {validationPanelShell.PenetratedRoomCount}.",
                     bodyStyle);
             }
 
+            GUILayout.EndVertical();
+
+            GUILayout.Space(10f);
+
+            // Right side: the issue list fills the remaining (wide) area at full band height.
+            GUILayout.BeginVertical();
             validationScrollPosition = GUILayout.BeginScrollView(validationScrollPosition);
+            var hasIssues = false;
             foreach (var floorGroup in validationPanelShell?.IssueGroups ?? Enumerable.Empty<SandboxValidationFloorGroup>())
             {
+                hasIssues = true;
                 GUILayout.Label(floorGroup.label, subheaderStyle);
                 foreach (var objectGroup in floorGroup.objectGroups)
                 {
@@ -825,7 +920,16 @@ namespace EvacLogix.Sandbox.UI.Panels
                     }
                 }
             }
+
+            if (!hasIssues)
+            {
+                GUILayout.Label("No issues to display. Run Refresh to validate the project.", bodyStyle);
+            }
+
             GUILayout.EndScrollView();
+            GUILayout.EndVertical();
+
+            GUILayout.EndHorizontal();
             GUILayout.EndArea();
         }
 
@@ -840,6 +944,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             var selectedId = selectionService.SelectedObjectIds[0];
+            DrawObjectLockToggle(selectedId);
             if (TryFindSelectedExit(selectedId, out var exitZone))
             {
                 SyncSelectionEditorState(selectedId, SelectionEditableKind.Exit, exitZone.size);
@@ -899,8 +1004,264 @@ namespace EvacLogix.Sandbox.UI.Panels
                 return;
             }
 
+            if (TryFindSelectedFireOrigin(selectedId, out var fireOrigin))
+            {
+                selectionEditorKind = SelectionEditableKind.FireStart;
+                if (!string.Equals(fireBehaviorSyncedId, selectedId, StringComparison.Ordinal))
+                {
+                    fireBehaviorSyncedId = selectedId;
+                    selectionFireIntensity = fireOrigin.spreadIntensity;
+                    selectionFireStartDelay = fireOrigin.startDelaySeconds;
+                    selectionFireWidthText = FormatDimension(WorldToDisplayDimension(fireOrigin.size.x));
+                    selectionFireLengthText = FormatDimension(WorldToDisplayDimension(fireOrigin.size.y));
+                }
+
+                DrawFireStartFields(fireOrigin);
+                return;
+            }
+
+            if (TryFindSelectedWall(selectedId, out var wall))
+            {
+                selectionEditorKind = SelectionEditableKind.Wall;
+                if (!string.Equals(wallSyncedId, selectedId, StringComparison.Ordinal))
+                {
+                    wallSyncedId = selectedId;
+                    var worldLength = Vector2.Distance(wall.startPoint, wall.endPoint);
+                    selectionWallLengthText = FormatDimension(WorldToDisplayDimension(worldLength));
+                    selectionWallAnchorAtStart = ResolveDefaultWallAnchor(wall);
+                    wallLengthError = string.Empty;
+                }
+
+                DrawWallFields(wall);
+                return;
+            }
+
             ResetSelectionEditorState();
             GUILayout.Label("The current selection does not expose editable size controls yet.", bodyStyle);
+        }
+
+        // Per-object editor edit-lock toggle shown at the top of every selected entity's inspector.
+        // This is the EDITOR lock (prevents moving/resizing/editing/deleting), distinct from any
+        // in-simulation state such as a door's DoorState.Locked. Fields stay active; edit attempts
+        // are rejected by the authoring services with a "locked" status message.
+        private void DrawObjectLockToggle(string objectId)
+        {
+            if (visualOrganizationService == null || string.IsNullOrWhiteSpace(objectId))
+            {
+                return;
+            }
+
+            var isLocked = visualOrganizationService.IsObjectLocked(objectId);
+            var nextLocked = GUILayout.Toggle(isLocked, "Lock editing");
+            if (nextLocked != isLocked)
+            {
+                visualOrganizationService.SetObjectLocked(objectId, nextLocked);
+            }
+
+            if (nextLocked)
+            {
+                GUILayout.Label("Locked: move, resize, edit, and delete are blocked. Untick to edit.", bodyStyle);
+            }
+        }
+
+        private bool TryFindSelectedWall(string selectedId, out WallSegmentData wall)
+        {
+            wall = null;
+            var floor = workspaceService?.ActiveFloor;
+            if (floor == null)
+            {
+                return false;
+            }
+
+            wall = floor.wallSegments.FirstOrDefault(candidate =>
+                string.Equals(candidate.wallSegmentId, selectedId, StringComparison.Ordinal));
+            return wall != null;
+        }
+
+        private bool ResolveDefaultWallAnchor(WallSegmentData wall)
+        {
+            var floor = workspaceService?.ActiveFloor;
+            if (floor == null)
+            {
+                return true;
+            }
+
+            var startShared = IsJunctionShared(floor, wall.startJunctionId, wall.wallSegmentId);
+            var endShared = IsJunctionShared(floor, wall.endJunctionId, wall.wallSegmentId);
+            if (endShared && !startShared)
+            {
+                return false; // anchor the shared end, move the free start
+            }
+
+            return true; // default: anchor start, move end
+        }
+
+        private static bool IsJunctionShared(FloorData floor, string junctionId, string wallSegmentId)
+        {
+            var junction = floor.wallJunctions.FirstOrDefault(candidate =>
+                string.Equals(candidate.wallJunctionId, junctionId, StringComparison.Ordinal));
+            return junction != null && junction.connectedWallSegmentIds.Any(id =>
+                !string.Equals(id, wallSegmentId, StringComparison.Ordinal));
+        }
+
+        private void DrawWallFields(WallSegmentData wall)
+        {
+            GUILayout.Label($"Wall: {wall.wallSegmentId}", bodyStyle);
+            DrawDimensionUnitToggle();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Length ({DimensionUnitLabel})", bodyStyle, GUILayout.Width(96f));
+            selectionWallLengthText = GUILayout.TextField(selectionWallLengthText, GUILayout.Width(70f));
+            GUILayout.EndHorizontal();
+
+            var anchorDesc = selectionWallAnchorAtStart ? "Start (green square)" : "End (blue diamond)";
+            var movingDesc = selectionWallAnchorAtStart ? "End (blue diamond)" : "Start (green square)";
+            var anchorPoint = selectionWallAnchorAtStart ? wall.startPoint : wall.endPoint;
+            var movingPoint = selectionWallAnchorAtStart ? wall.endPoint : wall.startPoint;
+            GUILayout.Label($"Anchored (fixed): {anchorDesc}  ({anchorPoint.x:0.0}, {anchorPoint.y:0.0})", bodyStyle);
+            GUILayout.Label($"Adjusted (moves): {movingDesc}  ({movingPoint.x:0.0}, {movingPoint.y:0.0})", bodyStyle);
+
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Apply Length", () => TryApplyWallLength(wall), inspectorPanelShell != null);
+            DrawActionButton("Flip Ends", () => selectionWallAnchorAtStart = !selectionWallAnchorAtStart);
+            GUILayout.EndHorizontal();
+
+            if (!string.IsNullOrWhiteSpace(wallLengthError))
+            {
+                GUILayout.Label(wallLengthError, bodyStyle);
+            }
+        }
+
+        private void TryApplyWallLength(WallSegmentData wall)
+        {
+            if (wall == null || inspectorPanelShell == null)
+            {
+                return;
+            }
+
+            if (!float.TryParse(selectionWallLengthText, NumberStyles.Float, CultureInfo.InvariantCulture, out var displayLength))
+            {
+                wallLengthError = "Enter a valid number for length.";
+                return;
+            }
+
+            var worldLength = DisplayToWorldDimension(displayLength);
+            if (inspectorPanelShell.TrySetWallLength(wall.wallSegmentId, worldLength, selectionWallAnchorAtStart, out var error, out var minWorldLength, out var offenderLabel))
+            {
+                wallLengthError = string.Empty;
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(offenderLabel))
+            {
+                // Express the rejection in the same unit shown in the Length field so the numbers
+                // line up with what the user typed (e.g. grid vs feet).
+                var unit = DimensionUnitLabel;
+                wallLengthError =
+                    $"Can't set length to {FormatDimension(displayLength)} {unit}: {offenderLabel} on this wall would fall off. " +
+                    $"Minimum length {FormatDimension(WorldToDisplayDimension(minWorldLength))} {unit}.";
+            }
+            else
+            {
+                wallLengthError = error;
+            }
+        }
+
+        private bool TryFindSelectedFireOrigin(string selectedId, out FireOriginData fireOrigin)
+        {
+            fireOrigin = null;
+            var floor = workspaceService?.ActiveFloor;
+            var project = workspaceService?.ActiveProject;
+            if (floor == null || project == null)
+            {
+                return false;
+            }
+
+            fireOrigin = project.fireOrigins.FirstOrDefault(origin =>
+                origin.floorId == floor.floorId && origin.fireOriginId == selectedId);
+            return fireOrigin != null;
+        }
+
+        private void DrawFireStartFields(FireOriginData fireOrigin)
+        {
+            GUILayout.Label($"Fire Start: {fireOrigin.fireOriginId}", bodyStyle);
+            DrawDimensionUnitToggle();
+            var unit = DimensionUnitLabel;
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Width ({unit})", bodyStyle, GUILayout.Width(78f));
+            selectionFireWidthText = GUILayout.TextField(selectionFireWidthText, GUILayout.Width(64f));
+            GUILayout.Label($"Length ({unit})", bodyStyle, GUILayout.Width(86f));
+            selectionFireLengthText = GUILayout.TextField(selectionFireLengthText, GUILayout.Width(64f));
+            GUILayout.EndHorizontal();
+            GUILayout.Label($"Spread Intensity: {selectionFireIntensity:0.00}  (higher = faster, farther spread)", bodyStyle);
+            selectionFireIntensity = Mathf.Clamp(GUILayout.HorizontalSlider(selectionFireIntensity, 0.1f, 5f), 0.1f, 5f);
+            GUILayout.Label($"Start Delay: {selectionFireStartDelay:0.0}s  (seconds before ignition)", bodyStyle);
+            selectionFireStartDelay = Mathf.Max(0f, GUILayout.HorizontalSlider(selectionFireStartDelay, 0f, 30f));
+            DrawActionButton("Apply Fire Settings", () => TryApplyFireStart(fireOrigin), inspectorPanelShell != null);
+        }
+
+        private bool TryApplyFireStart(FireOriginData fireOrigin)
+        {
+            if (fireOrigin == null || inspectorPanelShell == null)
+            {
+                return false;
+            }
+
+            // Parse the typed Width/Length (in the active unit). If both parse, set the ellipse size;
+            // otherwise preserve the current size so an intensity/delay-only edit keeps the shape.
+            Vector2? size = null;
+            if (float.TryParse(selectionFireWidthText, NumberStyles.Float, CultureInfo.InvariantCulture, out var widthDisplay) &&
+                float.TryParse(selectionFireLengthText, NumberStyles.Float, CultureInfo.InvariantCulture, out var lengthDisplay))
+            {
+                size = new Vector2(
+                    Mathf.Max(0.2f, DisplayToWorldDimension(widthDisplay)),
+                    Mathf.Max(0.2f, DisplayToWorldDimension(lengthDisplay)));
+            }
+
+            return inspectorPanelShell.UpdateFireOrigin(
+                fireOrigin.fireOriginId,
+                fireOrigin.position,
+                selectionFireIntensity,
+                selectionFireStartDelay,
+                fireOrigin.isPersistent,
+                size);
+        }
+
+        // ---- Shared dimension unit (Grid <-> distance) used by fire size and wall length ----
+
+        private float DimensionGridSize => inspectorPanelShell != null ? inspectorPanelShell.CurrentGridSize : 0.5f;
+
+        private DistanceUnit DimensionDistanceUnit =>
+            workspaceService?.ActiveProject?.metadata?.distanceUnit ?? DistanceUnit.Feet;
+
+        private string DimensionUnitLabel =>
+            dimensionsInGridUnits ? "grid" : SandboxDistanceUnitUtility.GetAbbreviation(DimensionDistanceUnit);
+
+        private float WorldToDisplayDimension(float world) =>
+            dimensionsInGridUnits ? world / Mathf.Max(0.05f, DimensionGridSize) : world;
+
+        private float DisplayToWorldDimension(float display) =>
+            dimensionsInGridUnits ? display * Mathf.Max(0.05f, DimensionGridSize) : display;
+
+        private static string FormatDimension(float value) =>
+            value.ToString("0.##", CultureInfo.InvariantCulture);
+
+        private void DrawDimensionUnitToggle()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Units: {(dimensionsInGridUnits ? "Grid" : SandboxDistanceUnitUtility.GetLabel(DimensionDistanceUnit))}", bodyStyle);
+            var swapLabel = dimensionsInGridUnits
+                ? $"Use {SandboxDistanceUnitUtility.GetLabel(DimensionDistanceUnit)}"
+                : "Use Grid";
+            if (GUILayout.Button(swapLabel, GUILayout.Height(22f)))
+            {
+                dimensionsInGridUnits = !dimensionsInGridUnits;
+                // Force the dimensioned fields to re-sync their text in the new unit.
+                fireBehaviorSyncedId = string.Empty;
+                wallSyncedId = string.Empty;
+            }
+
+            GUILayout.EndHorizontal();
         }
 
         private void DrawDoorFields(DoorData door)
@@ -918,7 +1279,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
             DrawActionButton("Blocked", () => TryApplyDoor(door, DoorState.Blocked), door.state != DoorState.Blocked);
-            DrawActionButton("Locked", () => TryApplyDoor(door, DoorState.Locked), door.state != DoorState.Locked);
+            DrawActionButton("Locked (door)", () => TryApplyDoor(door, DoorState.Locked), door.state != DoorState.Locked);
             GUILayout.EndHorizontal();
 
             var canApplyWidth = inspectorPanelShell != null && TryParseSelectionWidth(out _);
@@ -971,6 +1332,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             var pairStateLabel = IsBrokenTeleport(teleportPortal) ? "Broken Pair" : (teleportPortal.isPairEnabled ? "On" : "Off");
             GUILayout.Label($"Pair State: {pairStateLabel}", bodyStyle);
+            DrawTeleportTargetFloorControls(teleportPortal);
 
             GUILayout.Label("Type", bodyStyle);
             GUILayout.BeginHorizontal();
@@ -1006,10 +1368,42 @@ namespace EvacLogix.Sandbox.UI.Panels
                     semanticObjectAuthoringOverlay != null);
                 GUILayout.Label("Broken pairs stay in the project until you place the missing endpoint.", bodyStyle);
             }
-            else
+        }
+
+        private void DrawTeleportTargetFloorControls(TeleportPortalData teleportPortal)
+        {
+            var floors = workspaceService?.ActiveProject?.floors?
+                .OrderBy(floor => floor.order)
+                .ThenBy(floor => floor.name, StringComparer.Ordinal)
+                .ToList();
+            if (floors == null || floors.Count <= 1)
             {
-                GUILayout.Label($"Linked floor: {teleportPortal.targetFloorId}", bodyStyle);
+                GUILayout.Label("Add another floor before setting a teleport target.", bodyStyle);
+                return;
             }
+
+            var sourceFloorId = ResolveTeleportSourceFloorId(teleportPortal);
+            var linkedFloorName = ResolveFloorName(teleportPortal.targetFloorId);
+            GUILayout.Label(
+                string.IsNullOrWhiteSpace(linkedFloorName)
+                    ? "Target Floor: Not set"
+                    : $"Target Floor: {linkedFloorName}",
+                bodyStyle);
+
+            GUILayout.BeginHorizontal();
+            foreach (var floor in floors)
+            {
+                if (string.Equals(floor.floorId, sourceFloorId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                DrawActionButton(
+                    floor.name,
+                    () => TrySetTeleportTargetFloor(teleportPortal, floor.floorId),
+                    !string.Equals(teleportPortal.targetFloorId, floor.floorId, StringComparison.Ordinal));
+            }
+            GUILayout.EndHorizontal();
         }
 
         private void DrawEditableSelectionSizeFields(string objectTypeLabel, string objectLabel, Action applyAction)
@@ -1162,6 +1556,16 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             return didUpdate;
+        }
+
+        private bool TrySetTeleportTargetFloor(TeleportPortalData teleportPortal, string targetFloorId)
+        {
+            if (teleportPortal == null || string.IsNullOrWhiteSpace(targetFloorId))
+            {
+                return false;
+            }
+
+            return inspectorPanelShell != null && inspectorPanelShell.SetTeleportTargetFloor(teleportPortal.teleportPortalId, targetFloorId);
         }
 
         private bool TryApplyDoor(DoorData door, DoorState state)
@@ -1438,6 +1842,36 @@ namespace EvacLogix.Sandbox.UI.Panels
                 string.Equals(candidate.teleportPortalId, teleportPortal.targetTeleportPortalId, StringComparison.Ordinal));
         }
 
+        private string ResolveTeleportSourceFloorId(TeleportPortalData teleportPortal)
+        {
+            if (teleportPortal == null)
+            {
+                return string.Empty;
+            }
+
+            if (!string.IsNullOrWhiteSpace(teleportPortal.sourceFloorId))
+            {
+                return teleportPortal.sourceFloorId;
+            }
+
+            var sourceFloor = workspaceService?.ActiveProject?.floors?.FirstOrDefault(floor =>
+                floor.teleportPortals.Any(candidate =>
+                    string.Equals(candidate.teleportPortalId, teleportPortal.teleportPortalId, StringComparison.Ordinal)));
+            return sourceFloor?.floorId ?? string.Empty;
+        }
+
+        private string ResolveFloorName(string floorId)
+        {
+            if (string.IsNullOrWhiteSpace(floorId))
+            {
+                return string.Empty;
+            }
+
+            return workspaceService?.ActiveProject?.floors?
+                .FirstOrDefault(floor => string.Equals(floor.floorId, floorId, StringComparison.Ordinal))
+                ?.name ?? string.Empty;
+        }
+
         private bool TryFindSelectedWindow(string selectedId, out WindowData window)
         {
             window = null;
@@ -1464,23 +1898,58 @@ namespace EvacLogix.Sandbox.UI.Panels
                 return;
             }
 
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(statusBarShell?.StatusMessage ?? "Ready", bodyStyle);
-            GUILayout.FlexibleSpace();
-            GUILayout.Label(statusBarShell?.PersistenceSummary ?? "Unsaved", bodyStyle);
-            GUILayout.Space(16f);
-            GUILayout.Label(statusBarShell?.LifecycleStateLabel ?? "Draft", bodyStyle);
-            GUILayout.Space(16f);
-            GUILayout.Label(statusBarShell?.ModeLabel ?? "Edit Mode", bodyStyle);
-            GUILayout.Space(30f);
-            GUILayout.EndHorizontal();
+            // Slim bottom-left box: transient message on top, a compact state line beneath.
+            var labelWidth = Mathf.Max(40f, statusBarRect.width - 12f);
+            GUILayout.Label(statusBarShell?.StatusMessage ?? "Ready", bodyStyle, GUILayout.Width(labelWidth));
+            var persistence = statusBarShell?.PersistenceSummary ?? "Unsaved";
+            var lifecycle = statusBarShell?.LifecycleStateLabel ?? "Draft";
+            var mode = statusBarShell?.ModeLabel ?? "Edit Mode";
+            GUILayout.Label($"{persistence} · {lifecycle} · {mode}", bodyStyle, GUILayout.Width(labelWidth));
 
             if (!string.IsNullOrWhiteSpace(statusBarShell?.RecoveryPromptLabel))
             {
-                GUILayout.Label(statusBarShell.RecoveryPromptLabel, bodyStyle);
+                GUILayout.Label(statusBarShell.RecoveryPromptLabel, bodyStyle, GUILayout.Width(labelWidth));
             }
 
             GUILayout.EndArea();
+        }
+
+        // A prominent, auto-fading banner over the top-center of the canvas for important transient
+        // messages (e.g. "Add at least one exit before placing spawns") so rejections are impossible
+        // to miss, unlike the slim bottom-left status box.
+        private void DrawTransientNotice()
+        {
+            if (statusBarShell == null)
+            {
+                return;
+            }
+
+            var age = statusBarShell.NoticeAgeSeconds;
+            const float holdSeconds = 2.5f;
+            const float fadeSeconds = 0.6f;
+            if (string.IsNullOrWhiteSpace(statusBarShell.NoticeMessage) || age > holdSeconds + fadeSeconds)
+            {
+                return;
+            }
+
+            var alpha = age <= holdSeconds ? 1f : Mathf.Clamp01(1f - ((age - holdSeconds) / fadeSeconds));
+
+            var content = new GUIContent(statusBarShell.NoticeMessage);
+            var style = noticeStyle ?? bodyStyle;
+            var logicalWidth = Screen.width / uiScale;
+            var width = Mathf.Min(560f, logicalWidth - 40f);
+            var height = Mathf.Max(40f, style.CalcHeight(content, width - 28f) + 20f);
+            var rect = new Rect((logicalWidth - width) * 0.5f, topBarRect.yMax + 16f, width, height);
+
+            var previousColor = GUI.color;
+            var background = statusBarShell.NoticeIsError ? new Color(0.6f, 0.12f, 0.12f, 0.96f) : new Color(0.12f, 0.18f, 0.28f, 0.96f);
+            background.a *= alpha;
+            GUI.color = background;
+            GUI.DrawTexture(rect, solidTexture ?? Texture2D.whiteTexture);
+
+            GUI.color = new Color(1f, 1f, 1f, alpha);
+            GUI.Label(rect, statusBarShell.NoticeMessage, style);
+            GUI.color = previousColor;
         }
 
         private void DrawNewProjectModal()
@@ -1508,10 +1977,48 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUILayout.EndArea();
         }
 
+        private void DrawReturnToMenuModal()
+        {
+            var previousColor = GUI.color;
+            GUI.color = ModalBackdropColor;
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), solidTexture ?? Texture2D.whiteTexture);
+            GUI.color = previousColor;
+
+            GUILayout.BeginArea(modalRect, GUIContent.none, modalWindowStyle ?? GUI.skin.window);
+            GUILayout.Label("Return to Main Menu?", headerStyle);
+            GUILayout.Label("Any unsaved changes will be lost.", bodyStyle);
+            GUILayout.Space(10f);
+
+            DrawActionButton("Return to Main Menu", () =>
+            {
+                showReturnToMenuConfirm = false;
+                SceneManager.LoadScene("MainMenu", LoadSceneMode.Single);
+            });
+            DrawActionButton("Cancel", () => showReturnToMenuConfirm = false);
+            GUILayout.EndArea();
+        }
+
         private void DrawInspectorSection(string title)
         {
             GUILayout.Space(8f);
             GUILayout.Label(title, subheaderStyle);
+        }
+
+        // Hands the current in-memory project (including unsaved edits) to the simulation scene and
+        // returns here when the user leaves the simulation.
+        private void LaunchSimulation()
+        {
+            var project = workspaceService?.ActiveProject;
+            if (project == null)
+            {
+                return;
+            }
+
+            SandboxSimulationLaunchContext.SetFromProject(project, "SandboxEditor", $"Project: {project.metadata?.buildingName}");
+            // Preserve the editor's project so returning from the simulation restores it instead of
+            // booting a fresh default project.
+            SandboxSimulationLaunchContext.SetReturnProject(project);
+            SceneManager.LoadScene(SandboxSimulationLaunchContext.SimulationSceneName, LoadSceneMode.Single);
         }
 
         // Draws a small triangle toggle in the panel's top-right corner. The triangle points
@@ -1592,16 +2099,6 @@ namespace EvacLogix.Sandbox.UI.Panels
             previewService.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
         }
 
-        private void ActivateRegionPlacement()
-        {
-            if (previewService == null)
-            {
-                return;
-            }
-
-            previewService.ConfigureRegionPlacement("Preview Region", RegionSemanticType.SpawnZone);
-            previewService.SetInteractionMode(SandboxPreviewInteractionMode.PlaceRegion);
-        }
 
         private void RefreshDependenciesIfNeeded()
         {
@@ -1698,12 +2195,6 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void EnsureDefaultFieldValues()
         {
-            if (string.IsNullOrWhiteSpace(pendingFloorName))
-            {
-                var floorCount = workspaceService?.ActiveProject?.floors.Count ?? 1;
-                pendingFloorName = $"Floor {floorCount + 1}";
-            }
-
             if (string.IsNullOrWhiteSpace(calibrationDistanceText))
             {
                 calibrationDistanceText = "10";
@@ -1743,6 +2234,16 @@ namespace EvacLogix.Sandbox.UI.Panels
             {
                 fontSize = 11,
                 wordWrap = true
+            };
+
+            noticeStyle ??= new GUIStyle(labelStyle)
+            {
+                fontSize = 14,
+                fontStyle = FontStyle.Bold,
+                wordWrap = true,
+                alignment = TextAnchor.MiddleCenter,
+                padding = new RectOffset(14, 14, 10, 10),
+                normal = { textColor = Color.white }
             };
 
             activeToolButtonStyle ??= new GUIStyle(buttonStyle)
@@ -1837,32 +2338,50 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void RecalculateLayout()
         {
             var margin = 12f;
+            var logicalScreenWidth = Screen.width / uiScale;
+            var logicalScreenHeight = Screen.height / uiScale;
             var topBarHeight = topBarCollapsed ? CollapsedPanelHeight : 110f;
-            var floorTabsAvailableHeight = Mathf.Max(CollapsedPanelHeight, Screen.height - topBarHeight - (margin * 4f) - 58f);
+            var floorTabsAvailableHeight = Mathf.Max(CollapsedPanelHeight, logicalScreenHeight - topBarHeight - (margin * 4f) - 58f);
             var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : Mathf.Min(220f, floorTabsAvailableHeight);
             var statusBarHeight = statusBarCollapsed ? CollapsedPanelHeight : 58f;
             var toolWidth = 180f;
             var inspectorWidth = 340f;
-            var toolHeight = toolPaletteCollapsed ? CollapsedPanelHeight : Screen.height - topBarHeight - statusBarHeight - (margin * 4f);
-            var validationHeight = validationCollapsed ? CollapsedPanelHeight : 220f;
-            var inspectorHeight = inspectorCollapsed
-                ? CollapsedPanelHeight
-                : Screen.height - topBarHeight - statusBarHeight - validationHeight - (margin * 5f);
 
-            topBarRect = new Rect(margin, margin, Screen.width - (margin * 2f), topBarHeight);
-            toolPaletteRect = new Rect(margin, topBarRect.yMax + margin, toolWidth, toolHeight);
-            floorTabsRect = new Rect(toolPaletteRect.xMax + margin, topBarRect.yMax + margin, Screen.width - toolWidth - inspectorWidth - (margin * 4f), floorTabsHeight);
-            inspectorRect = new Rect(Screen.width - inspectorWidth - margin, topBarRect.yMax + margin, inspectorWidth, inspectorHeight);
-            validationRect = new Rect(Screen.width - inspectorWidth - margin, inspectorRect.yMax + margin, inspectorWidth, validationHeight);
-            statusBarRect = new Rect(margin, Screen.height - statusBarHeight - margin, Screen.width - (margin * 2f), statusBarHeight);
+            var contentTop = topBarHeight + (margin * 2f);
+            var centerX = (margin * 2f) + toolWidth;
+            var centerWidth = logicalScreenWidth - toolWidth - inspectorWidth - (margin * 4f);
+
+            // Validation is a wide band across the center-bottom; clamp its height so the canvas keeps
+            // a usable minimum on short windows.
+            const float minCanvasHeight = 220f;
+            var maxValidationHeight = Mathf.Max(
+                CollapsedPanelHeight,
+                logicalScreenHeight - contentTop - floorTabsHeight - minCanvasHeight - (margin * 3f));
+            var validationHeight = validationCollapsed ? CollapsedPanelHeight : Mathf.Min(220f, maxValidationHeight);
+
+            var statusY = logicalScreenHeight - statusBarHeight - margin;
+            var validationY = logicalScreenHeight - validationHeight - margin;
+
+            topBarRect = new Rect(margin, margin, logicalScreenWidth - (margin * 2f), topBarHeight);
+            // Inspector now owns the full right column height.
+            var inspectorHeight = inspectorCollapsed ? CollapsedPanelHeight : logicalScreenHeight - contentTop - margin;
+            inspectorRect = new Rect(logicalScreenWidth - inspectorWidth - margin, contentTop, inspectorWidth, inspectorHeight);
+            // Tools runs down the left column to just above the slim status box.
+            var toolHeight = toolPaletteCollapsed ? CollapsedPanelHeight : Mathf.Max(CollapsedPanelHeight, statusY - margin - contentTop);
+            toolPaletteRect = new Rect(margin, contentTop, toolWidth, toolHeight);
+            floorTabsRect = new Rect(centerX, contentTop, centerWidth, floorTabsHeight);
+            // Validation: wide center-bottom band (controls left, error list right).
+            validationRect = new Rect(centerX, validationY, centerWidth, validationHeight);
+            // Status: small box, bottom-left under the tools column.
+            statusBarRect = new Rect(margin, statusY, toolWidth, statusBarHeight);
 
             ApplyCustomPanelPositions();
 
-            var modalWidth = Mathf.Min(480f, Screen.width - 40f);
+            var modalWidth = Mathf.Min(480f, logicalScreenWidth - 40f);
             var modalHeight = 210f;
             modalRect = new Rect(
-                (Screen.width - modalWidth) * 0.5f,
-                (Screen.height - modalHeight) * 0.5f,
+                (logicalScreenWidth - modalWidth) * 0.5f,
+                (logicalScreenHeight - modalHeight) * 0.5f,
                 modalWidth,
                 modalHeight);
         }
@@ -1912,10 +2431,13 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
         }
 
-        private static Vector2 ClampPanelPosition(Vector2 position, Vector2 size)
+        private Vector2 ClampPanelPosition(Vector2 position, Vector2 size)
         {
-            var maxX = Mathf.Max(0f, Screen.width - size.x);
-            var maxY = Mathf.Max(0f, Screen.height - size.y);
+            // Positions are stored/used in logical (pre-scale) space, so clamp against the logical
+            // screen bounds rather than the physical pixel dimensions.
+            var scale = Mathf.Approximately(uiScale, 0f) ? 1f : uiScale;
+            var maxX = Mathf.Max(0f, (Screen.width / scale) - 60f);
+            var maxY = Mathf.Max(0f, (Screen.height / scale) - 30f);
             return new Vector2(Mathf.Clamp(position.x, 0f, maxX), Mathf.Clamp(position.y, 0f, maxY));
         }
 
@@ -2080,7 +2602,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             RecalculateLayout();
             var pointer = SandboxInputAdapter.PointerScreenPosition;
-            var guiPoint = new Vector2(pointer.x, Screen.height - pointer.y);
+            var guiPoint = new Vector2(pointer.x / uiScale, (Screen.height - pointer.y) / uiScale);
             var isOverHud = topBarRect.Contains(guiPoint)
                 || toolPaletteRect.Contains(guiPoint)
                 || floorTabsRect.Contains(guiPoint)
@@ -2126,6 +2648,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 SandboxToolMode.Teleport => "Teleport",
                 SandboxToolMode.SpawnPoint => "Spawn Point",
                 SandboxToolMode.SpawnPointBrush => "Spawn Point Brush",
+                SandboxToolMode.FireStart => "Fire Start",
                 _ => toolMode.ToString()
             };
         }
@@ -2137,7 +2660,6 @@ namespace EvacLogix.Sandbox.UI.Panels
                 SandboxPreviewInteractionMode.PlaceFireOrigin => "Fire",
                 SandboxPreviewInteractionMode.PlaceSpawnPoint => "Spawn Point",
                 SandboxPreviewInteractionMode.PaintSpawnPointBrush => "Spawn Point Brush",
-                SandboxPreviewInteractionMode.PlaceRegion => "Region",
                 _ => "None"
             };
         }

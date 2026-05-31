@@ -170,8 +170,11 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 {
                     // Keep preview authoring shortcuts flowing.
                 }
-                else if (IsToolSwitchShortcut(shortcutId))
+                else if (IsToolSwitchShortcut(shortcutId) || shortcutId == SandboxShortcutId.CancelTool)
                 {
+                    // Tool switches and Escape leave preview authoring: clear the spawn/fire
+                    // interaction and exit preview so the request below selects the editor tool
+                    // (Escape -> Select). Without this, Escape was swallowed in preview mode.
                     previewService.ClearInteractionMode();
                     previewService.ExitPreviewMode();
                 }
@@ -234,8 +237,8 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                     previewService?.ConfigureSpawnPointBrush(1f, string.Empty, "Spawn Point Brush Layout", true);
                     previewService?.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
                     break;
-                case SandboxShortcutId.RegionTool:
-                    toolStateService?.RequestToolModeChange(SandboxToolMode.Region, commandHistory);
+                case SandboxShortcutId.FireStartTool:
+                    toolStateService?.RequestToolModeChange(SandboxToolMode.FireStart, commandHistory);
                     break;
                 case SandboxShortcutId.Undo:
                     commandHistory?.Undo();
@@ -251,6 +254,9 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                     break;
                 case SandboxShortcutId.CopySelection:
                     clipboardService?.CopySelection();
+                    break;
+                case SandboxShortcutId.CutSelection:
+                    clipboardService?.CutSelection();
                     break;
                 case SandboxShortcutId.PasteSelection:
                     clipboardService?.PasteSelection();
@@ -309,7 +315,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                    shortcutId == SandboxShortcutId.ExitTool ||
                    shortcutId == SandboxShortcutId.ObstacleTool ||
                    shortcutId == SandboxShortcutId.TeleportTool ||
-                   shortcutId == SandboxShortcutId.RegionTool;
+                   shortcutId == SandboxShortcutId.FireStartTool;
         }
 
         private static List<SandboxShortcutBinding> CreateDefaultBindings()
@@ -329,12 +335,13 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 CreateBinding(SandboxShortcutId.TeleportTool, KeyCode.Y),
                 CreateBinding(SandboxShortcutId.SpawnPointTool, KeyCode.Alpha1),
                 CreateBinding(SandboxShortcutId.SpawnPointBrushTool, KeyCode.Alpha2),
-                CreateBinding(SandboxShortcutId.RegionTool, KeyCode.R),
+                CreateBinding(SandboxShortcutId.FireStartTool, KeyCode.F),
                 CreateBinding(SandboxShortcutId.Undo, KeyCode.Z, requiresCommandOrControl: true),
                 CreateBinding(SandboxShortcutId.Redo, KeyCode.Z, requiresCommandOrControl: true, requiresShift: true),
                 CreateBinding(SandboxShortcutId.DeleteSelection, KeyCode.Backspace),
                 CreateBinding(SandboxShortcutId.DeleteSelection, KeyCode.Delete),
                 CreateBinding(SandboxShortcutId.CopySelection, KeyCode.C, requiresCommandOrControl: true),
+                CreateBinding(SandboxShortcutId.CutSelection, KeyCode.X, requiresCommandOrControl: true),
                 CreateBinding(SandboxShortcutId.PasteSelection, KeyCode.V, requiresCommandOrControl: true),
                 CreateBinding(SandboxShortcutId.DuplicateSelection, KeyCode.D, requiresCommandOrControl: true),
                 CreateBinding(SandboxShortcutId.ToggleGrid, KeyCode.G),
@@ -361,11 +368,12 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 SandboxShortcutId.TeleportTool => ("Tools", "Teleport Tool", "Place paired stair, elevator, or escalator transitions across floors."),
                 SandboxShortcutId.SpawnPointTool => ("Spawn", "Spawn Point Tool", "Place individual spawn points in enclosed rooms that have exits or windows."),
                 SandboxShortcutId.SpawnPointBrushTool => ("Spawn", "Spawn Point Brush Tool", "Paint spawn points in enclosed rooms that have exits or windows."),
-                SandboxShortcutId.RegionTool => ("Preview", "Region Tool", "Draw named semantic regions for preview semantics."),
+                SandboxShortcutId.FireStartTool => ("Hazards", "Fire Start Tool", "Place a fire origin that seeds the spreading fire during simulation."),
                 SandboxShortcutId.Undo => ("Editing", "Undo", "Revert the most recent editor command."),
                 SandboxShortcutId.Redo => ("Editing", "Redo", "Reapply the most recently undone editor command."),
                 SandboxShortcutId.DeleteSelection => ("Editing", "Delete Selection", "Delete or clear the current selection safely."),
                 SandboxShortcutId.CopySelection => ("Editing", "Copy Selection", "Copy the current safe selection to the clipboard."),
+                SandboxShortcutId.CutSelection => ("Editing", "Cut Selection", "Copy the current safe selection, then delete it from the floor."),
                 SandboxShortcutId.PasteSelection => ("Editing", "Paste Selection", "Paste clipboard-safe objects into the active floor."),
                 SandboxShortcutId.DuplicateSelection => ("Editing", "Duplicate Selection", "Duplicate the current selection with a safe offset."),
                 SandboxShortcutId.ToggleGrid => ("View", "Toggle Grid", "Show or hide the drafting grid overlay."),

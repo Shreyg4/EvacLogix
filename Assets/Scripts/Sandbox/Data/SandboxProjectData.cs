@@ -60,13 +60,6 @@ namespace EvacLogix.Sandbox.Data
         Other = 3,
     }
 
-    public enum RegionSemanticType
-    {
-        SpawnZone = 0,
-        RestrictedZone = 1,
-        Annotation = 2,
-    }
-
     public enum DistanceUnit
     {
         Feet = 0,
@@ -87,6 +80,10 @@ namespace EvacLogix.Sandbox.Data
         public List<FireOriginData> fireOrigins = new();
         public List<ScenarioPresetData> scenarioPresets = new();
         public ValidationSnapshotData validationSnapshot = new();
+
+        // Editor-only edit-locks: object IDs the user has locked from being moved/resized/edited/
+        // deleted in the sandbox. Persisted with the project so locks survive save/load.
+        public List<string> lockedObjectIds = new();
 
         public BuildingLifecycleState LifecycleState =>
             EvacLogix.Sandbox.Data.Validation.BuildingLifecycleStateUtility.Evaluate(this);
@@ -169,7 +166,6 @@ namespace EvacLogix.Sandbox.Data
         public List<ObstacleData> obstacles = new();
         public List<StairPortalData> stairPortals = new();
         public List<TeleportPortalData> teleportPortals = new();
-        public List<RegionData> regions = new();
     }
 
     [Serializable]
@@ -289,17 +285,6 @@ namespace EvacLogix.Sandbox.Data
     }
 
     [Serializable]
-    public sealed class RegionData
-    {
-        public string regionId = string.Empty;
-        public string floorId = string.Empty;
-        public string name = string.Empty;
-        public RegionSemanticType semanticType = RegionSemanticType.SpawnZone;
-        public List<Vector2> polygonPoints = new();
-        public List<MetadataFieldData> metadataFields = new();
-    }
-
-    [Serializable]
     public sealed class SpawnLayoutData
     {
         public string spawnLayoutId = string.Empty;
@@ -333,6 +318,7 @@ namespace EvacLogix.Sandbox.Data
         public string fireOriginId = string.Empty;
         public string floorId = string.Empty;
         public Vector2 position;
+        public Vector2 size = new(0.8f, 0.8f);
         public float spreadIntensity = 1f;
         public float startDelaySeconds;
         public bool isPersistent = true;

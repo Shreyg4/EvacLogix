@@ -60,6 +60,38 @@ namespace EvacLogix.Sandbox.Infrastructure
             return true;
         }
 
+        public bool AddSurfaceFloor(out string floorId, string name = "")
+        {
+            floorId = string.Empty;
+            if (workspaceService?.ActiveProject == null)
+            {
+                return false;
+            }
+
+            var surfaceFloorCount = workspaceService.ActiveProject.floors.Count(IsSurfaceFloor);
+            var floorName = string.IsNullOrWhiteSpace(name)
+                ? BuildDefaultSurfaceFloorName(workspaceService.ActiveProject.floors)
+                : name.Trim();
+
+            return AddFloor(out floorId, floorName, surfaceFloorCount, workspaceService.ActiveProject.floors.Count);
+        }
+
+        public bool AddBasementFloor(out string floorId, string name = "")
+        {
+            floorId = string.Empty;
+            if (workspaceService?.ActiveProject == null)
+            {
+                return false;
+            }
+
+            var basementFloorCount = workspaceService.ActiveProject.floors.Count(IsBasementFloor);
+            var floorName = string.IsNullOrWhiteSpace(name)
+                ? BuildDefaultBasementFloorName(workspaceService.ActiveProject.floors)
+                : name.Trim();
+
+            return AddFloor(out floorId, floorName, -(basementFloorCount + 1), 0);
+        }
+
         public bool RenameFloor(string floorId, string name)
         {
             return UpdateFloorMetadata(floorId, name, null, null);
@@ -362,11 +394,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                 idRemap[floor.teleportPortals[i].teleportPortalId] = SandboxId.NewId();
             }
 
-            for (var i = 0; i < floor.regions.Count; i += 1)
-            {
-                idRemap[floor.regions[i].regionId] = SandboxId.NewId();
-            }
-
             foreach (var junction in floor.wallJunctions)
             {
                 junction.wallJunctionId = idRemap[junction.wallJunctionId];
@@ -418,12 +445,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                 teleportPortal.sourceFloorId = floor.floorId;
             }
 
-            foreach (var region in floor.regions)
-            {
-                region.regionId = idRemap[region.regionId];
-                region.floorId = floor.floorId;
-            }
-
             return idRemap;
         }
 
@@ -462,6 +483,41 @@ namespace EvacLogix.Sandbox.Infrastructure
         {
             var nextIndex = floors.Count + 1;
             return $"Floor {nextIndex}";
+        }
+
+        private static string BuildDefaultSurfaceFloorName(IReadOnlyList<FloorData> floors)
+        {
+            var nextIndex = floors.Count(IsSurfaceFloor) + 1;
+            return BuildUniqueFloorName(floors, $"Floor {nextIndex}");
+        }
+
+        private static string BuildDefaultBasementFloorName(IReadOnlyList<FloorData> floors)
+        {
+            var nextIndex = floors.Count(IsBasementFloor) + 1;
+            return BuildUniqueFloorName(floors, $"B{nextIndex}");
+        }
+
+        private static string BuildUniqueFloorName(IReadOnlyList<FloorData> floors, string baseName)
+        {
+            var candidateName = baseName;
+            var suffix = 2;
+            while (floors.Any(floor => string.Equals(floor.name, candidateName, StringComparison.OrdinalIgnoreCase)))
+            {
+                candidateName = $"{baseName} {suffix}";
+                suffix += 1;
+            }
+
+            return candidateName;
+        }
+
+        private static bool IsSurfaceFloor(FloorData floor)
+        {
+            return floor == null || floor.elevation >= 0f;
+        }
+
+        private static bool IsBasementFloor(FloorData floor)
+        {
+            return floor != null && floor.elevation < 0f;
         }
 
         private static string BuildDuplicateFloorName(IReadOnlyList<FloorData> floors, string sourceName)

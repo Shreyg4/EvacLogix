@@ -671,13 +671,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                     }
                 }
 
-                foreach (var region in floor.regions)
-                {
-                    if (!string.IsNullOrWhiteSpace(region.regionId))
-                    {
-                        yield return region.regionId;
-                    }
-                }
             }
         }
 
