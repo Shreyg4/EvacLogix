@@ -368,7 +368,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUILayout.Space(4f);
             GUILayout.BeginHorizontal();
             pendingFloorName = GUILayout.TextField(pendingFloorName, GUILayout.Width(120f));
-            DrawActionButton("Add Floor", () => { floorTabsBarShell?.AddFloor(pendingFloorName, 0f); }, workspaceService?.ActiveProject != null);
+            DrawActionButton("Add Floor", () => { floorTabsBarShell?.AddFloor(pendingFloorName, ResolveNewFloorElevation()); }, workspaceService?.ActiveProject != null);
 
             var activeFloor = workspaceService?.ActiveFloor;
             DrawActionButton("Duplicate", () => { floorTabsBarShell?.DuplicateFloor(activeFloor.floorId); }, activeFloor != null);
@@ -393,11 +393,31 @@ namespace EvacLogix.Sandbox.UI.Panels
         {
             var isSelected = selectedFloorCategory == category;
             var style = isSelected ? activeToolButtonStyle : GUI.skin.button;
-            if (GUILayout.Button(label, style, GUILayout.Width(70f), GUILayout.Height(28f)))
+            var labelContent = new GUIContent(label);
+            var buttonWidth = Mathf.Max(70f, style.CalcSize(labelContent).x + 12f);
+            if (GUILayout.Button(labelContent, style, GUILayout.Width(buttonWidth), GUILayout.Height(28f)))
             {
                 selectedFloorCategory = category;
                 floorTabsScrollPosition = Vector2.zero;
             }
+        }
+
+        private float ResolveNewFloorElevation()
+        {
+            const float floorHeight = 3f;
+
+            if (selectedFloorCategory != FloorCategory.Basement)
+            {
+                return 0f;
+            }
+
+            var lowestBasementElevation = floorTabsBarShell?.FloorTabs?
+                .Where(tab => tab.elevation < 0f)
+                .Select(tab => tab.elevation)
+                .DefaultIfEmpty(0f)
+                .Min() ?? 0f;
+
+            return lowestBasementElevation - floorHeight;
         }
 
         private IReadOnlyList<SandboxFloorTabEntry> GetVisibleFloorTabs()
