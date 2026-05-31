@@ -6,6 +6,7 @@ using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Data.Serialization;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Runtime;
 using UnityEngine;
 
 namespace EvacLogix.Sandbox.Authoring
@@ -19,6 +20,8 @@ namespace EvacLogix.Sandbox.Authoring
         private SandboxSelectionService selectionService;
         private SandboxValidationService validationService;
         private SandboxPreviewService previewService;
+        private SandboxRoomDetectionService roomDetectionService;
+        private SandboxAgentSimulationService agentSimulationService;
 
         public event Action PreviewAuthoringChanged;
 
@@ -29,6 +32,8 @@ namespace EvacLogix.Sandbox.Authoring
             selectionService = GetComponent<SandboxSelectionService>();
             validationService = GetComponent<SandboxValidationService>();
             previewService = GetComponent<SandboxPreviewService>();
+            roomDetectionService = GetComponent<SandboxRoomDetectionService>();
+            agentSimulationService = GetComponent<SandboxAgentSimulationService>();
         }
 
         public IReadOnlyList<SpawnLayoutData> GetSpawnLayouts()
@@ -157,9 +162,25 @@ namespace EvacLogix.Sandbox.Authoring
                 return false;
             }
 
-            if (!HasProjectExit())
+            var activeFloor = workspaceService.ActiveFloor;
+            roomDetectionService?.Recalculate();
+            if (!TryValidateSpawnPointPlacement(activeFloor, position, out failureMessage))
             {
-                failureMessage = "Add at least one exit before placing spawns.";
+                validationService?.SetPreviewPlacementValidationIssue(
+                    activeFloor.floorId,
+                    string.Empty,
+                    "Spawn point placement failed",
+                    failureMessage);
+                return false;
+            }
+
+            if (!TryValidateSpawnPointSpacing(activeFloor.floorId, position, out failureMessage))
+            {
+                validationService?.SetPreviewPlacementValidationIssue(
+                    activeFloor.floorId,
+                    string.Empty,
+                    "Spawn point placement failed",
+                    failureMessage);
                 return false;
             }
 
@@ -188,6 +209,7 @@ namespace EvacLogix.Sandbox.Authoring
 
             if (didPlace)
             {
+                validationService?.ClearPreviewPlacementValidationIssue();
                 spawnPointId = createdSpawnPointId;
                 resolvedSpawnLayoutId = capturedLayoutId;
             }
@@ -234,9 +256,15 @@ namespace EvacLogix.Sandbox.Authoring
                 return false;
             }
 
-            if (!HasProjectExit())
+            var activeFloor = workspaceService.ActiveFloor;
+            roomDetectionService?.Recalculate();
+            if (!TryValidateSpawnPointBrushPlacement(activeFloor, polygonPoints, out failureMessage))
             {
-                failureMessage = "Add at least one exit before placing spawns.";
+                validationService?.SetPreviewPlacementValidationIssue(
+                    activeFloor.floorId,
+                    string.Empty,
+                    "Spawn point brush placement failed",
+                    failureMessage);
                 return false;
             }
 
@@ -245,6 +273,16 @@ namespace EvacLogix.Sandbox.Authoring
             if (sampledPoints.Count == 0)
             {
                 failureMessage = "Spawn point brush did not cover a valid spawn area.";
+                return false;
+            }
+
+            if (!TryValidateSpawnPointSpacing(activeFloor.floorId, sampledPoints, out failureMessage))
+            {
+                validationService?.SetPreviewPlacementValidationIssue(
+                    activeFloor.floorId,
+                    string.Empty,
+                    "Spawn point brush placement failed",
+                    failureMessage);
                 return false;
             }
 
@@ -277,6 +315,7 @@ namespace EvacLogix.Sandbox.Authoring
 
             if (didPlace)
             {
+                validationService?.ClearPreviewPlacementValidationIssue();
                 spawnPointIds = createdSpawnPointIds;
                 resolvedSpawnLayoutId = capturedLayoutId;
             }
@@ -474,26 +513,94 @@ namespace EvacLogix.Sandbox.Authoring
             return true;
         }
 
-        // Spawns need a real evacuation goal: at least one exit anywhere in the PROJECT (not the
-        // spawn's own floor, since agents can reach other floors via stair/teleport portals). Escape
-        // windows are an in-sim fallback, not a substitute for an exit when authoring spawns.
-        private bool HasProjectExit()
+        private bool TryValidateSpawnPointPlacement(FloorData floor, Vector2 position, out string failureMessage)
         {
-            var project = workspaceService?.ActiveProject;
-            if (project?.floors == null)
+            failureMessage = string.Empty;
+            if (!HasSpawnAccessPoints(floor))
             {
+                failureMessage = "Spawn points require at least one exit or window on the floor.";
                 return false;
             }
 
-            for (var i = 0; i < project.floors.Count; i += 1)
+            if (roomDetectionService == null || !roomDetectionService.IsPointInsideCompleteRoom(floor.floorId, position))
             {
-                if (project.floors[i].exits.Count > 0)
+                failureMessage = "Spawn points must be placed inside a detected room.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool HasSpawnAccessPoints(FloorData floor)
+        {
+            return floor != null && (floor.exits.Count > 0 || floor.windows.Count > 0);
+        }
+
+        private bool TryValidateSpawnPointBrushPlacement(FloorData floor, IReadOnlyList<Vector2> polygonPoints, out string failureMessage)
+        {
+            failureMessage = string.Empty;
+            if (!HasSpawnAccessPoints(floor))
+            {
+                failureMessage = "Spawn point brushes require at least one exit or window on the floor.";
+                return false;
+            }
+
+            if (roomDetectionService == null || !roomDetectionService.ArePointsInsideCompleteRooms(floor.floorId, polygonPoints))
+            {
+                failureMessage = "Spawn point brushes must stay inside detected rooms.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool TryValidateSpawnPointSpacing(string floorId, Vector2 position, out string failureMessage)
+        {
+            failureMessage = string.Empty;
+            var positions = new List<Vector2> { position };
+            return TryValidateSpawnPointSpacing(floorId, positions, out failureMessage);
+        }
+
+        private bool TryValidateSpawnPointSpacing(string floorId, IReadOnlyList<Vector2> positions, out string failureMessage)
+        {
+            failureMessage = string.Empty;
+            if (string.IsNullOrWhiteSpace(floorId) || positions == null || positions.Count == 0)
+            {
+                return true;
+            }
+
+            var minimumSpacing = Mathf.Max(0.1f, (agentSimulationService != null ? agentSimulationService.AgentRadius : 0.25f) * 2f);
+            var project = workspaceService?.ActiveProject;
+            var existingPoints = project?.spawnLayouts
+                .Where(layout => layout?.spawnPoints != null)
+                .SelectMany(layout => layout.spawnPoints)
+                .Where(point => point != null && string.Equals(point.floorId, floorId, StringComparison.Ordinal))
+                .Select(point => point.position)
+                .ToList() ?? new List<Vector2>();
+
+            for (var pointIndex = 0; pointIndex < positions.Count; pointIndex += 1)
+            {
+                var currentPoint = positions[pointIndex];
+                for (var existingIndex = 0; existingIndex < existingPoints.Count; existingIndex += 1)
                 {
-                    return true;
+                    if (Vector2.Distance(currentPoint, existingPoints[existingIndex]) < minimumSpacing)
+                    {
+                        failureMessage = $"Spawn points must stay at least {minimumSpacing:0.00} units apart so their agent circles do not overlap.";
+                        return false;
+                    }
+                }
+
+                for (var nextIndex = pointIndex + 1; nextIndex < positions.Count; nextIndex += 1)
+                {
+                    if (Vector2.Distance(currentPoint, positions[nextIndex]) < minimumSpacing)
+                    {
+                        failureMessage = $"Spawn points must stay at least {minimumSpacing:0.00} units apart so their agent circles do not overlap.";
+                        return false;
+                    }
                 }
             }
 
-            return false;
+            return true;
         }
 
         private static List<Vector2> GenerateSpawnPointBrushSamples(IReadOnlyList<Vector2> polygonPoints, float density)

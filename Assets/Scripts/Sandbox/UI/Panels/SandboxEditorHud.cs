@@ -959,8 +959,15 @@ namespace EvacLogix.Sandbox.UI.Panels
                     validationPanelShell.SetShowCompleteRooms(showCompleteRooms);
                 }
 
+                if (!string.IsNullOrWhiteSpace(validationPanelShell.PreviewPlacementMessage))
+                {
+                    GUILayout.Label(validationPanelShell.PreviewPlacementMessage, bodyStyle);
+                }
+
+                GUILayout.BeginHorizontal();
                 DrawActionButton("Refresh Rooms", () => validationPanelShell.RefreshCompleteRooms(), validationPanelShell.ShowCompleteRooms);
                 GUILayout.Label(validationPanelShell.RoomDetectionStatus, bodyStyle);
+                GUILayout.EndHorizontal();
                 GUILayout.Label(
                     $"Rooms: sealed {validationPanelShell.SealedRoomCount}, penetrated {validationPanelShell.PenetratedRoomCount}.",
                     bodyStyle);

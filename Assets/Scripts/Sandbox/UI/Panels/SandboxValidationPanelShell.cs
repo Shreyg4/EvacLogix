@@ -21,6 +21,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         public bool HasBlockingIssues => hasBlockingIssues;
         public bool ShowCompleteRooms => roomDetectionService != null && roomDetectionService.ShowCompleteRooms;
         public string RoomDetectionStatus => roomDetectionService?.LastStatusMessage ?? "Room detector unavailable.";
+        public string PreviewPlacementMessage => validationService?.PreviewPlacementMessage ?? string.Empty;
         public int CompleteRoomCount => roomDetectionService?.DetectedRooms.Count ?? 0;
         public int SealedRoomCount => roomDetectionService?.SealedRoomCount ?? 0;
         public int PenetratedRoomCount => roomDetectionService?.PenetratedRoomCount ?? 0;

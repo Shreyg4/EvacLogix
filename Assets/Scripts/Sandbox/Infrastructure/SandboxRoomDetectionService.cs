@@ -80,6 +80,23 @@ namespace EvacLogix.Sandbox.Infrastructure
             return true;
         }
 
+        public IReadOnlyList<SandboxDetectedRoomData> GetCompleteRoomsForFloor(string floorId)
+        {
+            if (string.IsNullOrWhiteSpace(floorId) || workspaceService?.ActiveProject == null)
+            {
+                return Array.Empty<SandboxDetectedRoomData>();
+            }
+
+            var floor = workspaceService.ActiveProject.floors.FirstOrDefault(candidate =>
+                string.Equals(candidate.floorId, floorId, StringComparison.Ordinal));
+            if (floor == null)
+            {
+                return Array.Empty<SandboxDetectedRoomData>();
+            }
+
+            return DetectRoomsForFloor(floor).ToList();
+        }
+
         private void Awake()
         {
             RefreshDependencies();
@@ -286,23 +303,6 @@ namespace EvacLogix.Sandbox.Infrastructure
             workspaceService ??= GetComponent<SandboxProjectWorkspaceService>();
             wallAuthoringService ??= GetComponent<SandboxWallAuthoringService>();
             semanticObjectAuthoringService ??= GetComponent<SandboxSemanticObjectAuthoringService>();
-        }
-
-        private List<SandboxDetectedRoomData> GetCompleteRoomsForFloor(string floorId)
-        {
-            if (string.IsNullOrWhiteSpace(floorId) || workspaceService?.ActiveProject == null)
-            {
-                return new List<SandboxDetectedRoomData>();
-            }
-
-            var floor = workspaceService.ActiveProject.floors.FirstOrDefault(candidate =>
-                string.Equals(candidate.floorId, floorId, StringComparison.Ordinal));
-            if (floor == null)
-            {
-                return new List<SandboxDetectedRoomData>();
-            }
-
-            return DetectRoomsForFloor(floor).ToList();
         }
 
         private static void AddNeighbor(IDictionary<string, List<string>> neighbors, string from, string to)
