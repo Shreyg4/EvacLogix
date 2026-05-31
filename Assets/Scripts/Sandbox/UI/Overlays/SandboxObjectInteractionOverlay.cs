@@ -70,6 +70,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxPreviewService previewService;
         private SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
+        private SandboxPreviewAuthoringService previewAuthoringService;
         private Texture2D solidTexture;
         private Font overlayFont;
         private GUIStyle erasePanelStyle;
@@ -177,6 +178,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             SandboxHitKind.Exit => SandboxVisualObjectType.Exit,
             SandboxHitKind.Obstacle => SandboxVisualObjectType.Obstacle,
             SandboxHitKind.Teleport => SandboxVisualObjectType.Teleport,
+            SandboxHitKind.FireStart => SandboxVisualObjectType.FireStart,
             _ => null,
         };
         public int DraggedRectangleHandleIndex => draggedRectangleHandleIndex;
@@ -248,6 +250,11 @@ namespace EvacLogix.Sandbox.UI.Overlays
             if (semanticObjectAuthoringService == null)
             {
                 semanticObjectAuthoringService = FindAnyObjectByType<SandboxSemanticObjectAuthoringService>();
+            }
+
+            if (previewAuthoringService == null)
+            {
+                previewAuthoringService = FindAnyObjectByType<SandboxPreviewAuthoringService>();
             }
         }
 
@@ -913,6 +920,19 @@ namespace EvacLogix.Sandbox.UI.Overlays
                             teleportPortal.isPairEnabled,
                             teleportPortal.tags,
                             teleportPortal.metadataFields);
+                    }
+
+                    break;
+                case SandboxHitKind.FireStart:
+                    if (previewAuthoringService != null && TryFindFireOrigin(draggedRectangleObjectId, out var fireOrigin))
+                    {
+                        didUpdate = previewAuthoringService.UpdateFireOrigin(
+                            fireOrigin.fireOriginId,
+                            draggedRectanglePreviewCenter,
+                            fireOrigin.spreadIntensity,
+                            fireOrigin.startDelaySeconds,
+                            fireOrigin.isPersistent,
+                            draggedRectanglePreviewSize);
                     }
 
                     break;
@@ -1638,7 +1658,31 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return true;
             }
 
+            if (TryFindFireOrigin(objectId, out var fireOrigin))
+            {
+                hitKind = SandboxHitKind.FireStart;
+                center = fireOrigin.position;
+                size = fireOrigin.size;
+                rotationDegrees = 0f;
+                return true;
+            }
+
             return false;
+        }
+
+        private bool TryFindFireOrigin(string objectId, out FireOriginData fireOrigin)
+        {
+            fireOrigin = null;
+            var floor = workspaceService?.ActiveFloor;
+            var project = workspaceService?.ActiveProject;
+            if (floor == null || project == null || string.IsNullOrWhiteSpace(objectId))
+            {
+                return false;
+            }
+
+            fireOrigin = project.fireOrigins.FirstOrDefault(candidate =>
+                candidate.floorId == floor.floorId && string.Equals(candidate.fireOriginId, objectId, StringComparison.Ordinal));
+            return fireOrigin != null;
         }
 
         private bool TryFindObstacle(string objectId, out FloorData floor, out ObstacleData obstacle)
@@ -2004,7 +2048,11 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 openingWidth);
             var halfWidth = worldWidth * 0.5f;
             var projectionDistance = Vector2.Dot(worldPoint - wall.startPoint, wallDirection);
-            if (projectionDistance < openingOffset - halfWidth - OpeningHitRadius || projectionDistance > openingOffset + halfWidth + OpeningHitRadius)
+
+            // Accept only within the opening's actual footprint along the wall (no along-wall
+            // padding). Clicks on the solid wall beside an opening fall through to the wall instead
+            // of being grabbed by the opening's hit area.
+            if (projectionDistance < openingOffset - halfWidth || projectionDistance > openingOffset + halfWidth)
             {
                 return false;
             }

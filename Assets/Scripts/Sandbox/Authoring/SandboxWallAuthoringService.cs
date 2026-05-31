@@ -302,6 +302,130 @@ namespace EvacLogix.Sandbox.Authoring
             return wall != null && MoveWallJunctions(wall.endJunctionId, new[] { wall.endJunctionId }, newEndPoint);
         }
 
+        // Sets a wall's length by moving one endpoint along the wall axis. The anchored end stays put
+        // (a shared corner detaches the moved end cleanly, leaving neighbours in place). Rejects with a
+        // message if a door/window on the wall would no longer fit; openings keep their world position.
+        public bool TrySetWallLength(string wallSegmentId, float newLength, bool anchorAtStart, out string error, out float minWorldLength, out string offenderLabel)
+        {
+            error = string.Empty;
+            minWorldLength = 0f;
+            offenderLabel = null;
+            var floor = workspaceService?.ActiveFloor;
+            var wall = floor == null ? null : FindWallSegment(floor, wallSegmentId);
+            if (wall == null)
+            {
+                error = "Wall not found.";
+                return false;
+            }
+
+            if (IsEditingBlocked() || IsWallLocked(wallSegmentId))
+            {
+                error = "Wall is locked.";
+                return false;
+            }
+
+            newLength = Mathf.Max(0.05f, newLength);
+            var oldStart = wall.startPoint;
+            var oldEnd = wall.endPoint;
+            var oldLength = Vector2.Distance(oldStart, oldEnd);
+            if (oldLength <= 0.0001f)
+            {
+                error = "Wall has no direction to resize.";
+                return false;
+            }
+
+            var dir = (oldEnd - oldStart) / oldLength;
+            var newStart = anchorAtStart ? oldStart : oldEnd - dir * newLength;
+
+            // Validate openings on this wall (their world position stays fixed).
+            var minLength = 0f;
+            string offender = null;
+            void CheckOpening(string label, float offset, float width)
+            {
+                var halfWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(workspaceService, workspaceStateService, floor, width) * 0.5f;
+                var worldCenter = oldStart + dir * offset;
+                var newOffset = Vector2.Dot(worldCenter - newStart, dir);
+                if (newOffset - halfWidth < -0.01f || newOffset + halfWidth > newLength + 0.01f)
+                {
+                    offender ??= label;
+                }
+
+                var requiredFromAnchor = anchorAtStart ? offset + halfWidth : (oldLength - offset) + halfWidth;
+                minLength = Mathf.Max(minLength, requiredFromAnchor);
+            }
+
+            foreach (var door in floor.doors.Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal)))
+            {
+                CheckOpening("a door", door.offsetAlongWall, door.width);
+            }
+
+            foreach (var window in floor.windows.Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal)))
+            {
+                CheckOpening("a window", window.offsetAlongWall, window.width);
+            }
+
+            if (offender != null)
+            {
+                // Report the raw world-unit minimum and the offender; the caller formats the
+                // message in the unit the user is actually typing in (grid/feet/meters).
+                offenderLabel = offender;
+                minWorldLength = minLength;
+                error = $"{offender} on this wall would fall off at that length.";
+                return false;
+            }
+
+            return ExecuteProjectMutation(
+                "Set Wall Length",
+                (_, mutableFloor) =>
+                {
+                    var target = FindWallSegment(mutableFloor, wallSegmentId);
+                    if (target == null)
+                    {
+                        return false;
+                    }
+
+                    var start = target.startPoint;
+                    var end = target.endPoint;
+                    var length = Vector2.Distance(start, end);
+                    if (length <= 0.0001f)
+                    {
+                        return false;
+                    }
+
+                    var direction = (end - start) / length;
+
+                    // Capture opening world positions before the endpoint moves so we can re-derive offsets.
+                    var doorCenters = mutableFloor.doors
+                        .Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal))
+                        .ToDictionary(candidate => candidate.doorId, candidate => start + direction * candidate.offsetAlongWall);
+                    var windowCenters = mutableFloor.windows
+                        .Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal))
+                        .ToDictionary(candidate => candidate.windowId, candidate => start + direction * candidate.offsetAlongWall);
+
+                    var moveStart = !anchorAtStart;
+                    var movedTarget = moveStart ? end - direction * newLength : start + direction * newLength;
+                    if (!UpdateWallEndpointPosition(mutableFloor, target, moveStart, movedTarget, 0.01f))
+                    {
+                        return false;
+                    }
+
+                    var resolvedStart = target.startPoint;
+                    var resolvedDirection = (target.endPoint - target.startPoint).normalized;
+                    foreach (var door in mutableFloor.doors.Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal)))
+                    {
+                        door.offsetAlongWall = Vector2.Dot(doorCenters[door.doorId] - resolvedStart, resolvedDirection);
+                    }
+
+                    foreach (var window in mutableFloor.windows.Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal)))
+                    {
+                        window.offsetAlongWall = Vector2.Dot(windowCenters[window.windowId] - resolvedStart, resolvedDirection);
+                    }
+
+                    return true;
+                },
+                new[] { wallSegmentId });
+        }
+
         public bool MoveWallJunctions(string primaryJunctionId, IEnumerable<string> selectedJunctionIds, Vector2 targetPoint)
         {
             if (string.IsNullOrWhiteSpace(primaryJunctionId) || selectedJunctionIds == null)

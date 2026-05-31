@@ -201,12 +201,18 @@ namespace EvacLogix.Sandbox.Rendering
 
         private void OnGUI()
         {
-            if (guideLabels.Count == 0 || Event.current.type != EventType.Repaint)
+            if (Event.current.type != EventType.Repaint)
             {
                 return;
             }
 
             EnsureGuideGuiResources();
+            DrawGuideLabels();
+            DrawLockBadges();
+        }
+
+        private void DrawGuideLabels()
+        {
             foreach (var label in guideLabels)
             {
                 var guiPoint = ToGuiPoint(targetCamera ?? Camera.main, label.WorldAnchor);
@@ -220,6 +226,115 @@ namespace EvacLogix.Sandbox.Rendering
                 GUI.Label(rect, label.Text, guideLabelStyle);
                 guideLabelStyle.normal.textColor = previousColor;
             }
+        }
+
+        // Draws a small padlock badge over every edit-locked object so locks are visible at a glance
+        // (fields stay editable in the inspector, so this is the main on-canvas cue).
+        private void DrawLockBadges()
+        {
+            if (visualOrganizationService == null)
+            {
+                return;
+            }
+
+            var floor = workspaceService?.ActiveFloor;
+            var camera = targetCamera ?? Camera.main;
+            if (floor == null || camera == null)
+            {
+                return;
+            }
+
+            foreach (var wall in floor.wallSegments)
+            {
+                if (IsLockedAndVisible(wall.wallSegmentId, SandboxVisualObjectType.Wall))
+                {
+                    DrawLockBadge(camera, (wall.startPoint + wall.endPoint) * 0.5f);
+                }
+            }
+
+            foreach (var door in floor.doors)
+            {
+                if (IsLockedAndVisible(door.doorId, SandboxVisualObjectType.Door) &&
+                    SandboxAlignmentGuideUtility.TryResolveOpeningCenter(floor, door.wallSegmentId, door.offsetAlongWall, out var doorCenter))
+                {
+                    DrawLockBadge(camera, doorCenter);
+                }
+            }
+
+            foreach (var window in floor.windows)
+            {
+                if (IsLockedAndVisible(window.windowId, SandboxVisualObjectType.Window) &&
+                    SandboxAlignmentGuideUtility.TryResolveOpeningCenter(floor, window.wallSegmentId, window.offsetAlongWall, out var windowCenter))
+                {
+                    DrawLockBadge(camera, windowCenter);
+                }
+            }
+
+            foreach (var exitZone in floor.exits)
+            {
+                if (IsLockedAndVisible(exitZone.exitZoneId, SandboxVisualObjectType.Exit))
+                {
+                    DrawLockBadge(camera, exitZone.center);
+                }
+            }
+
+            foreach (var obstacle in floor.obstacles)
+            {
+                if (IsLockedAndVisible(obstacle.obstacleId, SandboxVisualObjectType.Obstacle))
+                {
+                    DrawLockBadge(camera, obstacle.center);
+                }
+            }
+
+            foreach (var stairPortal in floor.stairPortals)
+            {
+                if (IsLockedAndVisible(stairPortal.stairPortalId, SandboxVisualObjectType.Stair))
+                {
+                    DrawLockBadge(camera, stairPortal.localPosition);
+                }
+            }
+
+            foreach (var teleportPortal in floor.teleportPortals)
+            {
+                if (IsLockedAndVisible(teleportPortal.teleportPortalId, SandboxVisualObjectType.Teleport))
+                {
+                    DrawLockBadge(camera, teleportPortal.localPosition);
+                }
+            }
+
+            var project = workspaceService?.ActiveProject;
+            if (project != null)
+            {
+                foreach (var fireOrigin in project.fireOrigins)
+                {
+                    if (fireOrigin.floorId == floor.floorId && IsLockedAndVisible(fireOrigin.fireOriginId, SandboxVisualObjectType.FireStart))
+                    {
+                        DrawLockBadge(camera, fireOrigin.position);
+                    }
+                }
+            }
+        }
+
+        private bool IsLockedAndVisible(string objectId, SandboxVisualObjectType objectType)
+        {
+            return visualOrganizationService.IsObjectLocked(objectId) &&
+                   IsVisible(objectType) &&
+                   !IsHidden(objectId, objectType);
+        }
+
+        private void DrawLockBadge(Camera camera, Vector2 worldAnchor)
+        {
+            var guiPoint = ToGuiPoint(camera, worldAnchor);
+            var background = new Rect(guiPoint.x - 9f, guiPoint.y - 9f, 18f, 18f);
+            DrawFilledRect(background, new Color(0.05f, 0.08f, 0.12f, 0.85f));
+
+            var gold = new Color(1f, 0.85f, 0.3f, 1f);
+            // Padlock body.
+            DrawFilledRect(new Rect(guiPoint.x - 5f, guiPoint.y - 1f, 10f, 8f), gold);
+            // Shackle (inverted U): left, right, and top bars.
+            DrawFilledRect(new Rect(guiPoint.x - 4f, guiPoint.y - 7f, 2f, 6f), gold);
+            DrawFilledRect(new Rect(guiPoint.x + 2f, guiPoint.y - 7f, 2f, 6f), gold);
+            DrawFilledRect(new Rect(guiPoint.x - 4f, guiPoint.y - 7f, 8f, 2f), gold);
         }
 
         public void Refresh()
@@ -410,10 +525,21 @@ namespace EvacLogix.Sandbox.Rendering
                         continue;
                     }
 
+                    var (center, size, _) = ResolveRectanglePresentation(
+                        fireOrigin.fireOriginId,
+                        SandboxVisualObjectType.FireStart,
+                        fireOrigin.position,
+                        fireOrigin.size,
+                        0f);
                     RenderFireStartMarker(
                         $"FireStart_{fireOrigin.fireOriginId}",
-                        fireOrigin.position,
+                        center,
+                        size,
                         ResolveSelectionColor(fireOrigin.fireOriginId, ResolveBaseColor(SandboxVisualObjectType.FireStart)));
+                    if (selectionService != null && selectionService.SelectedObjectIds.Count == 1 && selectionService.SelectedObjectIds.Contains(fireOrigin.fireOriginId))
+                    {
+                        RenderRectangleHandles($"FireStart_{fireOrigin.fireOriginId}_Handles", center, size, 0f, rectangleHandleColor);
+                    }
                 }
             }
 
@@ -463,7 +589,7 @@ namespace EvacLogix.Sandbox.Rendering
                     origin.floorId == floor.floorId && string.Equals(origin.fireOriginId, objectId, StringComparison.Ordinal));
                 if (fireOrigin != null)
                 {
-                    RenderFireStartMarker($"DragGhost_{objectId}", fireOrigin.position + delta, new Color(0.9f, 0.2f, 0.1f, 0.6f));
+                    RenderFireStartMarker($"DragGhost_{objectId}", fireOrigin.position + delta, fireOrigin.size, new Color(0.9f, 0.2f, 0.1f, 0.6f));
                 }
             }
 
@@ -786,36 +912,54 @@ namespace EvacLogix.Sandbox.Rendering
             RenderCircle($"{name}_Ring", center, markerRadius * 0.8f, color);
         }
 
-        // Fire start marker: a black circle with red diagonal hatches inside, plus a thin outer ring
-        // tinted by the resolved selection color so selection is visible.
-        private void RenderFireStartMarker(string name, Vector2 center, Color selectionColor)
+        // Fire start marker: a black ellipse (matching the bounding box, so stretching makes an oval)
+        // with red diagonal hatches inside, plus a thin outer ring tinted by the selection color.
+        private void RenderFireStartMarker(string name, Vector2 center, Vector2 size, Color selectionColor)
         {
-            var radius = markerRadius * 1.1f;
+            var radiusX = Mathf.Max(0.1f, size.x * 0.5f);
+            var radiusY = Mathf.Max(0.1f, size.y * 0.5f);
             var black = new Color(0.05f, 0.05f, 0.05f, 1f);
             var hatch = new Color(0.9f, 0.15f, 0.1f, 1f);
 
-            RenderCircle($"{name}_Ring", center, radius, black);
-            RenderCircle($"{name}_RingInner", center, radius * 0.92f, black);
+            RenderEllipse($"{name}_Ring", center, radiusX, radiusY, black);
+            RenderEllipse($"{name}_RingInner", center, radiusX * 0.92f, radiusY * 0.92f, black);
 
-            // Red diagonal hatch chords clipped to the circle.
+            // Hatch chords are computed on a unit circle then scaled into the ellipse, so they follow
+            // the oval as it is stretched.
             var dir = new Vector2(1f, 1f).normalized;
             var perp = new Vector2(-dir.y, dir.x);
-            var step = radius * 0.45f;
+            const float step = 0.45f;
             var index = 0;
-            for (var offset = -radius + step; offset < radius; offset += step)
+            for (var offset = -1f + step; offset < 1f; offset += step)
             {
-                var half = Mathf.Sqrt(Mathf.Max(0f, radius * radius - offset * offset)) * 0.92f;
+                var half = Mathf.Sqrt(Mathf.Max(0f, 1f - offset * offset)) * 0.92f;
                 if (half <= 0.01f)
                 {
                     continue;
                 }
 
-                var lineCenter = center + perp * offset;
-                RenderLine($"{name}_Hatch{index}", lineCenter - dir * half, lineCenter + dir * half, hatch);
+                var a = perp * offset - dir * half;
+                var b = perp * offset + dir * half;
+                var start = center + new Vector2(a.x * radiusX, a.y * radiusY);
+                var end = center + new Vector2(b.x * radiusX, b.y * radiusY);
+                RenderLine($"{name}_Hatch{index}", start, end, hatch);
                 index += 1;
             }
 
-            RenderCircle($"{name}_Selection", center, radius * 1.18f, selectionColor);
+            RenderEllipse($"{name}_Selection", center, radiusX * 1.18f, radiusY * 1.18f, selectionColor);
+        }
+
+        private void RenderEllipse(string name, Vector2 center, float radiusX, float radiusY, Color color)
+        {
+            const int segmentCount = 24;
+            var points = new Vector2[segmentCount];
+            for (var i = 0; i < segmentCount; i += 1)
+            {
+                var angle = i / (float)segmentCount * Mathf.PI * 2f;
+                points[i] = center + new Vector2(Mathf.Cos(angle) * radiusX, Mathf.Sin(angle) * radiusY);
+            }
+
+            RenderPolyline(name, points, color, true);
         }
 
         private void RenderCircle(string name, Vector2 center, float radius, Color color)

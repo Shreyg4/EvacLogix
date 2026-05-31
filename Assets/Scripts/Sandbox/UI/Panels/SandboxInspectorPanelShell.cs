@@ -83,6 +83,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         }
 
         public bool SnappingEnabled => workspaceStateService != null && workspaceStateService.SnappingEnabled;
+        public float CurrentGridSize => workspaceStateService != null ? Mathf.Max(0.05f, workspaceStateService.GridSize) : 0.5f;
 
         public IReadOnlyList<string> GetMissingDependencies()
         {
@@ -780,11 +781,28 @@ namespace EvacLogix.Sandbox.UI.Panels
             Vector2 position,
             float spreadIntensity,
             float startDelaySeconds,
-            bool isPersistent)
+            bool isPersistent,
+            Vector2? size = null)
         {
             return UpdateVisualActionStatus(
-                previewAuthoringService != null && previewAuthoringService.UpdateFireOrigin(fireOriginId, position, spreadIntensity, startDelaySeconds, isPersistent),
+                previewAuthoringService != null && previewAuthoringService.UpdateFireOrigin(fireOriginId, position, spreadIntensity, startDelaySeconds, isPersistent, size),
                 "Updated fire origin parameters.");
+        }
+
+        public bool TrySetWallLength(string wallSegmentId, float newLength, bool anchorAtStart, out string error, out float minWorldLength, out string offenderLabel)
+        {
+            error = string.Empty;
+            minWorldLength = 0f;
+            offenderLabel = null;
+            if (wallAuthoringService == null)
+            {
+                error = "Wall service unavailable.";
+                return false;
+            }
+
+            var didUpdate = wallAuthoringService.TrySetWallLength(wallSegmentId, newLength, anchorAtStart, out error, out minWorldLength, out offenderLabel);
+            UpdateVisualActionStatus(didUpdate, didUpdate ? "Updated wall length." : error);
+            return didUpdate;
         }
 
         public bool RequestDeleteFloor(string floorId)

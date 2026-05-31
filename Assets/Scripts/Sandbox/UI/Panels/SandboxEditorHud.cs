@@ -27,6 +27,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             Door = 5,
             Window = 6,
             FireStart = 7,
+            Wall = 8,
         }
 
         private enum FloorLevelView
@@ -133,6 +134,13 @@ namespace EvacLogix.Sandbox.UI.Panels
         private string fireBehaviorSyncedId = string.Empty;
         private float selectionFireIntensity = 1f;
         private float selectionFireStartDelay;
+        private string selectionFireWidthText = "1";
+        private string selectionFireLengthText = "1";
+        private bool dimensionsInGridUnits = true;
+        private string wallSyncedId = string.Empty;
+        private string selectionWallLengthText = "1";
+        private bool selectionWallAnchorAtStart = true;
+        private string wallLengthError = string.Empty;
         private bool hasLoggedGuiException;
         private string lastGuiExceptionMessage = string.Empty;
         private bool hasLoggedWebGlDependencyStatus;
@@ -983,6 +991,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             var selectedId = selectionService.SelectedObjectIds[0];
+            DrawObjectLockToggle(selectedId);
             if (TryFindSelectedExit(selectedId, out var exitZone))
             {
                 SyncSelectionEditorState(selectedId, SelectionEditableKind.Exit, exitZone.size);
@@ -1050,14 +1059,159 @@ namespace EvacLogix.Sandbox.UI.Panels
                     fireBehaviorSyncedId = selectedId;
                     selectionFireIntensity = fireOrigin.spreadIntensity;
                     selectionFireStartDelay = fireOrigin.startDelaySeconds;
+                    selectionFireWidthText = FormatDimension(WorldToDisplayDimension(fireOrigin.size.x));
+                    selectionFireLengthText = FormatDimension(WorldToDisplayDimension(fireOrigin.size.y));
                 }
 
                 DrawFireStartFields(fireOrigin);
                 return;
             }
 
+            if (TryFindSelectedWall(selectedId, out var wall))
+            {
+                selectionEditorKind = SelectionEditableKind.Wall;
+                if (!string.Equals(wallSyncedId, selectedId, StringComparison.Ordinal))
+                {
+                    wallSyncedId = selectedId;
+                    var worldLength = Vector2.Distance(wall.startPoint, wall.endPoint);
+                    selectionWallLengthText = FormatDimension(WorldToDisplayDimension(worldLength));
+                    selectionWallAnchorAtStart = ResolveDefaultWallAnchor(wall);
+                    wallLengthError = string.Empty;
+                }
+
+                DrawWallFields(wall);
+                return;
+            }
+
             ResetSelectionEditorState();
             GUILayout.Label("The current selection does not expose editable size controls yet.", bodyStyle);
+        }
+
+        // Per-object editor edit-lock toggle shown at the top of every selected entity's inspector.
+        // This is the EDITOR lock (prevents moving/resizing/editing/deleting), distinct from any
+        // in-simulation state such as a door's DoorState.Locked. Fields stay active; edit attempts
+        // are rejected by the authoring services with a "locked" status message.
+        private void DrawObjectLockToggle(string objectId)
+        {
+            if (visualOrganizationService == null || string.IsNullOrWhiteSpace(objectId))
+            {
+                return;
+            }
+
+            var isLocked = visualOrganizationService.IsObjectLocked(objectId);
+            var nextLocked = GUILayout.Toggle(isLocked, "Lock editing");
+            if (nextLocked != isLocked)
+            {
+                visualOrganizationService.SetObjectLocked(objectId, nextLocked);
+            }
+
+            if (nextLocked)
+            {
+                GUILayout.Label("Locked: move, resize, edit, and delete are blocked. Untick to edit.", bodyStyle);
+            }
+        }
+
+        private bool TryFindSelectedWall(string selectedId, out WallSegmentData wall)
+        {
+            wall = null;
+            var floor = workspaceService?.ActiveFloor;
+            if (floor == null)
+            {
+                return false;
+            }
+
+            wall = floor.wallSegments.FirstOrDefault(candidate =>
+                string.Equals(candidate.wallSegmentId, selectedId, StringComparison.Ordinal));
+            return wall != null;
+        }
+
+        private bool ResolveDefaultWallAnchor(WallSegmentData wall)
+        {
+            var floor = workspaceService?.ActiveFloor;
+            if (floor == null)
+            {
+                return true;
+            }
+
+            var startShared = IsJunctionShared(floor, wall.startJunctionId, wall.wallSegmentId);
+            var endShared = IsJunctionShared(floor, wall.endJunctionId, wall.wallSegmentId);
+            if (endShared && !startShared)
+            {
+                return false; // anchor the shared end, move the free start
+            }
+
+            return true; // default: anchor start, move end
+        }
+
+        private static bool IsJunctionShared(FloorData floor, string junctionId, string wallSegmentId)
+        {
+            var junction = floor.wallJunctions.FirstOrDefault(candidate =>
+                string.Equals(candidate.wallJunctionId, junctionId, StringComparison.Ordinal));
+            return junction != null && junction.connectedWallSegmentIds.Any(id =>
+                !string.Equals(id, wallSegmentId, StringComparison.Ordinal));
+        }
+
+        private void DrawWallFields(WallSegmentData wall)
+        {
+            GUILayout.Label($"Wall: {wall.wallSegmentId}", bodyStyle);
+            DrawDimensionUnitToggle();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Length ({DimensionUnitLabel})", bodyStyle, GUILayout.Width(96f));
+            selectionWallLengthText = GUILayout.TextField(selectionWallLengthText, GUILayout.Width(70f));
+            GUILayout.EndHorizontal();
+
+            var anchorDesc = selectionWallAnchorAtStart ? "Start (green square)" : "End (blue diamond)";
+            var movingDesc = selectionWallAnchorAtStart ? "End (blue diamond)" : "Start (green square)";
+            var anchorPoint = selectionWallAnchorAtStart ? wall.startPoint : wall.endPoint;
+            var movingPoint = selectionWallAnchorAtStart ? wall.endPoint : wall.startPoint;
+            GUILayout.Label($"Anchored (fixed): {anchorDesc}  ({anchorPoint.x:0.0}, {anchorPoint.y:0.0})", bodyStyle);
+            GUILayout.Label($"Adjusted (moves): {movingDesc}  ({movingPoint.x:0.0}, {movingPoint.y:0.0})", bodyStyle);
+
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Apply Length", () => TryApplyWallLength(wall), inspectorPanelShell != null);
+            DrawActionButton("Flip Ends", () => selectionWallAnchorAtStart = !selectionWallAnchorAtStart);
+            GUILayout.EndHorizontal();
+
+            if (!string.IsNullOrWhiteSpace(wallLengthError))
+            {
+                GUILayout.Label(wallLengthError, bodyStyle);
+            }
+        }
+
+        private void TryApplyWallLength(WallSegmentData wall)
+        {
+            if (wall == null || inspectorPanelShell == null)
+            {
+                return;
+            }
+
+            if (!float.TryParse(selectionWallLengthText, NumberStyles.Float, CultureInfo.InvariantCulture, out var displayLength))
+            {
+                wallLengthError = "Enter a valid number for length.";
+                return;
+            }
+
+            var worldLength = DisplayToWorldDimension(displayLength);
+            if (inspectorPanelShell.TrySetWallLength(wall.wallSegmentId, worldLength, selectionWallAnchorAtStart, out var error, out var minWorldLength, out var offenderLabel))
+            {
+                wallLengthError = string.Empty;
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(offenderLabel))
+            {
+                // Express the rejection in the same unit shown in the Length field so the numbers
+                // line up with what the user typed (e.g. grid vs feet).
+                var unit = DimensionUnitLabel;
+                wallLengthError =
+                    $"Can't set length to {FormatDimension(displayLength)} {unit}: {offenderLabel} on this wall would fall off. " +
+                    $"Minimum length {FormatDimension(WorldToDisplayDimension(minWorldLength))} {unit}.";
+            }
+            else
+            {
+                wallLengthError = error;
+            }
         }
 
         private bool TryFindSelectedFireOrigin(string selectedId, out FireOriginData fireOrigin)
@@ -1078,6 +1232,14 @@ namespace EvacLogix.Sandbox.UI.Panels
         private void DrawFireStartFields(FireOriginData fireOrigin)
         {
             GUILayout.Label($"Fire Start: {fireOrigin.fireOriginId}", bodyStyle);
+            DrawDimensionUnitToggle();
+            var unit = DimensionUnitLabel;
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Width ({unit})", bodyStyle, GUILayout.Width(78f));
+            selectionFireWidthText = GUILayout.TextField(selectionFireWidthText, GUILayout.Width(64f));
+            GUILayout.Label($"Length ({unit})", bodyStyle, GUILayout.Width(86f));
+            selectionFireLengthText = GUILayout.TextField(selectionFireLengthText, GUILayout.Width(64f));
+            GUILayout.EndHorizontal();
             GUILayout.Label($"Spread Intensity: {selectionFireIntensity:0.00}  (higher = faster, farther spread)", bodyStyle);
             selectionFireIntensity = Mathf.Clamp(GUILayout.HorizontalSlider(selectionFireIntensity, 0.1f, 5f), 0.1f, 5f);
             GUILayout.Label($"Start Delay: {selectionFireStartDelay:0.0}s  (seconds before ignition)", bodyStyle);
@@ -1087,17 +1249,66 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private bool TryApplyFireStart(FireOriginData fireOrigin)
         {
-            if (fireOrigin == null)
+            if (fireOrigin == null || inspectorPanelShell == null)
             {
                 return false;
             }
 
-            return inspectorPanelShell != null && inspectorPanelShell.UpdateFireOrigin(
+            // Parse the typed Width/Length (in the active unit). If both parse, set the ellipse size;
+            // otherwise preserve the current size so an intensity/delay-only edit keeps the shape.
+            Vector2? size = null;
+            if (float.TryParse(selectionFireWidthText, NumberStyles.Float, CultureInfo.InvariantCulture, out var widthDisplay) &&
+                float.TryParse(selectionFireLengthText, NumberStyles.Float, CultureInfo.InvariantCulture, out var lengthDisplay))
+            {
+                size = new Vector2(
+                    Mathf.Max(0.2f, DisplayToWorldDimension(widthDisplay)),
+                    Mathf.Max(0.2f, DisplayToWorldDimension(lengthDisplay)));
+            }
+
+            return inspectorPanelShell.UpdateFireOrigin(
                 fireOrigin.fireOriginId,
                 fireOrigin.position,
                 selectionFireIntensity,
                 selectionFireStartDelay,
-                fireOrigin.isPersistent);
+                fireOrigin.isPersistent,
+                size);
+        }
+
+        // ---- Shared dimension unit (Grid <-> distance) used by fire size and wall length ----
+
+        private float DimensionGridSize => inspectorPanelShell != null ? inspectorPanelShell.CurrentGridSize : 0.5f;
+
+        private DistanceUnit DimensionDistanceUnit =>
+            workspaceService?.ActiveProject?.metadata?.distanceUnit ?? DistanceUnit.Feet;
+
+        private string DimensionUnitLabel =>
+            dimensionsInGridUnits ? "grid" : SandboxDistanceUnitUtility.GetAbbreviation(DimensionDistanceUnit);
+
+        private float WorldToDisplayDimension(float world) =>
+            dimensionsInGridUnits ? world / Mathf.Max(0.05f, DimensionGridSize) : world;
+
+        private float DisplayToWorldDimension(float display) =>
+            dimensionsInGridUnits ? display * Mathf.Max(0.05f, DimensionGridSize) : display;
+
+        private static string FormatDimension(float value) =>
+            value.ToString("0.##", CultureInfo.InvariantCulture);
+
+        private void DrawDimensionUnitToggle()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Units: {(dimensionsInGridUnits ? "Grid" : SandboxDistanceUnitUtility.GetLabel(DimensionDistanceUnit))}", bodyStyle);
+            var swapLabel = dimensionsInGridUnits
+                ? $"Use {SandboxDistanceUnitUtility.GetLabel(DimensionDistanceUnit)}"
+                : "Use Grid";
+            if (GUILayout.Button(swapLabel, GUILayout.Height(22f)))
+            {
+                dimensionsInGridUnits = !dimensionsInGridUnits;
+                // Force the dimensioned fields to re-sync their text in the new unit.
+                fireBehaviorSyncedId = string.Empty;
+                wallSyncedId = string.Empty;
+            }
+
+            GUILayout.EndHorizontal();
         }
 
         private void DrawDoorFields(DoorData door)
@@ -1115,7 +1326,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
             DrawActionButton("Blocked", () => TryApplyDoor(door, DoorState.Blocked), door.state != DoorState.Blocked);
-            DrawActionButton("Locked", () => TryApplyDoor(door, DoorState.Locked), door.state != DoorState.Locked);
+            DrawActionButton("Locked (door)", () => TryApplyDoor(door, DoorState.Locked), door.state != DoorState.Locked);
             GUILayout.EndHorizontal();
 
             var canApplyWidth = inspectorPanelShell != null && TryParseSelectionWidth(out _);

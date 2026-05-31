@@ -418,7 +418,8 @@ namespace EvacLogix.Sandbox.Authoring
             Vector2 position,
             float spreadIntensity,
             float startDelaySeconds,
-            bool isPersistent)
+            bool isPersistent,
+            Vector2? size = null)
         {
             if (workspaceService?.ActiveProject == null || string.IsNullOrWhiteSpace(fireOriginId))
             {
@@ -440,6 +441,11 @@ namespace EvacLogix.Sandbox.Authoring
                     fireOrigin.spreadIntensity = Mathf.Max(0.1f, spreadIntensity);
                     fireOrigin.startDelaySeconds = Mathf.Max(0f, startDelaySeconds);
                     fireOrigin.isPersistent = isPersistent;
+                    if (size.HasValue)
+                    {
+                        fireOrigin.size = new Vector2(Mathf.Max(0.2f, size.Value.x), Mathf.Max(0.2f, size.Value.y));
+                    }
+
                     return true;
                 },
                 new[] { fireOriginId });

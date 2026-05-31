@@ -81,6 +81,10 @@ namespace EvacLogix.Sandbox.Data
         public List<ScenarioPresetData> scenarioPresets = new();
         public ValidationSnapshotData validationSnapshot = new();
 
+        // Editor-only edit-locks: object IDs the user has locked from being moved/resized/edited/
+        // deleted in the sandbox. Persisted with the project so locks survive save/load.
+        public List<string> lockedObjectIds = new();
+
         public BuildingLifecycleState LifecycleState =>
             EvacLogix.Sandbox.Data.Validation.BuildingLifecycleStateUtility.Evaluate(this);
     }
@@ -314,6 +318,7 @@ namespace EvacLogix.Sandbox.Data
         public string fireOriginId = string.Empty;
         public string floorId = string.Empty;
         public Vector2 position;
+        public Vector2 size = new(0.8f, 0.8f);
         public float spreadIntensity = 1f;
         public float startDelaySeconds;
         public bool isPersistent = true;
