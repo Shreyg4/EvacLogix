@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Reflection;
 using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Authoring.Commands;
 using EvacLogix.Sandbox.Authoring.Selection;
@@ -158,6 +159,44 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
+        public void EditorHud_AddFloorElevationTracksSelectedBasementCategory()
+        {
+            var host = CreatePhase7Host(
+                out var workspaceService,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _);
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+
+            var floorTabsObject = new GameObject("FloorTabs");
+            var floorTabsBar = floorTabsObject.AddComponent<SandboxFloorTabsBarShell>();
+            floorTabsBar.SendMessage("Awake");
+
+            var hudObject = new GameObject("Hud");
+            var hud = hudObject.AddComponent<SandboxEditorHud>();
+            hud.SendMessage("Awake");
+            SetSelectedFloorCategory(hud, "Basement");
+
+            var firstBasementElevation = ResolveNewFloorElevation(hud);
+            Assert.That(firstBasementElevation, Is.EqualTo(-3f).Within(0.001f));
+            Assert.That(floorTabsBar.AddFloor("Basement 1", firstBasementElevation), Is.True);
+            Assert.That(workspaceService.ActiveFloor.elevation, Is.LessThan(0f));
+            Assert.That(floorTabsBar.FloorTabs.Any(tab => tab.name == "Basement 1" && tab.elevation < 0f), Is.True);
+
+            var secondBasementElevation = ResolveNewFloorElevation(hud);
+            Assert.That(secondBasementElevation, Is.EqualTo(-6f).Within(0.001f));
+
+            Object.DestroyImmediate(hudObject);
+            Object.DestroyImmediate(floorTabsObject);
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
         public void VisualOrganization_HidesLocksAndPublishesLegendEntries()
         {
             var host = CreatePhase7Host(
@@ -259,6 +298,20 @@ namespace EvacLogix.Tests.EditMode
             wallAuthoringService.SendMessage("Awake");
             semanticObjectAuthoringService.SendMessage("Awake");
             return host;
+        }
+
+        private static void SetSelectedFloorCategory(SandboxEditorHud hud, string categoryName)
+        {
+            var categoryType = typeof(SandboxEditorHud).GetNestedType("FloorCategory", BindingFlags.NonPublic);
+            var category = Enum.Parse(categoryType, categoryName);
+            var categoryField = typeof(SandboxEditorHud).GetField("selectedFloorCategory", BindingFlags.Instance | BindingFlags.NonPublic);
+            categoryField.SetValue(hud, category);
+        }
+
+        private static float ResolveNewFloorElevation(SandboxEditorHud hud)
+        {
+            var method = typeof(SandboxEditorHud).GetMethod("ResolveNewFloorElevation", BindingFlags.Instance | BindingFlags.NonPublic);
+            return (float)method.Invoke(hud, null);
         }
     }
 }

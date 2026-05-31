@@ -38,6 +38,13 @@ namespace EvacLogix.Sandbox.UI.Panels
             Basement = 2,
         }
 
+        private enum FloorCategory
+        {
+            All = 0,
+            Surface = 1,
+            Basement = 2,
+        }
+
         [SerializeField] private string blueprintImportPath = string.Empty;
         [SerializeField] private string calibrationDistanceText = "10";
         [SerializeField] private string pendingFloorName = string.Empty;
@@ -54,8 +61,10 @@ namespace EvacLogix.Sandbox.UI.Panels
         [SerializeField] private bool statusBarCollapsed;
         [SerializeField] private FloorLevelView selectedFloorLevelView = FloorLevelView.All;
         [SerializeField] private Vector2 toolScrollPosition;
+        [SerializeField] private Vector2 floorTabsScrollPosition;
         [SerializeField] private Vector2 inspectorScrollPosition;
         [SerializeField] private Vector2 validationScrollPosition;
+        [SerializeField] private FloorCategory selectedFloorCategory = FloorCategory.All;
 
         private SandboxTopBarShell topBarShell;
         private SandboxToolPaletteShell toolPaletteShell;
@@ -416,53 +425,30 @@ namespace EvacLogix.Sandbox.UI.Panels
                 return;
             }
 
-            // Drag-to-reorder level tabs (uses last frame's captured rects so the press can be
-            // consumed before the buttons see it).
-            ProcessFloorTabReorderEvents();
-
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Levels", subheaderStyle, GUILayout.Width(50f));
-            DrawFloorLevelViewButton("All", FloorLevelView.All);
-            DrawFloorLevelViewButton("Surface", FloorLevelView.Surface);
-            DrawFloorLevelViewButton("Basement", FloorLevelView.Basement);
-            GUILayout.Space(10f);
-
-            if (floorTabsBarShell?.FloorTabs != null)
-            {
-                if (Event.current.type == EventType.Repaint)
-                {
-                    floorTabRects.Clear();
-                }
-
-                foreach (var tab in GetVisibleFloorTabs())
-                {
-                    var buttonStyle = tab.isActive ? activeToolButtonStyle : GUI.skin.button;
-                    var clicked = GUILayout.Button(BuildFloorTabLabel(tab), buttonStyle, GUILayout.Height(28f));
-                    if (Event.current.type == EventType.Repaint)
-                    {
-                        floorTabRects[tab.floorId] = GUILayoutUtility.GetLastRect();
-                    }
-
-                    // A real click only reaches the button when no drag press was consumed
-                    // (e.g. the first interaction before rects are cached).
-                    if (clicked && !isFloorTabDragActive)
-                    {
-                        floorTabsBarShell.SelectFloor(tab.floorId);
-                    }
-                }
-            }
-
-            GUILayout.FlexibleSpace();
-            GUILayout.Space(30f);
+            GUILayout.Label("Floors", subheaderStyle, GUILayout.Width(50f));
+            DrawFloorCategoryButton(FloorCategory.All, "All");
+            DrawFloorCategoryButton(FloorCategory.Surface, "Surface");
+            DrawFloorCategoryButton(FloorCategory.Basement, "Basement");
             GUILayout.EndHorizontal();
 
-            DrawFloorTabGhost();
+            GUILayout.Space(4f);
 
+            var visibleTabs = GetVisibleFloorTabs();
+            var tabsViewportHeight = Mathf.Max(72f, floorTabsRect.height - 128f);
+            var tabsViewportRect = GUILayoutUtility.GetRect(floorTabsRect.width - 24f, tabsViewportHeight);
+            var tabsContentWidth = Mathf.Max(0f, tabsViewportRect.width - 18f);
+            var tabsContentHeight = CalculateFloorTabsContentHeight(visibleTabs, tabsContentWidth);
+            var tabsContentRect = new Rect(0f, 0f, tabsContentWidth, tabsContentHeight);
+
+            floorTabsScrollPosition = GUI.BeginScrollView(tabsViewportRect, floorTabsScrollPosition, tabsContentRect, false, true);
+            DrawWrappedFloorTabs(visibleTabs, tabsContentWidth);
+            GUI.EndScrollView();
+
+            GUILayout.Space(4f);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Add", subheaderStyle, GUILayout.Width(50f));
             pendingFloorName = GUILayout.TextField(pendingFloorName, GUILayout.Width(120f));
-            DrawActionButton("Add Surface", () => { floorTabsBarShell?.AddSurfaceFloor(pendingFloorName); }, workspaceService?.ActiveProject != null);
-            DrawActionButton("Add Basement", () => { floorTabsBarShell?.AddBasementFloor(pendingFloorName); }, workspaceService?.ActiveProject != null);
+            DrawActionButton("Add Floor", () => { floorTabsBarShell?.AddFloor(pendingFloorName, ResolveNewFloorElevation()); }, workspaceService?.ActiveProject != null);
 
             var activeFloor = workspaceService?.ActiveFloor;
             DrawActionButton("Duplicate", () => { floorTabsBarShell?.DuplicateFloor(activeFloor.floorId); }, activeFloor != null);
@@ -483,186 +469,126 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUILayout.EndArea();
         }
 
-        private void DrawFloorLevelViewButton(string label, FloorLevelView view)
+        private void DrawFloorCategoryButton(FloorCategory category, string label)
         {
-            var buttonStyle = selectedFloorLevelView == view ? activeToolButtonStyle : GUI.skin.button;
-            if (GUILayout.Button(label, buttonStyle, GUILayout.Height(28f), GUILayout.Width(82f)))
+            var isSelected = selectedFloorCategory == category;
+            var style = isSelected ? activeToolButtonStyle : GUI.skin.button;
+            var labelContent = new GUIContent(label);
+            var buttonWidth = Mathf.Max(70f, style.CalcSize(labelContent).x + 12f);
+            if (GUILayout.Button(labelContent, style, GUILayout.Width(buttonWidth), GUILayout.Height(28f)))
             {
-                selectedFloorLevelView = view;
+                selectedFloorCategory = category;
+                floorTabsScrollPosition = Vector2.zero;
             }
         }
 
-        private System.Collections.Generic.IEnumerable<SandboxFloorTabEntry> GetVisibleFloorTabs()
+        private float ResolveNewFloorElevation()
         {
-            var floorTabs = floorTabsBarShell?.FloorTabs ?? Array.Empty<SandboxFloorTabEntry>();
-            return selectedFloorLevelView switch
-            {
-                FloorLevelView.Surface => floorTabs.Where(tab => tab.elevation >= 0f),
-                FloorLevelView.Basement => floorTabs.Where(tab => tab.elevation < 0f),
-                _ => floorTabs
-            };
-        }
+            const float floorHeight = 3f;
 
-        private static string BuildFloorTabLabel(SandboxFloorTabEntry tab)
-        {
-            if (tab == null)
+            if (selectedFloorCategory != FloorCategory.Basement)
             {
-                return "Floor";
+                return 0f;
             }
 
-            return tab.elevation < 0f ? $"{tab.name} ↓" : tab.name;
+            var lowestBasementElevation = floorTabsBarShell?.FloorTabs?
+                .Where(tab => tab.elevation < 0f)
+                .Select(tab => tab.elevation)
+                .DefaultIfEmpty(0f)
+                .Min() ?? 0f;
+
+            return lowestBasementElevation - floorHeight;
         }
 
-        // Press/drag disambiguation for the level tabs. Runs before the tab buttons are drawn so a
-        // press over a tab can be consumed here; a quick tap selects, a drag past the threshold
-        // reorders. All coordinates are local to the floor-tabs GUI area.
-        private void ProcessFloorTabReorderEvents()
+        private IReadOnlyList<SandboxFloorTabEntry> GetVisibleFloorTabs()
         {
             if (floorTabsBarShell?.FloorTabs == null)
             {
-                if (hasPendingFloorTabPress)
-                {
-                    ClearFloorTabDragState();
-                }
+                return Array.Empty<SandboxFloorTabEntry>();
+            }
 
+            return floorTabsBarShell.FloorTabs
+                .Where(tab => IsFloorVisibleInCategory(tab))
+                .ToList();
+        }
+
+        private bool IsFloorVisibleInCategory(SandboxFloorTabEntry tab)
+        {
+            return selectedFloorCategory switch
+            {
+                FloorCategory.Surface => tab.elevation >= 0f || Mathf.Approximately(tab.elevation, 0f),
+                FloorCategory.Basement => tab.elevation < 0f,
+                _ => true,
+            };
+        }
+
+        private void DrawWrappedFloorTabs(IReadOnlyList<SandboxFloorTabEntry> visibleTabs, float availableWidth)
+        {
+            var buttonStyle = GUI.skin?.button ?? GUIStyle.none;
+            var activeButtonStyle = activeToolButtonStyle ?? buttonStyle;
+            var x = 0f;
+            var y = 0f;
+            var rowHeight = 32f;
+            var spacing = 6f;
+
+            if (visibleTabs.Count == 0)
+            {
+                GUI.Label(new Rect(0f, 0f, Mathf.Max(140f, availableWidth), 24f), "No floors in this category.", bodyStyle);
                 return;
             }
 
-            var e = Event.current;
-            switch (e.type)
+            for (var index = 0; index < visibleTabs.Count; index += 1)
             {
-                case EventType.MouseDown when e.button == 0 && !hasPendingFloorTabPress:
-                    foreach (var entry in floorTabRects)
-                    {
-                        if (!entry.Value.Contains(e.mousePosition))
-                        {
-                            continue;
-                        }
+                var tab = visibleTabs[index];
+                var style = tab.isActive ? activeButtonStyle : buttonStyle;
+                var label = new GUIContent(tab.name);
+                var size = style.CalcSize(label);
+                var buttonWidth = Mathf.Clamp(size.x + 26f, 72f, Mathf.Max(72f, availableWidth));
 
-                        hasPendingFloorTabPress = true;
-                        isFloorTabDragActive = false;
-                        draggedFloorTabId = entry.Key;
-                        floorTabPressPoint = e.mousePosition;
-                        floorTabGhostLabel = ResolveFloorTabLabel(entry.Key);
-                        e.Use();
-                        break;
-                    }
-
-                    break;
-
-                case EventType.MouseDrag when hasPendingFloorTabPress:
-                    if (!isFloorTabDragActive &&
-                        Vector2.Distance(e.mousePosition, floorTabPressPoint) >= FloorTabDragThresholdPixels)
-                    {
-                        isFloorTabDragActive = true;
-                    }
-
-                    if (isFloorTabDragActive)
-                    {
-                        floorTabGhostPosition = e.mousePosition;
-                    }
-
-                    e.Use();
-                    break;
-
-                case EventType.MouseUp when hasPendingFloorTabPress && e.button == 0:
-                    if (isFloorTabDragActive)
-                    {
-                        CommitFloorTabReorder(e.mousePosition);
-                    }
-                    else
-                    {
-                        floorTabsBarShell.SelectFloor(draggedFloorTabId);
-                    }
-
-                    ClearFloorTabDragState();
-                    e.Use();
-                    break;
-
-                case EventType.MouseDown when e.button == 1 && hasPendingFloorTabPress:
-                case EventType.KeyDown when e.keyCode == KeyCode.Escape && hasPendingFloorTabPress:
-                    ClearFloorTabDragState();
-                    e.Use();
-                    break;
-            }
-        }
-
-        private void CommitFloorTabReorder(Vector2 dropPosition)
-        {
-            if (floorTabsBarShell?.FloorTabs == null || string.IsNullOrEmpty(draggedFloorTabId))
-            {
-                return;
-            }
-
-            // Drop onto whichever visible tab's center is horizontally closest to the cursor.
-            var targetFloorId = string.Empty;
-            var bestDx = float.MaxValue;
-            foreach (var entry in floorTabRects)
-            {
-                var dx = Mathf.Abs(entry.Value.center.x - dropPosition.x);
-                if (dx < bestDx)
+                if (x > 0f && x + buttonWidth > availableWidth)
                 {
-                    bestDx = dx;
-                    targetFloorId = entry.Key;
+                    x = 0f;
+                    y += rowHeight + spacing;
                 }
-            }
 
-            if (string.IsNullOrEmpty(targetFloorId) || targetFloorId == draggedFloorTabId)
-            {
-                return;
-            }
-
-            var tabs = floorTabsBarShell.FloorTabs;
-            for (var i = 0; i < tabs.Count; i++)
-            {
-                if (tabs[i].floorId == targetFloorId)
+                var buttonRect = new Rect(x, y, buttonWidth, rowHeight);
+                if (GUI.Button(buttonRect, label, style))
                 {
-                    floorTabsBarShell.ReorderFloor(draggedFloorTabId, i);
-                    return;
+                    floorTabsBarShell?.SelectFloor(tab.floorId);
                 }
+
+                x += buttonWidth + spacing;
             }
         }
 
-        private string ResolveFloorTabLabel(string floorId)
+        private float CalculateFloorTabsContentHeight(IReadOnlyList<SandboxFloorTabEntry> visibleTabs, float availableWidth)
         {
-            var tabs = floorTabsBarShell?.FloorTabs;
-            if (tabs == null)
+            if (visibleTabs.Count == 0)
             {
-                return "Floor";
+                return 32f;
             }
 
-            for (var i = 0; i < tabs.Count; i++)
+            var buttonStyle = GUI.skin?.button ?? GUIStyle.none;
+            var rowHeight = 32f;
+            var spacing = 6f;
+            var x = 0f;
+            var rows = 1;
+
+            for (var index = 0; index < visibleTabs.Count; index += 1)
             {
-                if (tabs[i].floorId == floorId)
+                var tab = visibleTabs[index];
+                var size = buttonStyle.CalcSize(new GUIContent(tab.name));
+                var buttonWidth = Mathf.Clamp(size.x + 26f, 72f, Mathf.Max(72f, availableWidth));
+                if (x > 0f && x + buttonWidth > availableWidth)
                 {
-                    return BuildFloorTabLabel(tabs[i]);
+                    rows += 1;
+                    x = 0f;
                 }
+
+                x += buttonWidth + spacing;
             }
 
-            return "Floor";
-        }
-
-        private void ClearFloorTabDragState()
-        {
-            hasPendingFloorTabPress = false;
-            isFloorTabDragActive = false;
-            draggedFloorTabId = string.Empty;
-            floorTabGhostLabel = string.Empty;
-        }
-
-        private void DrawFloorTabGhost()
-        {
-            if (!isFloorTabDragActive || Event.current.type != EventType.Repaint)
-            {
-                return;
-            }
-
-            var ghostRect = new Rect(floorTabGhostPosition.x - 45f, floorTabGhostPosition.y - 14f, 90f, 28f);
-            var previousColor = GUI.color;
-            GUI.color = new Color(0.4f, 0.62f, 0.95f, 0.5f);
-            GUI.DrawTexture(ghostRect, Texture2D.whiteTexture);
-            GUI.color = previousColor;
-            GUI.Label(ghostRect, floorTabGhostLabel, activeToolButtonStyle ?? GUI.skin.button);
+            return (rows * rowHeight) + ((rows - 1) * spacing);
         }
 
         private void DrawInspector()
@@ -2415,8 +2341,9 @@ namespace EvacLogix.Sandbox.UI.Panels
             var logicalScreenWidth = Screen.width / uiScale;
             var logicalScreenHeight = Screen.height / uiScale;
             var topBarHeight = topBarCollapsed ? CollapsedPanelHeight : 110f;
-            var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : 92f;
-            var statusBarHeight = statusBarCollapsed ? CollapsedPanelHeight : 72f;
+            var floorTabsAvailableHeight = Mathf.Max(CollapsedPanelHeight, logicalScreenHeight - topBarHeight - (margin * 4f) - 58f);
+            var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : Mathf.Min(220f, floorTabsAvailableHeight);
+            var statusBarHeight = statusBarCollapsed ? CollapsedPanelHeight : 58f;
             var toolWidth = 180f;
             var inspectorWidth = 340f;
 
