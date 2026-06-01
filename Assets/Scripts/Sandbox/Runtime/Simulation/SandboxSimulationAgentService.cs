@@ -37,8 +37,38 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private const float EscapeWindowExteriorClearanceBuffer = 0.8f;
         private const float ImpassableThreshold = 0.99f;
         private const float FireRoutePenaltyWeight = 10f;
+        private const float FireNodePenaltyWeight = 14f;
+        private const float ExitPenaltyWeight = 18f;
+        private const float SevereHazardRepathThreshold = 0.92f;
         private const float CongestionAvoidanceRadius = 1.5f;
         private const float CongestionRoutePenaltyWeight = 4f;
+        // An agent only abandons its current target if an alternative beats it by more than this margin,
+        // so a crowd doesn't oscillate between two exits each repath (herd flip-flop).
+        private const float CongestionHysteresisMargin = 6f;
+        // Fixed seed makes per-agent avoidance priorities (and therefore the run) reproducible.
+        private const int AvoidanceSeed = 12345;
+
+        // Deadlock recovery ("agents realize this isn't working"). Frustration rises while an agent
+        // fails to close on its goal and decays while it advances. Crossing multiples of a per-agent
+        // (seeded-random) threshold escalates: yield priority -> back off and retry -> reroute away.
+        private readonly Dictionary<string, float> frustrationByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> lastGoalDistanceByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> frustrationThresholdByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> basePriorityByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> retreatTimerByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> avoidedNodeByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> avoidTimerByAgent = new(StringComparer.Ordinal);
+        private const float FrustrationThresholdMin = 2.5f;
+        private const float FrustrationThresholdMax = 4f;
+        private const float FrustrationDecayMultiplier = 2f;
+        private const float ProgressEpsilon = 0.05f;
+        private const float BackoffFrustrationMultiplier = 2f;
+        private const float RerouteFrustrationMultiplier = 3f;
+        private const float RetreatHoldMin = 0.5f;
+        private const float RetreatHoldMax = 1.5f;
+        private const float RetreatHopDistance = 1f;
+        private const int YieldAvoidancePriority = 90;
+        private const float RerouteAvoidCooldown = 5f;
 
         private BuildingProjectData project;
         private SandboxFloorLayoutService layoutService;
@@ -252,7 +282,6 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             agents.Clear();
             resolvedAgentIds.Clear();
             agentTargets.Clear();
-            agentCountByNode.Clear();
             frustrationByAgent.Clear();
             lastGoalDistanceByAgent.Clear();
             frustrationThresholdByAgent.Clear();
@@ -371,11 +400,34 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 }
 
                 var world = placement.ToWorld(node.localPosition);
+                var costToSafe = GetDynamicCostToSafe(node);
+                if (float.IsInfinity(costToSafe))
+                {
+                    continue;
+                }
+
                 var total = Vector2.Distance(position, world) +
-                            node.costToSafe +
+                            costToSafe +
                             GetFireRoutePenalty(agent.FloorId, placement, position, world) +
                             GetCongestionRoutePenalty(agent, position, world);
-                if (total < bestCost)
+
+                // Hysteresis: discount the node the agent is already committed to so it only switches
+                // when an alternative is better by more than the margin (prevents herd flip-flop).
+                var comparison = total;
+                if (currentTargetId != null && string.Equals(node.nodeId, currentTargetId, StringComparison.Ordinal))
+                {
+                    comparison -= CongestionHysteresisMargin;
+                }
+
+                if (comparison < fallbackCost)
+                {
+                    fallbackCost = comparison;
+                    fallback = node;
+                    fallbackWorld = world;
+                }
+
+                var isAvoided = avoidedNodeId != null && string.Equals(node.nodeId, avoidedNodeId, StringComparison.Ordinal);
+                if (!isAvoided && comparison < bestCost)
                 {
                     bestCost = comparison;
                     best = node;
@@ -1012,77 +1064,6 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             agent.SetSpeedMultiplier(multiplier);
         }
 
-        // Bins every active agent into the nearest in-range floor node once per frame, so routing can
-        // look up how many agents are clustered at each candidate node in O(1).
-        private void RefreshCongestionCounts()
-        {
-            agentCountByNode.Clear();
-            for (var i = 0; i < agents.Count; i += 1)
-            {
-                var agent = agents[i];
-                if (agent == null || resolvedAgentIds.Contains(agent.AgentId) ||
-                    !layoutService.TryGetPlacement(agent.FloorId, out var placement))
-                {
-                    continue;
-                }
-
-                // A retreating agent has conceded the bottleneck; don't let it inflate the very
-                // congestion count that's pushing others away from it.
-                if (retreatTimerByAgent.TryGetValue(agent.AgentId, out var retreat) && retreat > 0f)
-                {
-                    continue;
-                }
-
-                var floorNodes = routeGraph.GetFloorNodes(agent.FloorId);
-                if (floorNodes == null || floorNodes.Count == 0)
-                {
-                    continue;
-                }
-
-                var position = agent.CurrentWorldPosition;
-                string nearestId = null;
-                var nearestDistance = float.MaxValue;
-                var nearestInfluence = 0f;
-                for (var n = 0; n < floorNodes.Count; n += 1)
-                {
-                    var node = floorNodes[n];
-                    var distance = Vector2.Distance(position, placement.ToWorld(node.localPosition));
-                    if (distance < nearestDistance)
-                    {
-                        nearestDistance = distance;
-                        nearestId = node.nodeId;
-                        nearestInfluence = GetNodeHazardRadius(node) + CongestionInfluenceBand;
-                    }
-                }
-
-                if (nearestId != null && nearestDistance <= nearestInfluence)
-                {
-                    agentCountByNode.TryGetValue(nearestId, out var count);
-                    agentCountByNode[nearestId] = count + 1;
-                }
-            }
-        }
-
-        // How many agents a node can absorb before it counts as crowded, derived from its opening width
-        // (wider exits/portals take more before they jam).
-        private float GetNodeCapacity(SandboxBuildingRouteGraph.RouteNode node)
-        {
-            return Mathf.Max(CongestionMinCapacity, GetNodeHazardRadius(node) * CongestionCapacityPerUnitRadius);
-        }
-
-        // Extra routing cost for crowding above a node's capacity; 0 until the node is over capacity so
-        // agents still use a busy-but-flowing exit rather than fleeing every populated one.
-        private float GetCongestionPenalty(SandboxBuildingRouteGraph.RouteNode node)
-        {
-            if (node == null || !agentCountByNode.TryGetValue(node.nodeId, out var count) || count <= 0)
-            {
-                return 0f;
-            }
-
-            var over = count - GetNodeCapacity(node);
-            return over <= 0f ? 0f : over * CongestionWeight;
-        }
-
         private static bool IsPointInsideRotatedRect(Vector2 worldPoint, Vector2 center, Vector2 size, float rotationDegrees)
         {
             var radians = -rotationDegrees * Mathf.Deg2Rad;
@@ -1140,19 +1121,6 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             start = center - (normalized * halfWidth);
             end = center + (normalized * halfWidth);
             return true;
-        }
-
-        private static float DistancePointToSegment(Vector2 point, Vector2 start, Vector2 end)
-        {
-            var segment = end - start;
-            var lengthSquared = segment.sqrMagnitude;
-            if (lengthSquared <= 0.0001f)
-            {
-                return Vector2.Distance(point, start);
-            }
-
-            var t = Mathf.Clamp01(Vector2.Dot(point - start, segment) / lengthSquared);
-            return Vector2.Distance(point, start + (segment * t));
         }
 
         private bool ShouldSkipNodeForAgent(SandboxEvacueeAgent agent, SandboxBuildingRouteGraph.RouteNode node)
