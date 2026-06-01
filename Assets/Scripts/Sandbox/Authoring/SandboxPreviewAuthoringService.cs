@@ -516,38 +516,42 @@ namespace EvacLogix.Sandbox.Authoring
         private bool TryValidateSpawnPointPlacement(FloorData floor, Vector2 position, out string failureMessage)
         {
             failureMessage = string.Empty;
-            if (!HasSpawnAccessPoints(floor))
+            if (!HasSpawnExits(floor))
             {
-                failureMessage = "Spawn points require at least one exit or window on the floor.";
-                return false;
-            }
-
-            if (roomDetectionService == null || !roomDetectionService.IsPointInsideCompleteRoom(floor.floorId, position))
-            {
-                failureMessage = "Spawn points must be placed inside a detected room.";
+                failureMessage = "Add at least one exit before placing spawns.";
                 return false;
             }
 
             return true;
         }
 
-        private static bool HasSpawnAccessPoints(FloorData floor)
+        // Spawns need an evacuation goal somewhere in the PROJECT, not on the spawn's own floor —
+        // agents can reach exits on other floors via stair/teleport portals during the simulation.
+        private bool HasSpawnExits(FloorData floor)
         {
-            return floor != null && (floor.exits.Count > 0 || floor.windows.Count > 0);
+            var project = workspaceService?.ActiveProject;
+            if (project?.floors == null)
+            {
+                return floor != null && floor.exits.Count > 0;
+            }
+
+            for (var i = 0; i < project.floors.Count; i += 1)
+            {
+                if (project.floors[i].exits.Count > 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private bool TryValidateSpawnPointBrushPlacement(FloorData floor, IReadOnlyList<Vector2> polygonPoints, out string failureMessage)
         {
             failureMessage = string.Empty;
-            if (!HasSpawnAccessPoints(floor))
+            if (!HasSpawnExits(floor))
             {
-                failureMessage = "Spawn point brushes require at least one exit or window on the floor.";
-                return false;
-            }
-
-            if (roomDetectionService == null || !roomDetectionService.ArePointsInsideCompleteRooms(floor.floorId, polygonPoints))
-            {
-                failureMessage = "Spawn point brushes must stay inside detected rooms.";
+                failureMessage = "Add at least one exit before placing spawns.";
                 return false;
             }
 

@@ -13,6 +13,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
     // Time.timeScale, and the controller calls UpdateAgents each frame.
     public sealed class SandboxSimulationAgentService : MonoBehaviour
     {
+        private const float SimulationGridFallbackSize = 0.5f;
         [SerializeField] private SandboxAgentProfile profile;
         [SerializeField] private string agentRootName = "SimAgentRoot";
 
@@ -23,6 +24,9 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private readonly Dictionary<string, int> casualtiesByFloor = new(StringComparer.Ordinal);
         private readonly SandboxBuildingRouteGraph routeGraph = new();
         private readonly Dictionary<string, SandboxBuildingRouteGraph.RouteNode> agentTargets = new(StringComparer.Ordinal);
+        private readonly HashSet<string> agentsThatUsedEscapeWindow = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, HashSet<string>> failedWindowNodesByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> dynamicCostToSafeByNode = new(StringComparer.Ordinal);
 
         // After teleporting onto a portal endpoint, that endpoint is blocked for the agent (it won't
         // route through it again) until the agent moves beyond the portal footprint + this margin.
@@ -30,8 +34,49 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         // linked portals can never thrash an agent back and forth in place.
         private readonly Dictionary<string, string> blockedPortalByAgent = new(StringComparer.Ordinal);
         private const float PortalClearMargin = 0.75f;
+        private const float EscapeWindowExteriorClearanceBuffer = 0.8f;
         private const float ImpassableThreshold = 0.99f;
-        private const float FireRoutePenaltyWeight = 10f;
+        private const float FireRoutePenaltyWeight = 11f;
+        private const float FireNodePenaltyWeight = 14f;
+        private const float ExitPenaltyWeight = 18f;
+        private const float SevereHazardRepathThreshold = 0.92f;
+
+        // Congestion (type-A route-level avoidance): each repath inflates a candidate node's cost by how
+        // crowded it is beyond its capacity, so jammed exits/portals shed agents toward alternatives.
+        // Counts are binned once per frame (active agents -> nearest in-range floor node) and looked up
+        // O(1) during routing, mirroring the dynamicCostToSafe cache pattern.
+        private readonly Dictionary<string, int> agentCountByNode = new(StringComparer.Ordinal);
+        private const float CongestionWeight = 4f;
+        private const float CongestionInfluenceBand = 2.5f;
+        private const float CongestionCapacityPerUnitRadius = 4f;
+        private const float CongestionMinCapacity = 3f;
+        // An agent only abandons its current target if an alternative beats it by more than this margin,
+        // so a crowd doesn't oscillate between two exits each repath (herd flip-flop).
+        private const float CongestionHysteresisMargin = 6f;
+        // Fixed seed makes per-agent avoidance priorities (and therefore the run) reproducible.
+        private const int AvoidanceSeed = 12345;
+
+        // Deadlock recovery ("agents realize this isn't working"). Frustration rises while an agent
+        // fails to close on its goal and decays while it advances. Crossing multiples of a per-agent
+        // (seeded-random) threshold escalates: yield priority -> back off and retry -> reroute away.
+        private readonly Dictionary<string, float> frustrationByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> lastGoalDistanceByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> frustrationThresholdByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> basePriorityByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> retreatTimerByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> avoidedNodeByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> avoidTimerByAgent = new(StringComparer.Ordinal);
+        private const float FrustrationThresholdMin = 2.5f;
+        private const float FrustrationThresholdMax = 4f;
+        private const float FrustrationDecayMultiplier = 2f;
+        private const float ProgressEpsilon = 0.05f;
+        private const float BackoffFrustrationMultiplier = 2f;
+        private const float RerouteFrustrationMultiplier = 3f;
+        private const float RetreatHoldMin = 0.5f;
+        private const float RetreatHoldMax = 1.5f;
+        private const float RetreatHopDistance = 1f;
+        private const int YieldAvoidancePriority = 90;
+        private const float RerouteAvoidCooldown = 5f;
 
         private BuildingProjectData project;
         private SandboxFloorLayoutService layoutService;
@@ -40,6 +85,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private GameObject agentRoot;
         private Sprite agentSprite;
         private Texture2D agentTexture;
+        private int cachedHazardRevision = -1;
 
         public IReadOnlyList<SandboxEvacueeAgent> Agents => agents;
         public int TotalAgents { get; private set; }
@@ -69,8 +115,13 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 floorsById[floor.floorId] = floor;
             }
 
+            RefreshDynamicRoutingCache(force: true);
+
             EnsureAgentRoot();
             var cap = Mathf.Max(1, agentCap);
+
+            // Seed the priority RNG so the spawn order -> priority assignment (and thus the run) repeats.
+            UnityEngine.Random.InitState(AvoidanceSeed);
 
             foreach (var layout in project.spawnLayouts)
             {
@@ -107,6 +158,8 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         // is the NavMeshAgent's job; here we handle repath, exit arrival, and casualty resolution.
         public void UpdateAgents(float deltaTime)
         {
+            RefreshDynamicRoutingCache();
+            RefreshCongestionCounts();
             for (var i = 0; i < agents.Count; i += 1)
             {
                 var agent = agents[i];
@@ -116,8 +169,11 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 }
 
                 ReleasePortalBlockIfCleared(agent);
+                TickAvoidCooldown(agent, deltaTime);
 
-                if (agent.NeedsRepath())
+                var retreating = UpdateRecovery(agent, deltaTime);
+
+                if (!retreating && (ShouldForceHazardRepath(agent) || agent.NeedsRepath()))
                 {
                     RouteAgent(agent);
                 }
@@ -131,11 +187,18 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                     continue;
                 }
 
-                if (agent.IsAtDestination() && agentTargets.TryGetValue(agent.AgentId, out var target))
+                if (!retreating && agentTargets.TryGetValue(agent.AgentId, out var target) && HasReachedTarget(agent, target))
                 {
                     if (target.isExit)
                     {
-                        ResolveEvacuated(agent, target.objectId);
+                        if (IsNodeBlockedByHazard(target))
+                        {
+                            RouteAgent(agent);
+                        }
+                        else
+                        {
+                            ResolveEvacuated(agent, target.objectId);
+                        }
                     }
                     else if (target.isEscapeWindow)
                     {
@@ -143,10 +206,76 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                     }
                     else
                     {
-                        TeleportThroughPortal(agent, target);
+                        if (IsNodeBlockedByHazard(target))
+                        {
+                            RouteAgent(agent);
+                        }
+                        else
+                        {
+                            TeleportThroughPortal(agent, target);
+                        }
                     }
                 }
             }
+        }
+
+        private bool HasReachedTarget(SandboxEvacueeAgent agent, SandboxBuildingRouteGraph.RouteNode target)
+        {
+            if (agent == null || target == null)
+            {
+                return false;
+            }
+
+            if (!floorsById.TryGetValue(target.floorId, out var floor) || !layoutService.TryGetPlacement(target.floorId, out var placement))
+            {
+                return agent.IsAtDestination();
+            }
+
+            var agentPosition = agent.CurrentWorldPosition;
+            var agentRadius = Mathf.Max(0.01f, agent.Radius);
+            if (target.isExit)
+            {
+                var exitZone = floor.exits.Find(candidate => string.Equals(candidate.exitZoneId, target.objectId, StringComparison.Ordinal));
+                return exitZone != null &&
+                       IsCircleTouchingRotatedRect(agentPosition, agentRadius, placement.ToWorld(exitZone.center), exitZone.size, exitZone.rotationDegrees);
+            }
+
+            if (target.isEscapeWindow)
+            {
+                var window = floor.windows.Find(candidate => string.Equals(candidate.windowId, target.objectId, StringComparison.Ordinal));
+                if (window == null || !TryResolveOpeningSegment(floor, window.wallSegmentId, window.offsetAlongWall, window.width, out var start, out var end))
+                {
+                    return agent.IsAtDestination();
+                }
+
+                var worldStart = placement.ToWorld(start);
+                var worldEnd = placement.ToWorld(end);
+                return DistancePointToSegment(agentPosition, worldStart, worldEnd) <= agentRadius;
+            }
+
+            var stairPortal = floor.stairPortals.Find(candidate => string.Equals(candidate.stairPortalId, target.objectId, StringComparison.Ordinal));
+            if (stairPortal != null)
+            {
+                return IsCircleTouchingRotatedRect(
+                    agentPosition,
+                    agentRadius,
+                    placement.ToWorld(stairPortal.localPosition),
+                    stairPortal.size,
+                    stairPortal.rotationDegrees);
+            }
+
+            var teleportPortal = floor.teleportPortals.Find(candidate => string.Equals(candidate.teleportPortalId, target.objectId, StringComparison.Ordinal));
+            if (teleportPortal != null)
+            {
+                return IsCircleTouchingRotatedRect(
+                    agentPosition,
+                    agentRadius,
+                    placement.ToWorld(teleportPortal.localPosition),
+                    teleportPortal.size,
+                    teleportPortal.rotationDegrees);
+            }
+
+            return agent.IsAtDestination();
         }
 
         public void Stop()
@@ -171,7 +300,17 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             agents.Clear();
             resolvedAgentIds.Clear();
             agentTargets.Clear();
+            agentCountByNode.Clear();
+            frustrationByAgent.Clear();
+            lastGoalDistanceByAgent.Clear();
+            frustrationThresholdByAgent.Clear();
+            basePriorityByAgent.Clear();
+            retreatTimerByAgent.Clear();
+            avoidedNodeByAgent.Clear();
+            avoidTimerByAgent.Clear();
             blockedPortalByAgent.Clear();
+            agentsThatUsedEscapeWindow.Clear();
+            failedWindowNodesByAgent.Clear();
             exitUsage.Clear();
             evacuatedByFloor.Clear();
             casualtiesByFloor.Clear();
@@ -197,6 +336,11 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
 
             var agent = agentObject.AddComponent<SandboxEvacueeAgent>();
             agent.Configure(GetProfile(), $"sim-agent-{agents.Count:D4}", floorId, worldPosition, 0f);
+            var profileForPriority = GetProfile();
+            var basePriority = UnityEngine.Random.Range(profileForPriority.AvoidancePriorityMin, profileForPriority.AvoidancePriorityMax + 1);
+            agent.SetAvoidancePriority(basePriority);
+            basePriorityByAgent[agent.AgentId] = basePriority;
+            frustrationThresholdByAgent[agent.AgentId] = UnityEngine.Random.Range(FrustrationThresholdMin, FrustrationThresholdMax);
             agents.Add(agent);
             RouteAgent(agent);
         }
@@ -249,35 +393,73 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
 
             blockedPortalByAgent.TryGetValue(agent.AgentId, out var blockedNodeId);
+            avoidedNodeByAgent.TryGetValue(agent.AgentId, out var avoidedNodeId);
+            agentTargets.TryGetValue(agent.AgentId, out var currentTarget);
+            var currentTargetId = currentTarget?.nodeId;
 
             var floorNodes = routeGraph.GetFloorNodes(agent.FloorId);
             var position = agent.CurrentWorldPosition;
+            // "best" respects the frustrated-reroute avoid entry; "fallback" ignores it, so a lone exit
+            // that's been blacklisted is still chosen rather than stranding the agent.
             SandboxBuildingRouteGraph.RouteNode best = null;
             var bestWorld = position;
             var bestCost = float.MaxValue;
+            SandboxBuildingRouteGraph.RouteNode fallback = null;
+            var fallbackWorld = position;
+            var fallbackCost = float.MaxValue;
             for (var i = 0; i < floorNodes.Count; i += 1)
             {
                 var node = floorNodes[i];
                 if (float.IsInfinity(node.costToSafe) ||
-                    (blockedNodeId != null && string.Equals(node.nodeId, blockedNodeId, StringComparison.Ordinal)))
+                    (blockedNodeId != null && string.Equals(node.nodeId, blockedNodeId, StringComparison.Ordinal)) ||
+                    ShouldSkipNodeForAgent(agent, node) ||
+                    IsNodeBlockedByHazard(node))
                 {
                     continue;
                 }
 
                 var world = placement.ToWorld(node.localPosition);
-                var total = Vector2.Distance(position, world) + node.costToSafe + GetFireRoutePenalty(agent.FloorId, placement, position, world);
-                if (total < bestCost)
+                var costToSafe = GetDynamicCostToSafe(node);
+                if (float.IsInfinity(costToSafe))
                 {
-                    bestCost = total;
+                    continue;
+                }
+
+                var total = Vector2.Distance(position, world) + costToSafe
+                    + GetFireRoutePenalty(agent.FloorId, placement, position, world)
+                    + GetCongestionPenalty(node);
+
+                // Hysteresis: discount the node the agent is already committed to so it only switches
+                // when an alternative is better by more than the margin (prevents herd flip-flop).
+                var comparison = total;
+                if (currentTargetId != null && string.Equals(node.nodeId, currentTargetId, StringComparison.Ordinal))
+                {
+                    comparison -= CongestionHysteresisMargin;
+                }
+
+                if (comparison < fallbackCost)
+                {
+                    fallbackCost = comparison;
+                    fallback = node;
+                    fallbackWorld = world;
+                }
+
+                var isAvoided = avoidedNodeId != null && string.Equals(node.nodeId, avoidedNodeId, StringComparison.Ordinal);
+                if (!isAvoided && comparison < bestCost)
+                {
+                    bestCost = comparison;
                     best = node;
                     bestWorld = world;
                 }
             }
 
-            if (best != null)
+            var chosen = best ?? fallback;
+            if (chosen != null)
             {
-                agentTargets[agent.AgentId] = best;
-                agent.SetDestination(best.objectId, bestWorld);
+                var chosenWorld = best != null ? bestWorld : fallbackWorld;
+                agentTargets[agent.AgentId] = chosen;
+                agent.SetDestination(chosen.objectId, chosenWorld);
+                lastGoalDistanceByAgent[agent.AgentId] = Vector2.Distance(position, chosenWorld);
                 return;
             }
 
@@ -287,7 +469,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             // back"), so it can never re-teleport without physically exiting the portal space.
             if (!string.IsNullOrWhiteSpace(blockedNodeId) &&
                 routeGraph.TryGetNode(blockedNodeId, out var blockedNode) &&
-                !float.IsInfinity(blockedNode.costToSafe))
+                !float.IsInfinity(GetDynamicCostToSafe(blockedNode)))
             {
                 agentTargets.Remove(agent.AgentId);
                 agent.SetDestination(string.Empty, ResolveStepOutPoint(placement, blockedNode));
@@ -313,6 +495,16 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 var distance = Vector2.Distance(position, world);
                 if (distance < bestSinkDistance)
                 {
+                    if (ShouldSkipNodeForAgent(agent, sinks[i]))
+                    {
+                        continue;
+                    }
+
+                    if (IsNodeBlockedByHazard(sinks[i]))
+                    {
+                        continue;
+                    }
+
                     bestSinkDistance = distance;
                     bestSink = sinks[i];
                     bestSinkWorld = world;
@@ -328,6 +520,146 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
 
             agentTargets.Remove(agent.AgentId);
             agent.ResetRepathTimer();
+        }
+
+        // Ages out an agent's temporary node blacklist (set by a frustrated reroute) so it can return to
+        // that node later if it becomes the best option again.
+        private void TickAvoidCooldown(SandboxEvacueeAgent agent, float deltaTime)
+        {
+            if (!avoidTimerByAgent.TryGetValue(agent.AgentId, out var remaining))
+            {
+                return;
+            }
+
+            remaining -= deltaTime;
+            if (remaining <= 0f)
+            {
+                avoidTimerByAgent.Remove(agent.AgentId);
+                avoidedNodeByAgent.Remove(agent.AgentId);
+            }
+            else
+            {
+                avoidTimerByAgent[agent.AgentId] = remaining;
+            }
+        }
+
+        // Deadlock recovery: tracks whether the agent is making headway and escalates when it isn't.
+        // Returns true while the agent is in a physical back-off retreat (caller suppresses normal
+        // repath/arrival handling so the retreat isn't immediately overwritten).
+        private bool UpdateRecovery(SandboxEvacueeAgent agent, float deltaTime)
+        {
+            var id = agent.AgentId;
+
+            // Already retreating: count down the hold, then reset and re-approach.
+            if (retreatTimerByAgent.TryGetValue(id, out var retreat) && retreat > 0f)
+            {
+                retreat -= deltaTime;
+                if (retreat <= 0f)
+                {
+                    retreatTimerByAgent.Remove(id);
+                    frustrationByAgent[id] = 0f;
+                    RestoreBasePriority(agent);
+                    RouteAgent(agent);
+                }
+                else
+                {
+                    retreatTimerByAgent[id] = retreat;
+                }
+
+                return true;
+            }
+
+            // No active target (just resolved/teleporting): nothing to be frustrated about.
+            if (!agentTargets.TryGetValue(id, out var target) || target == null)
+            {
+                frustrationByAgent[id] = 0f;
+                RestoreBasePriority(agent);
+                return false;
+            }
+
+            var goalDistance = Vector2.Distance(agent.CurrentWorldPosition, agent.CurrentDestination);
+            var threshold = frustrationThresholdByAgent.TryGetValue(id, out var t) ? t : FrustrationThresholdMin;
+            frustrationByAgent.TryGetValue(id, out var frustration);
+            var lastGoalDistance = lastGoalDistanceByAgent.TryGetValue(id, out var last) ? last : goalDistance;
+
+            if (goalDistance < lastGoalDistance - ProgressEpsilon)
+            {
+                // Making progress: relax and track the closer distance.
+                frustration = Mathf.Max(0f, frustration - deltaTime * FrustrationDecayMultiplier);
+                lastGoalDistanceByAgent[id] = goalDistance;
+            }
+            else
+            {
+                frustration += deltaTime;
+                if (goalDistance < lastGoalDistance)
+                {
+                    lastGoalDistanceByAgent[id] = goalDistance;
+                }
+            }
+
+            frustrationByAgent[id] = frustration;
+
+            // Tier 3 — reroute: blacklist this target for a cooldown and pick another exit.
+            if (frustration >= threshold * RerouteFrustrationMultiplier)
+            {
+                if (!string.IsNullOrWhiteSpace(target.nodeId))
+                {
+                    avoidedNodeByAgent[id] = target.nodeId;
+                    avoidTimerByAgent[id] = RerouteAvoidCooldown;
+                }
+
+                frustrationByAgent[id] = 0f;
+                RestoreBasePriority(agent);
+                RouteAgent(agent);
+                return false;
+            }
+
+            // Tier 2 — back off: hop away from the bottleneck briefly, then re-approach.
+            if (frustration >= threshold * BackoffFrustrationMultiplier)
+            {
+                agent.SetDestination(string.Empty, ResolveRetreatPoint(agent));
+                retreatTimerByAgent[id] = UnityEngine.Random.Range(RetreatHoldMin, RetreatHoldMax);
+                return true;
+            }
+
+            // Tier 1 — yield: defer to neighbors so a symmetric standoff resolves in someone's favor.
+            if (frustration >= threshold)
+            {
+                agent.SetAvoidancePriority(YieldAvoidancePriority);
+            }
+            else
+            {
+                RestoreBasePriority(agent);
+            }
+
+            return false;
+        }
+
+        private void RestoreBasePriority(SandboxEvacueeAgent agent)
+        {
+            if (basePriorityByAgent.TryGetValue(agent.AgentId, out var basePriority))
+            {
+                agent.SetAvoidancePriority(basePriority);
+            }
+        }
+
+        // A point a short hop away from the agent's current goal, sampled onto the navmesh, used to step
+        // an agent out of a jam so the bottleneck can drain before it tries again.
+        private Vector2 ResolveRetreatPoint(SandboxEvacueeAgent agent)
+        {
+            var position = agent.CurrentWorldPosition;
+            var awayDirection = position - agent.CurrentDestination;
+            if (awayDirection.sqrMagnitude < 0.0001f)
+            {
+                awayDirection = UnityEngine.Random.insideUnitCircle;
+                if (awayDirection.sqrMagnitude < 0.0001f)
+                {
+                    awayDirection = Vector2.right;
+                }
+            }
+
+            var retreatWorld = position + (awayDirection.normalized * RetreatHopDistance);
+            return TrySampleNavWorldPosition(retreatWorld, agent.Radius, out var sampled) ? sampled : retreatWorld;
         }
 
         private void TeleportThroughPortal(SandboxEvacueeAgent agent, SandboxBuildingRouteGraph.RouteNode portalNode)
@@ -411,18 +743,31 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             agent.MarkExited();
         }
 
-        // Escaping through a window applies the fall injury; fatal heights (or injury that drops the
-        // agent) are casualties, otherwise the agent evacuates (counted under the window's id).
         private void ResolveWindowEscape(SandboxEvacueeAgent agent, SandboxBuildingRouteGraph.RouteNode node)
         {
+            if (agent == null || node == null)
+            {
+                return;
+            }
+
+            if (!TryResolveEscapeWindowLanding(agent, node, out var landingFloorId, out var landingWorldPosition))
+            {
+                MarkWindowFailedForAgent(agent, node.nodeId);
+                RouteAgent(agent);
+                return;
+            }
+
+            agentsThatUsedEscapeWindow.Add(agent.AgentId);
+            MarkWindowFailedForAgent(agent, node.nodeId);
+            agent.Relocate(landingFloorId, landingWorldPosition);
             agent.ApplyInjury(node.windowInjury);
-            if (node.windowFatal || agent.Health <= 0f)
+            if (agent.Health <= 0f)
             {
                 ResolveCasualty(agent);
             }
             else
             {
-                ResolveEvacuated(agent, node.objectId);
+                RouteAgent(agent);
             }
         }
 
@@ -434,26 +779,15 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 return 0f;
             }
 
-            var cells = fireSimulationService.ActiveFireCells;
-            var position = agent.CurrentWorldPosition;
             var radius = Mathf.Max(0.1f, GetProfile().FireDangerRadius);
-            var exposure = 0f;
-            for (var i = 0; i < cells.Count; i += 1)
+            var localPosition = agent.CurrentWorldPosition - placement.OriginOffset;
+            var hazard = fireSimulationService.SampleHazard(agent.FloorId, localPosition, radius);
+            if (hazard <= fireSimulationService.HazardDamageThreshold)
             {
-                var cell = cells[i];
-                if (!string.Equals(cell.floorId, agent.FloorId, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                var distance = Vector2.Distance(position, placement.ToWorld(cell.position));
-                if (distance < radius)
-                {
-                    exposure += (1f - (distance / radius)) * Mathf.Clamp01(cell.intensity);
-                }
+                return 0f;
             }
 
-            return exposure;
+            return Mathf.InverseLerp(fireSimulationService.HazardDamageThreshold, 1f, hazard);
         }
 
         // Routing deterrent: how much fire sits near the straight path to a candidate node, so agents
@@ -465,26 +799,187 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 return 0f;
             }
 
-            var cells = fireSimulationService.ActiveFireCells;
-            var midpoint = (from + to) * 0.5f;
             var radius = Mathf.Max(0.1f, GetProfile().FireDangerRadius);
             var penalty = 0f;
-            for (var i = 0; i < cells.Count; i += 1)
+            var peak = 0f;
+            const int samples = 5;
+            for (var i = 0; i < samples; i += 1)
             {
-                var cell = cells[i];
-                if (!string.Equals(cell.floorId, floorId, StringComparison.Ordinal))
+                var t = samples == 1 ? 0.5f : i / (float)(samples - 1);
+                var worldPoint = Vector2.Lerp(from, to, t);
+                var localPoint = worldPoint - placement.OriginOffset;
+                var hazard = fireSimulationService.SampleHazard(floorId, localPoint, radius);
+                peak = Mathf.Max(peak, hazard);
+                if (hazard <= fireSimulationService.HazardCostThreshold)
                 {
                     continue;
                 }
 
-                var distance = Vector2.Distance(midpoint, placement.ToWorld(cell.position));
-                if (distance < radius)
-                {
-                    penalty += (1f - (distance / radius)) * Mathf.Clamp01(cell.intensity) * FireRoutePenaltyWeight;
-                }
+                penalty += Mathf.InverseLerp(fireSimulationService.HazardCostThreshold, 1f, hazard) * FireRoutePenaltyWeight;
+            }
+
+            if (peak >= fireSimulationService.HazardImpassableThreshold)
+            {
+                penalty += 1000f;
             }
 
             return penalty;
+        }
+
+        private void RefreshDynamicRoutingCache(bool force = false)
+        {
+            var revision = fireSimulationService != null && fireSimulationService.SimulationActive
+                ? fireSimulationService.HazardRevision
+                : -1;
+            if (!force && revision == cachedHazardRevision)
+            {
+                return;
+            }
+
+            dynamicCostToSafeByNode.Clear();
+            if (project == null)
+            {
+                cachedHazardRevision = revision;
+                return;
+            }
+
+            var dynamicCosts = routeGraph.ComputeDynamicCostToSafe(GetNodeHazardPenalty, IsNodeBlockedByHazard);
+            foreach (var pair in dynamicCosts)
+            {
+                dynamicCostToSafeByNode[pair.Key] = pair.Value;
+            }
+
+            cachedHazardRevision = revision;
+        }
+
+        private float GetDynamicCostToSafe(SandboxBuildingRouteGraph.RouteNode node)
+        {
+            if (node == null)
+            {
+                return float.PositiveInfinity;
+            }
+
+            return dynamicCostToSafeByNode.TryGetValue(node.nodeId, out var cost) ? cost : node.costToSafe;
+        }
+
+        private float GetNodeHazardPenalty(SandboxBuildingRouteGraph.RouteNode node)
+        {
+            if (node == null || fireSimulationService == null || !fireSimulationService.SimulationActive)
+            {
+                return 0f;
+            }
+
+            var hazard = GetNodeHazard(node);
+            if (hazard <= fireSimulationService.HazardCostThreshold)
+            {
+                return 0f;
+            }
+
+            var basePenalty = Mathf.InverseLerp(fireSimulationService.HazardCostThreshold, 1f, hazard);
+            return basePenalty * (node.isExit ? ExitPenaltyWeight : FireNodePenaltyWeight);
+        }
+
+        private bool IsNodeBlockedByHazard(SandboxBuildingRouteGraph.RouteNode node)
+        {
+            if (node == null || fireSimulationService == null || !fireSimulationService.SimulationActive)
+            {
+                return false;
+            }
+
+            var hazard = GetNodeHazard(node);
+            var threshold = node.isExit
+                ? fireSimulationService.ExitUnusableThreshold
+                : fireSimulationService.ConnectorUnusableThreshold;
+            return hazard >= threshold;
+        }
+
+        private float GetNodeHazard(SandboxBuildingRouteGraph.RouteNode node)
+        {
+            if (node == null || fireSimulationService == null || !fireSimulationService.SimulationActive)
+            {
+                return 0f;
+            }
+
+            var radius = GetNodeHazardRadius(node);
+            var hazard = fireSimulationService.SampleHazard(node.floorId, node.localPosition, radius);
+            if (node.isEscapeWindow && !string.IsNullOrWhiteSpace(node.landingFloorId))
+            {
+                hazard = Mathf.Max(hazard, fireSimulationService.SampleHazard(node.landingFloorId, node.landingLocalPosition, radius));
+            }
+
+            return hazard;
+        }
+
+        private float GetNodeHazardRadius(SandboxBuildingRouteGraph.RouteNode node)
+        {
+            if (node == null)
+            {
+                return 0.5f;
+            }
+
+            if (node.isExit && floorsById.TryGetValue(node.floorId, out var floor))
+            {
+                var exitZone = floor.exits.Find(candidate => string.Equals(candidate.exitZoneId, node.objectId, StringComparison.Ordinal));
+                if (exitZone != null)
+                {
+                    return Mathf.Max(0.25f, Mathf.Max(exitZone.size.x, exitZone.size.y) * 0.5f);
+                }
+            }
+
+            if (node.footprintRadius > 0.01f)
+            {
+                return node.footprintRadius;
+            }
+
+            return 0.5f;
+        }
+
+        private bool ShouldForceHazardRepath(SandboxEvacueeAgent agent)
+        {
+            if (agent == null || fireSimulationService == null || !fireSimulationService.SimulationActive)
+            {
+                return false;
+            }
+
+            if (!agentTargets.TryGetValue(agent.AgentId, out var target) || target == null)
+            {
+                return false;
+            }
+
+            if (IsNodeBlockedByHazard(target))
+            {
+                return true;
+            }
+
+            if (!layoutService.TryGetPlacement(agent.FloorId, out var placement))
+            {
+                return false;
+            }
+
+            var localPosition = agent.CurrentWorldPosition - placement.OriginOffset;
+            var localTarget = target.floorId == agent.FloorId ? target.localPosition : localPosition;
+            var peak = GetPathHazardPeak(agent.FloorId, localPosition, localTarget);
+            return peak >= SevereHazardRepathThreshold;
+        }
+
+        private float GetPathHazardPeak(string floorId, Vector2 localFrom, Vector2 localTo)
+        {
+            if (fireSimulationService == null || !fireSimulationService.SimulationActive)
+            {
+                return 0f;
+            }
+
+            const int samples = 5;
+            var radius = Mathf.Max(0.1f, GetProfile().FireDangerRadius);
+            var peak = 0f;
+            for (var i = 0; i < samples; i += 1)
+            {
+                var t = samples == 1 ? 0.5f : i / (float)(samples - 1);
+                var localPoint = Vector2.Lerp(localFrom, localTo, t);
+                peak = Mathf.Max(peak, fireSimulationService.SampleHazard(floorId, localPoint, radius));
+            }
+
+            return peak;
         }
 
         // Slows an agent while it stands on a soft (non-impassable) obstacle, per its speed penalty.
@@ -511,6 +1006,77 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             agent.SetSpeedMultiplier(multiplier);
         }
 
+        // Bins every active agent into the nearest in-range floor node once per frame, so routing can
+        // look up how many agents are clustered at each candidate node in O(1).
+        private void RefreshCongestionCounts()
+        {
+            agentCountByNode.Clear();
+            for (var i = 0; i < agents.Count; i += 1)
+            {
+                var agent = agents[i];
+                if (agent == null || resolvedAgentIds.Contains(agent.AgentId) ||
+                    !layoutService.TryGetPlacement(agent.FloorId, out var placement))
+                {
+                    continue;
+                }
+
+                // A retreating agent has conceded the bottleneck; don't let it inflate the very
+                // congestion count that's pushing others away from it.
+                if (retreatTimerByAgent.TryGetValue(agent.AgentId, out var retreat) && retreat > 0f)
+                {
+                    continue;
+                }
+
+                var floorNodes = routeGraph.GetFloorNodes(agent.FloorId);
+                if (floorNodes == null || floorNodes.Count == 0)
+                {
+                    continue;
+                }
+
+                var position = agent.CurrentWorldPosition;
+                string nearestId = null;
+                var nearestDistance = float.MaxValue;
+                var nearestInfluence = 0f;
+                for (var n = 0; n < floorNodes.Count; n += 1)
+                {
+                    var node = floorNodes[n];
+                    var distance = Vector2.Distance(position, placement.ToWorld(node.localPosition));
+                    if (distance < nearestDistance)
+                    {
+                        nearestDistance = distance;
+                        nearestId = node.nodeId;
+                        nearestInfluence = GetNodeHazardRadius(node) + CongestionInfluenceBand;
+                    }
+                }
+
+                if (nearestId != null && nearestDistance <= nearestInfluence)
+                {
+                    agentCountByNode.TryGetValue(nearestId, out var count);
+                    agentCountByNode[nearestId] = count + 1;
+                }
+            }
+        }
+
+        // How many agents a node can absorb before it counts as crowded, derived from its opening width
+        // (wider exits/portals take more before they jam).
+        private float GetNodeCapacity(SandboxBuildingRouteGraph.RouteNode node)
+        {
+            return Mathf.Max(CongestionMinCapacity, GetNodeHazardRadius(node) * CongestionCapacityPerUnitRadius);
+        }
+
+        // Extra routing cost for crowding above a node's capacity; 0 until the node is over capacity so
+        // agents still use a busy-but-flowing exit rather than fleeing every populated one.
+        private float GetCongestionPenalty(SandboxBuildingRouteGraph.RouteNode node)
+        {
+            if (node == null || !agentCountByNode.TryGetValue(node.nodeId, out var count) || count <= 0)
+            {
+                return 0f;
+            }
+
+            var over = count - GetNodeCapacity(node);
+            return over <= 0f ? 0f : over * CongestionWeight;
+        }
+
         private static bool IsPointInsideRotatedRect(Vector2 worldPoint, Vector2 center, Vector2 size, float rotationDegrees)
         {
             var radians = -rotationDegrees * Mathf.Deg2Rad;
@@ -521,6 +1087,148 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             var localY = (delta.x * sin) + (delta.y * cos);
             var half = size * 0.5f;
             return Mathf.Abs(localX) <= half.x && Mathf.Abs(localY) <= half.y;
+        }
+
+        private static bool IsCircleTouchingRotatedRect(Vector2 circleCenter, float circleRadius, Vector2 rectCenter, Vector2 rectSize, float rotationDegrees)
+        {
+            var radians = -rotationDegrees * Mathf.Deg2Rad;
+            var cos = Mathf.Cos(radians);
+            var sin = Mathf.Sin(radians);
+            var delta = circleCenter - rectCenter;
+            var localX = (delta.x * cos) - (delta.y * sin);
+            var localY = (delta.x * sin) + (delta.y * cos);
+            var half = rectSize * 0.5f;
+            var clampedX = Mathf.Clamp(localX, -half.x, half.x);
+            var clampedY = Mathf.Clamp(localY, -half.y, half.y);
+            var dx = localX - clampedX;
+            var dy = localY - clampedY;
+            return (dx * dx) + (dy * dy) <= (circleRadius * circleRadius);
+        }
+
+        private bool TryResolveOpeningSegment(FloorData floor, string wallSegmentId, float offsetAlongWall, float authoredWidth, out Vector2 start, out Vector2 end)
+        {
+            start = Vector2.zero;
+            end = Vector2.zero;
+            if (floor == null)
+            {
+                return false;
+            }
+
+            var wall = floor.wallSegments.Find(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal));
+            if (wall == null)
+            {
+                return false;
+            }
+
+            var direction = wall.endPoint - wall.startPoint;
+            var length = direction.magnitude;
+            if (length <= 0.0001f)
+            {
+                return false;
+            }
+
+            var normalized = direction / length;
+            var center = wall.startPoint + (normalized * offsetAlongWall);
+            var worldWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(project, floor, authoredWidth, SimulationGridFallbackSize);
+            var halfWidth = Mathf.Max(0.01f, worldWidth) * 0.5f;
+            start = center - (normalized * halfWidth);
+            end = center + (normalized * halfWidth);
+            return true;
+        }
+
+        private static float DistancePointToSegment(Vector2 point, Vector2 start, Vector2 end)
+        {
+            var segment = end - start;
+            var lengthSquared = segment.sqrMagnitude;
+            if (lengthSquared <= 0.0001f)
+            {
+                return Vector2.Distance(point, start);
+            }
+
+            var t = Mathf.Clamp01(Vector2.Dot(point - start, segment) / lengthSquared);
+            return Vector2.Distance(point, start + (segment * t));
+        }
+
+        private bool ShouldSkipNodeForAgent(SandboxEvacueeAgent agent, SandboxBuildingRouteGraph.RouteNode node)
+        {
+            if (agent == null || node == null || !node.isEscapeWindow)
+            {
+                return false;
+            }
+
+            return agentsThatUsedEscapeWindow.Contains(agent.AgentId) || IsWindowFailedForAgent(agent.AgentId, node.nodeId);
+        }
+
+        private bool TryResolveEscapeWindowLanding(
+            SandboxEvacueeAgent agent,
+            SandboxBuildingRouteGraph.RouteNode node,
+            out string landingFloorId,
+            out Vector2 landingWorldPosition)
+        {
+            landingFloorId = string.Empty;
+            landingWorldPosition = Vector2.zero;
+            if (agent == null ||
+                node == null ||
+                string.IsNullOrWhiteSpace(node.landingFloorId) ||
+                !layoutService.TryGetPlacement(node.landingFloorId, out var landingPlacement))
+            {
+                return false;
+            }
+
+            var landingClearance = Mathf.Max(agent.Radius + EscapeWindowExteriorClearanceBuffer, 0.5f);
+            var landingLocalPoint = node.localPosition + (node.escapeOutwardNormal * landingClearance);
+            var projectedWorld = landingPlacement.ToWorld(landingLocalPoint);
+            if (!TrySampleNavWorldPosition(projectedWorld, agent.Radius, out var sampledWorldPosition))
+            {
+                return false;
+            }
+
+            if (!landingPlacement.WorldBounds.Contains(sampledWorldPosition))
+            {
+                return false;
+            }
+
+            landingFloorId = node.landingFloorId;
+            landingWorldPosition = sampledWorldPosition;
+            return true;
+        }
+
+        private static bool TrySampleNavWorldPosition(Vector2 worldPosition, float agentRadius, out Vector2 sampledWorldPosition)
+        {
+            sampledWorldPosition = worldPosition;
+            var navPosition = new Vector3(worldPosition.x, 0f, worldPosition.y);
+            var searchRadius = Mathf.Max(agentRadius + 2f, 2.5f);
+            if (!UnityEngine.AI.NavMesh.SamplePosition(navPosition, out var hit, searchRadius, UnityEngine.AI.NavMesh.AllAreas))
+            {
+                return false;
+            }
+
+            sampledWorldPosition = new Vector2(hit.position.x, hit.position.z);
+            return true;
+        }
+
+        private bool IsWindowFailedForAgent(string agentId, string nodeId)
+        {
+            return !string.IsNullOrWhiteSpace(agentId) &&
+                   !string.IsNullOrWhiteSpace(nodeId) &&
+                   failedWindowNodesByAgent.TryGetValue(agentId, out var failed) &&
+                   failed.Contains(nodeId);
+        }
+
+        private void MarkWindowFailedForAgent(SandboxEvacueeAgent agent, string nodeId)
+        {
+            if (agent == null || string.IsNullOrWhiteSpace(nodeId))
+            {
+                return;
+            }
+
+            if (!failedWindowNodesByAgent.TryGetValue(agent.AgentId, out var failed))
+            {
+                failed = new HashSet<string>(StringComparer.Ordinal);
+                failedWindowNodesByAgent[agent.AgentId] = failed;
+            }
+
+            failed.Add(nodeId);
         }
 
         private void EnsureAgentRoot()

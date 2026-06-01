@@ -12,6 +12,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private SandboxPreviewService previewService;
         private SandboxPreviewAuthoringService previewAuthoringService;
         private SandboxStatusBarShell statusBar;
+        private SandboxInputRouter inputRouter;
         private bool spawnPointBrushActive;
         private float spawnPointBrushTimer;
 
@@ -20,6 +21,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             previewService = FindAnyObjectByType<SandboxPreviewService>();
             previewAuthoringService = FindAnyObjectByType<SandboxPreviewAuthoringService>();
             statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
+            inputRouter = FindAnyObjectByType<SandboxInputRouter>();
         }
 
         private void Update()
@@ -46,7 +48,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void HandleFireOriginPlacement(Vector2 worldPoint)
         {
-            if (!SandboxInputAdapter.GetMouseButtonDown(0))
+            if (!ShouldHandlePreviewClick())
             {
                 return;
             }
@@ -68,7 +70,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void HandleSpawnPointPlacement(Vector2 worldPoint)
         {
-            if (!SandboxInputAdapter.GetMouseButtonDown(0))
+            if (!ShouldHandlePreviewClick())
             {
                 return;
             }
@@ -92,12 +94,12 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void HandleSpawnPointBrushPlacement(Vector2 worldPoint)
         {
-            if (SandboxInputAdapter.GetMouseButtonDown(0))
+            if (ShouldHandlePreviewClick())
             {
                 spawnPointBrushActive = true;
                 spawnPointBrushTimer = 0f;
                 TryPlaceSpawnPointBrushStamp(worldPoint);
-                UpdateStatus("Painting spawn point brush in an enclosed room.");
+                UpdateStatus("Painting spawn point brush.");
                 return;
             }
 
@@ -168,6 +170,25 @@ namespace EvacLogix.Sandbox.UI.Overlays
             {
                 statusBar.ShowNotice(message, true);
             }
+        }
+
+        private bool ShouldHandlePreviewClick()
+        {
+            if (!SandboxInputAdapter.GetMouseButtonDown(0) || previewService == null)
+            {
+                return false;
+            }
+
+            if (previewService.InteractionModeChangedFrame == Time.frameCount)
+            {
+                return false;
+            }
+
+            inputRouter ??= FindAnyObjectByType<SandboxInputRouter>();
+            var target = inputRouter != null
+                ? inputRouter.ResolvePointerTarget(SandboxInputAdapter.PointerScreenPosition)
+                : SandboxInputTarget.World;
+            return target == SandboxInputTarget.World || target == SandboxInputTarget.PreviewOverlay;
         }
     }
 }
