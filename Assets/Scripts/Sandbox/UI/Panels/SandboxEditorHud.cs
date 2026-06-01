@@ -729,10 +729,13 @@ namespace EvacLogix.Sandbox.UI.Panels
                     {
                         GUILayout.Label(topBarShell.PreviewSummary, bodyStyle);
                     }
+
+                    DrawSimulationRunReports();
                 }
                 else
                 {
                     GUILayout.Label("Enter preview mode from the top bar to place spawn points and run diagnostics.", bodyStyle);
+                    DrawSimulationRunReports();
                 }
             }
 
@@ -1102,6 +1105,43 @@ namespace EvacLogix.Sandbox.UI.Panels
                 string.Equals(candidate.wallJunctionId, junctionId, StringComparison.Ordinal));
             return junction != null && junction.connectedWallSegmentIds.Any(id =>
                 !string.Equals(id, wallSegmentId, StringComparison.Ordinal));
+        }
+
+        private void DrawSimulationRunReports()
+        {
+            if (topBarShell == null)
+            {
+                return;
+            }
+
+            var report = topBarShell.LastSimulationRunReport;
+            if (report?.summary == null || !report.summary.completedSuccessfully)
+            {
+                GUILayout.Label("Simulation Reports: Run a successful preview simulation to generate reports.", bodyStyle);
+                return;
+            }
+
+            GUILayout.Label(
+                $"Simulation Summary: {report.summary.evacuatedAgents} evacuated, {report.summary.injuredAgents} injured, {report.summary.deadAgents} dead.",
+                bodyStyle);
+
+            foreach (var floorOutcome in report.summary.floorOutcomes)
+            {
+                if (floorOutcome.spawnedAgents == 0 && floorOutcome.evacuatedAgents == 0 && floorOutcome.injuredAgents == 0 && floorOutcome.deadAgents == 0)
+                {
+                    continue;
+                }
+
+                GUILayout.Label(
+                    $"{floorOutcome.floorName}: {floorOutcome.evacuatedAgents} evacuated, {floorOutcome.injuredAgents} injured, {floorOutcome.deadAgents} dead.",
+                    bodyStyle);
+            }
+
+            GUILayout.Label($"Travel Density Heatmap: {report.travelDensity?.cells.Count ?? 0} occupied cells across floors.", bodyStyle);
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Export Summary", () => topBarShell.ExportSimulationSummaryReport(GetSimulationSummaryReportPath()), topBarShell.HasCompletedSimulationRunReport);
+            DrawActionButton("Export Heatmap", () => topBarShell.ExportSimulationTravelDensityHeatmapReport(GetSimulationHeatmapReportPath()), topBarShell.HasCompletedSimulationRunReport);
+            GUILayout.EndHorizontal();
         }
 
         private void DrawWallFields(WallSegmentData wall)
@@ -2637,6 +2677,16 @@ namespace EvacLogix.Sandbox.UI.Panels
         private string GetPreviewImagePath()
         {
             return Path.Combine(GetStorageDirectoryPath(), "sandbox-preview.png");
+        }
+
+        private string GetSimulationSummaryReportPath()
+        {
+            return Path.Combine(GetStorageDirectoryPath(), "simulation-summary-report.json");
+        }
+
+        private string GetSimulationHeatmapReportPath()
+        {
+            return Path.Combine(GetStorageDirectoryPath(), "simulation-travel-density-heatmap.json");
         }
 
         private static string GetToolLabel(SandboxToolMode toolMode)

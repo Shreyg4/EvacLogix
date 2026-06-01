@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
@@ -8,14 +9,81 @@ using UnityEngine.AI;
 
 namespace EvacLogix.Sandbox.Runtime
 {
+    [Serializable]
+    public sealed class SandboxSimulationFloorOutcomeData
+    {
+        public string floorId = string.Empty;
+        public string floorName = string.Empty;
+        public int spawnedAgents;
+        public int evacuatedAgents;
+        public int injuredAgents;
+        public int deadAgents;
+        public float averageHealth;
+    }
+
+    [Serializable]
+    public sealed class SandboxSimulationSummaryReportData
+    {
+        public bool didRun;
+        public bool completedSuccessfully;
+        public string completedUtc = string.Empty;
+        public int totalAgents;
+        public int evacuatedAgents;
+        public int injuredAgents;
+        public int deadAgents;
+        public float averageHealth;
+        public List<SandboxSimulationFloorOutcomeData> floorOutcomes = new();
+    }
+
+    [Serializable]
+    public sealed class SandboxSimulationTravelDensityCellData
+    {
+        public string floorId = string.Empty;
+        public string floorName = string.Empty;
+        public Vector2 center;
+        public int sampleCount;
+        public float cumulativeSeconds;
+        public float intensity;
+    }
+
+    [Serializable]
+    public sealed class SandboxSimulationTravelDensityReportData
+    {
+        public bool didRun;
+        public bool completedSuccessfully;
+        public string completedUtc = string.Empty;
+        public float cellSize = 1f;
+        public List<SandboxSimulationTravelDensityCellData> cells = new();
+    }
+
+    [Serializable]
+    public sealed class SandboxSimulationRunReportData
+    {
+        public SandboxSimulationSummaryReportData summary = new();
+        public SandboxSimulationTravelDensityReportData travelDensity = new();
+    }
+
     public sealed class SandboxAgentSimulationService : MonoBehaviour
     {
+        private sealed class AgentTerminalOutcome
+        {
+            public string agentId = string.Empty;
+            public string spawnFloorId = string.Empty;
+            public string finalFloorId = string.Empty;
+            public float finalHealth;
+            public bool reachedExit;
+        }
+
         private const string NavMeshPlaneRootName = "NavMeshPlaneRoot";
 
         [SerializeField] private SandboxAgentProfile defaultAgentProfile;
         [SerializeField] private string agentRootName = "AgentRoot";
         [SerializeField] private bool autoStartOnPreviewRun = true;
+        [SerializeField] private float heatmapCellSize = 1f;
+        [SerializeField] private float congestionAvoidanceRadius = 1.5f;
+        [SerializeField] private float congestionRoutePenaltyWeight = 4f;
         [SerializeField] private List<SandboxEvacueeAgent> activeAgents = new();
+        [SerializeField] private SandboxSimulationRunReportData lastSimulationRunReport = new();
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxPreviewService previewService;
@@ -28,14 +96,21 @@ namespace EvacLogix.Sandbox.Runtime
         private readonly List<NavMeshData> navMeshDatas = new();
         private readonly List<Mesh> navMeshSourceMeshes = new();
         private readonly List<GameObject> navMeshPlaneObjects = new();
+        private readonly Dictionary<string, SandboxSimulationTravelDensityCellData> travelDensityCells = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> agentSpawnFloorIds = new(StringComparer.Ordinal);
+        private readonly List<AgentTerminalOutcome> terminalOutcomes = new();
+        private int totalSpawnedAgents;
         private bool simulationActive;
         private float lastPreviewDigestTime;
 
         public event Action<IReadOnlyList<SandboxEvacueeAgent>> AgentsChanged;
+        public event Action<SandboxSimulationRunReportData> SimulationRunReportChanged;
 
         public IReadOnlyList<SandboxEvacueeAgent> ActiveAgents => activeAgents;
         public bool SimulationActive => simulationActive;
         public float AgentRadius => GetProfile().Radius;
+        public SandboxSimulationRunReportData LastSimulationRunReport => lastSimulationRunReport;
+        public bool HasCompletedSimulationRunReport => lastSimulationRunReport?.summary != null && lastSimulationRunReport.summary.completedSuccessfully;
 
         private void Awake()
         {
@@ -95,6 +170,7 @@ namespace EvacLogix.Sandbox.Runtime
             simulationActive = false;
             ClearAgents();
             ClearNavMesh();
+            ClearActiveReportTracking();
             AgentsChanged?.Invoke(activeAgents);
         }
 
@@ -162,6 +238,7 @@ namespace EvacLogix.Sandbox.Runtime
 
             BuildAgentRoot();
             ClearAgents();
+            BeginRunReport();
 
             var samples = ExpandSpawnSamples(spawnLayouts);
             for (var i = 0; i < samples.Count; i += 1)
@@ -182,17 +259,51 @@ namespace EvacLogix.Sandbox.Runtime
                 var floorElevation = ResolveFloorElevation(project, sample.floorId);
                 agent.Configure(GetProfile(), sample.spawnPointId, sample.floorId, sample.position, floorElevation);
                 activeAgents.Add(agent);
+                agentSpawnFloorIds[agent.AgentId] = sample.floorId;
+                AccumulateTravelDensity(project, agent, 0f);
 
-                var destination = ChooseExitDestination(project, sample.floorId, sample.position, fireOrigins, fireCells, out var exitId);
+                var destination = ChooseExitDestination(project, sample.floorId, sample.position, fireOrigins, fireCells, sample.spawnPointId, out var exitId);
                 if (!string.IsNullOrWhiteSpace(exitId))
                 {
                     agent.SetDestination(exitId, destination);
                 }
             }
 
+            totalSpawnedAgents = activeAgents.Count;
             simulationActive = activeAgents.Count > 0;
             lastPreviewDigestTime = Time.time;
+            if (!simulationActive)
+            {
+                ClearActiveReportTracking();
+            }
+            else
+            {
+                UpdateRunReport(project, false);
+            }
+
             AgentsChanged?.Invoke(activeAgents);
+        }
+
+        public bool ExportSimulationSummaryReport(string destinationPath)
+        {
+            if (!HasCompletedSimulationRunReport || string.IsNullOrWhiteSpace(destinationPath))
+            {
+                return false;
+            }
+
+            WriteJson(destinationPath, lastSimulationRunReport.summary);
+            return true;
+        }
+
+        public bool ExportSimulationTravelDensityHeatmapReport(string destinationPath)
+        {
+            if (!HasCompletedSimulationRunReport || string.IsNullOrWhiteSpace(destinationPath))
+            {
+                return false;
+            }
+
+            WriteJson(destinationPath, lastSimulationRunReport.travelDensity);
+            return true;
         }
 
         private void TickAgents(float deltaTime)
@@ -209,19 +320,28 @@ namespace EvacLogix.Sandbox.Runtime
             var fireCells = fireSimulationService != null && fireSimulationService.SimulationActive
                 ? fireSimulationService.ActiveFireCells
                 : Array.Empty<SandboxFireCellData>();
-            for (var i = 0; i < activeAgents.Count; i += 1)
+            var terminalStateChanged = false;
+            for (var i = activeAgents.Count - 1; i >= 0; i -= 1)
             {
                 var agent = activeAgents[i];
-                if (agent == null || agent.HasExited)
+                if (agent == null)
                 {
+                    activeAgents.RemoveAt(i);
+                    terminalStateChanged = true;
+                    continue;
+                }
+
+                if (agent.HasExited)
+                {
+                    RecordAndDespawnAgent(project, i, agent.Health > 0f);
+                    terminalStateChanged = true;
                     continue;
                 }
 
                 var position = agent.CurrentWorldPosition;
-                var destination = agent.CurrentDestination;
                 if (agent.NeedsRepath() || agent.IsAtDestination())
                 {
-                    destination = ChooseExitDestination(project, agent.FloorId, position, fireOrigins, fireCells, out var exitId);
+                    var destination = ChooseExitDestination(project, agent.FloorId, position, fireOrigins, fireCells, agent.AgentId, out var exitId);
                     if (!string.IsNullOrWhiteSpace(exitId))
                     {
                         agent.SetDestination(exitId, destination);
@@ -234,15 +354,37 @@ namespace EvacLogix.Sandbox.Runtime
 
                 var exposure = ComputeFireExposure(position, fireOrigins, fireCells, agent.FloorId);
                 agent.Tick(deltaTime, exposure);
+                AccumulateTravelDensity(project, agent, deltaTime);
 
-                if (agent.IsAtDestination())
+                if (agent.Health <= 0f)
+                {
+                    RecordAndDespawnAgent(project, i, false);
+                    terminalStateChanged = true;
+                }
+                else if (agent.IsAtDestination())
                 {
                     agent.MarkExited();
+                    RecordAndDespawnAgent(project, i, true);
+                    terminalStateChanged = true;
                 }
             }
 
             lastPreviewDigestTime += deltaTime;
+            if (terminalStateChanged)
+            {
+                UpdateRunReport(project, activeAgents.Count == 0);
+            }
+
             AgentsChanged?.Invoke(activeAgents);
+
+            if (activeAgents.Count == 0)
+            {
+                simulationActive = false;
+                if (terminalStateChanged)
+                {
+                    ClearActiveReportTracking();
+                }
+            }
         }
 
         private Vector2 ChooseExitDestination(
@@ -251,6 +393,7 @@ namespace EvacLogix.Sandbox.Runtime
             Vector2 origin,
             IReadOnlyList<FireOriginData> fireOrigins,
             IReadOnlyList<SandboxFireCellData> fireCells,
+            string ignoredAgentId,
             out string exitId)
         {
             exitId = string.Empty;
@@ -272,7 +415,8 @@ namespace EvacLogix.Sandbox.Runtime
                 var exitZone = floor.exits[i];
                 var distance = Vector2.Distance(origin, exitZone.center);
                 var firePenalty = GetFirePenalty(origin, exitZone.center, floorId, fireOrigins, fireCells);
-                var score = distance + firePenalty - Mathf.Max(0f, exitZone.priority * 0.25f);
+                var congestionPenalty = GetCongestionRoutePenalty(floorId, origin, exitZone.center, ignoredAgentId);
+                var score = distance + firePenalty + congestionPenalty - Mathf.Max(0f, exitZone.priority * 0.25f);
                 if (score < bestScore)
                 {
                     bestScore = score;
@@ -329,6 +473,44 @@ namespace EvacLogix.Sandbox.Runtime
             }
 
             return penalty;
+        }
+
+        private float GetCongestionRoutePenalty(string floorId, Vector2 origin, Vector2 destination, string ignoredAgentId)
+        {
+            var radius = Mathf.Max(0.1f, congestionAvoidanceRadius);
+            var penalty = 0f;
+            for (var i = 0; i < activeAgents.Count; i += 1)
+            {
+                var agent = activeAgents[i];
+                if (agent == null ||
+                    agent.HasExited ||
+                    string.Equals(agent.AgentId, ignoredAgentId, StringComparison.Ordinal) ||
+                    !string.Equals(agent.FloorId, floorId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var distance = DistancePointToSegment(agent.CurrentWorldPosition, origin, destination);
+                if (distance < radius)
+                {
+                    penalty += (1f - (distance / radius)) * Mathf.Max(0f, congestionRoutePenaltyWeight);
+                }
+            }
+
+            return penalty;
+        }
+
+        private static float DistancePointToSegment(Vector2 point, Vector2 start, Vector2 end)
+        {
+            var segment = end - start;
+            var lengthSquared = segment.sqrMagnitude;
+            if (lengthSquared <= 0.0001f)
+            {
+                return Vector2.Distance(point, start);
+            }
+
+            var t = Mathf.Clamp01(Vector2.Dot(point - start, segment) / lengthSquared);
+            return Vector2.Distance(point, start + segment * t);
         }
 
         private float ComputeFireExposure(Vector2 position, IReadOnlyList<FireOriginData> fireOrigins, IReadOnlyList<SandboxFireCellData> fireCells, string floorId)
@@ -390,22 +572,194 @@ namespace EvacLogix.Sandbox.Runtime
         {
             for (var i = 0; i < activeAgents.Count; i += 1)
             {
-                if (activeAgents[i] == null)
-                {
-                    continue;
-                }
-
-                if (Application.isPlaying)
-                {
-                    Destroy(activeAgents[i].gameObject);
-                }
-                else
-                {
-                    DestroyImmediate(activeAgents[i].gameObject);
-                }
+                DestroyAgentObject(activeAgents[i]);
             }
 
             activeAgents.Clear();
+        }
+
+        private void RecordAndDespawnAgent(BuildingProjectData project, int agentIndex, bool reachedExit)
+        {
+            if (agentIndex < 0 || agentIndex >= activeAgents.Count)
+            {
+                return;
+            }
+
+            var agent = activeAgents[agentIndex];
+            if (agent == null)
+            {
+                activeAgents.RemoveAt(agentIndex);
+                return;
+            }
+
+            terminalOutcomes.Add(new AgentTerminalOutcome
+            {
+                agentId = agent.AgentId,
+                spawnFloorId = agentSpawnFloorIds.TryGetValue(agent.AgentId, out var spawnFloorId) ? spawnFloorId : agent.FloorId,
+                finalFloorId = agent.FloorId,
+                finalHealth = Mathf.Clamp01(agent.Health),
+                reachedExit = reachedExit && agent.Health > 0f
+            });
+
+            AccumulateTravelDensity(project, agent, 0f);
+            activeAgents.RemoveAt(agentIndex);
+            DestroyAgentObject(agent);
+        }
+
+        private static void DestroyAgentObject(SandboxEvacueeAgent agent)
+        {
+            if (agent == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                agent.DespawnNow();
+                UnityEngine.Object.Destroy(agent.gameObject);
+            }
+            else
+            {
+                agent.DespawnNow();
+                UnityEngine.Object.DestroyImmediate(agent.gameObject);
+            }
+        }
+
+        private void BeginRunReport()
+        {
+            ClearActiveReportTracking();
+            lastSimulationRunReport = new SandboxSimulationRunReportData();
+        }
+
+        private void ClearActiveReportTracking()
+        {
+            travelDensityCells.Clear();
+            agentSpawnFloorIds.Clear();
+            terminalOutcomes.Clear();
+            totalSpawnedAgents = 0;
+        }
+
+        private void AccumulateTravelDensity(BuildingProjectData project, SandboxEvacueeAgent agent, float deltaTime)
+        {
+            if (project == null || agent == null || agent.HasExited)
+            {
+                return;
+            }
+
+            var cellSize = Mathf.Max(0.25f, heatmapCellSize);
+            var position = agent.CurrentWorldPosition;
+            var cellX = Mathf.FloorToInt(position.x / cellSize);
+            var cellY = Mathf.FloorToInt(position.y / cellSize);
+            var key = $"{agent.FloorId}:{cellX}:{cellY}";
+            if (!travelDensityCells.TryGetValue(key, out var cell))
+            {
+                cell = new SandboxSimulationTravelDensityCellData
+                {
+                    floorId = agent.FloorId,
+                    floorName = ResolveFloorName(project, agent.FloorId),
+                    center = new Vector2((cellX + 0.5f) * cellSize, (cellY + 0.5f) * cellSize)
+                };
+                travelDensityCells[key] = cell;
+            }
+
+            cell.sampleCount += 1;
+            cell.cumulativeSeconds += Mathf.Max(0f, deltaTime);
+            cell.intensity = cell.sampleCount;
+        }
+
+        private void UpdateRunReport(BuildingProjectData project, bool completedSuccessfully)
+        {
+            var completedUtc = completedSuccessfully ? DateTime.UtcNow.ToString("O") : string.Empty;
+            var summary = BuildSummaryReport(project, completedSuccessfully, completedUtc);
+            var heatmap = new SandboxSimulationTravelDensityReportData
+            {
+                didRun = true,
+                completedSuccessfully = completedSuccessfully,
+                completedUtc = completedUtc,
+                cellSize = Mathf.Max(0.25f, heatmapCellSize),
+                cells = travelDensityCells.Values
+                    .OrderBy(cell => cell.floorName, StringComparer.Ordinal)
+                    .ThenByDescending(cell => cell.intensity)
+                    .ThenBy(cell => cell.center.x)
+                    .ThenBy(cell => cell.center.y)
+                    .ToList()
+            };
+
+            lastSimulationRunReport = new SandboxSimulationRunReportData
+            {
+                summary = summary,
+                travelDensity = heatmap
+            };
+            SimulationRunReportChanged?.Invoke(lastSimulationRunReport);
+        }
+
+        private SandboxSimulationSummaryReportData BuildSummaryReport(BuildingProjectData project, bool completedSuccessfully, string completedUtc)
+        {
+            var report = new SandboxSimulationSummaryReportData
+            {
+                didRun = true,
+                completedSuccessfully = completedSuccessfully,
+                completedUtc = completedUtc,
+                totalAgents = totalSpawnedAgents,
+                evacuatedAgents = terminalOutcomes.Count(outcome => outcome.reachedExit && outcome.finalHealth > 0f),
+                injuredAgents = terminalOutcomes.Count(outcome => outcome.finalHealth > 0f && outcome.finalHealth < 0.999f),
+                deadAgents = terminalOutcomes.Count(outcome => outcome.finalHealth <= 0f),
+            };
+            report.averageHealth = terminalOutcomes.Count == 0 ? 0f : terminalOutcomes.Average(outcome => outcome.finalHealth);
+
+            var floorIds = new HashSet<string>(project?.floors?.Select(floor => floor.floorId) ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
+            foreach (var outcome in terminalOutcomes)
+            {
+                if (!string.IsNullOrWhiteSpace(outcome.finalFloorId))
+                {
+                    floorIds.Add(outcome.finalFloorId);
+                }
+
+                if (!string.IsNullOrWhiteSpace(outcome.spawnFloorId))
+                {
+                    floorIds.Add(outcome.spawnFloorId);
+                }
+            }
+
+            report.floorOutcomes = floorIds
+                .OrderBy(floorId => ResolveFloorOrder(project, floorId))
+                .ThenBy(floorId => ResolveFloorName(project, floorId), StringComparer.Ordinal)
+                .Select(floorId =>
+                {
+                    var finalOutcomes = terminalOutcomes
+                        .Where(outcome => string.Equals(outcome.finalFloorId, floorId, StringComparison.Ordinal))
+                        .ToList();
+                    var spawnedAgents = terminalOutcomes.Count(outcome => string.Equals(outcome.spawnFloorId, floorId, StringComparison.Ordinal)) +
+                                        activeAgents.Count(agent =>
+                                            agent != null &&
+                                            agentSpawnFloorIds.TryGetValue(agent.AgentId, out var spawnFloorId) &&
+                                            string.Equals(spawnFloorId, floorId, StringComparison.Ordinal));
+
+                    return new SandboxSimulationFloorOutcomeData
+                    {
+                        floorId = floorId,
+                        floorName = ResolveFloorName(project, floorId),
+                        spawnedAgents = spawnedAgents,
+                        evacuatedAgents = finalOutcomes.Count(outcome => outcome.reachedExit && outcome.finalHealth > 0f),
+                        injuredAgents = finalOutcomes.Count(outcome => outcome.finalHealth > 0f && outcome.finalHealth < 0.999f),
+                        deadAgents = finalOutcomes.Count(outcome => outcome.finalHealth <= 0f),
+                        averageHealth = finalOutcomes.Count == 0 ? 0f : finalOutcomes.Average(outcome => outcome.finalHealth)
+                    };
+                })
+                .ToList();
+
+            return report;
+        }
+
+        private static void WriteJson(string destinationPath, object payload)
+        {
+            var directory = Path.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            File.WriteAllText(destinationPath, JsonUtility.ToJson(payload, true));
         }
 
         private void ClearNavMesh()
@@ -788,6 +1142,23 @@ namespace EvacLogix.Sandbox.Runtime
         {
             var floor = project?.floors?.FirstOrDefault(candidate => string.Equals(candidate.floorId, floorId, StringComparison.Ordinal));
             return floor != null ? floor.elevation : 0f;
+        }
+
+        private static string ResolveFloorName(BuildingProjectData project, string floorId)
+        {
+            var floor = project?.floors?.FirstOrDefault(candidate => string.Equals(candidate.floorId, floorId, StringComparison.Ordinal));
+            if (floor == null)
+            {
+                return string.IsNullOrWhiteSpace(floorId) ? "Unknown Floor" : floorId;
+            }
+
+            return string.IsNullOrWhiteSpace(floor.name) ? floor.floorId : floor.name;
+        }
+
+        private static int ResolveFloorOrder(BuildingProjectData project, string floorId)
+        {
+            var floor = project?.floors?.FirstOrDefault(candidate => string.Equals(candidate.floorId, floorId, StringComparison.Ordinal));
+            return floor?.order ?? int.MaxValue;
         }
 
         private void ApplyFireInfluence(Vector2 position, Vector2 firePosition, float intensity, float spreadIntensity, ref float exposure, ref Vector2 avoidance)
