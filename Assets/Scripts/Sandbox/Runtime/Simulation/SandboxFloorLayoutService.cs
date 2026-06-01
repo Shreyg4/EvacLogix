@@ -33,6 +33,8 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
     // caches the most recent computation for the simulation services to query.
     public sealed class SandboxFloorLayoutService : MonoBehaviour
     {
+        private const float SimulationExteriorMargin = 4f;
+
         [SerializeField] private int columnsOverride;
         [SerializeField] private float floorGap = 3f;
 
@@ -195,9 +197,10 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 return new Rect(-0.5f, -0.5f, 1f, 1f);
             }
 
-            // Pad slightly so walls on the boundary are not flush against the grid gap.
-            min -= new Vector2(0.5f, 0.5f);
-            max += new Vector2(0.5f, 0.5f);
+            // Reserve visible/walkable exterior space around every floor board so escape-window
+            // landings and post-egress routing have somewhere to go in the side-by-side sim layout.
+            min -= new Vector2(SimulationExteriorMargin, SimulationExteriorMargin);
+            max += new Vector2(SimulationExteriorMargin, SimulationExteriorMargin);
             return new Rect(min, max - min);
         }
 

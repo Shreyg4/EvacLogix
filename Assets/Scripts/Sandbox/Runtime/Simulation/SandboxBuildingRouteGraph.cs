@@ -28,24 +28,31 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             // Half-extent of the portal footprint; an agent must move beyond this (plus a margin)
             // after teleporting onto the endpoint before it may use the same portal again.
             public float footprintRadius;
-            // Escape-usable window: a sink like an exit but with a routing penalty (escapeRouteCost),
-            // a fall injury applied on use, and a fatal flag above a height threshold.
+            // Escape-usable window: a risky one-time escape transition. Agents route to the opening,
+            // relocate to an exterior landing point, take injury, then continue solving toward exits.
             public bool isEscapeWindow;
             public float escapeRouteCost;
             public float windowInjury;
-            public bool windowFatal;
-            public bool IsSink => isExit || isEscapeWindow;
+            public string landingFloorId = string.Empty;
+            public Vector2 landingLocalPosition;
+            public Vector2 escapeOutwardNormal;
+            public int storeyIndex = 1;
+            public bool IsSink => isExit;
             public float costToSafe = float.PositiveInfinity;
         }
 
         private const string SafeNodeId = "__SAFE__";
-        // Escape-window fall model, scaled by storeys above ground (floor.order):
-        private const float StoreyRoutingPenalty = 6f; // added routing cost per storey (deters high windows)
-        private const float StoreyInjury = 0.18f;       // health lost per storey on landing
-        private const int FatalStoreys = 4;             // jumps from this height or higher are fatal
+        private const float DefaultLandingClearance = 1f;
+        private const float FloorOneWindowInjury = 0.08f;
+        private const float FloorTwoWindowInjury = 0.32f;
+        private const float FloorThreeWindowInjury = 0.82f;
+        private const float ExtraStoreyWindowInjury = 0.08f;
+        private const float WindowRiskRouteWeight = 12f;
+        private const float WindowStoreyRoutePenalty = 3.5f;
 
         private readonly Dictionary<string, RouteNode> nodesById = new(StringComparer.Ordinal);
         private readonly Dictionary<string, List<RouteNode>> nodesByFloor = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<RouteEdge>> edgesByNode = new(StringComparer.Ordinal);
         private readonly List<RouteNode> sinks = new();
 
         // All escape sinks (exits + escape windows) across the whole project, for the project-wide
@@ -63,6 +70,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         {
             nodesById.Clear();
             nodesByFloor.Clear();
+            edgesByNode.Clear();
             sinks.Clear();
             if (project?.floors == null)
             {
@@ -70,9 +78,18 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
 
             var elevationByFloor = new Dictionary<string, float>(StringComparer.Ordinal);
+            var floorBoundsById = new Dictionary<string, Rect>(StringComparer.Ordinal);
+            var lowestOrder = int.MaxValue;
+            var lowestOrderFloorId = string.Empty;
             foreach (var floor in project.floors)
             {
                 elevationByFloor[floor.floorId] = floor.elevation;
+                floorBoundsById[floor.floorId] = SandboxFloorLayoutService.ComputeFloorLocalBounds(floor);
+                if (floor.order < lowestOrder)
+                {
+                    lowestOrder = floor.order;
+                    lowestOrderFloorId = floor.floorId;
+                }
             }
 
             // Create nodes.
@@ -123,15 +140,19 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                     });
                 }
 
-                var storeys = Mathf.Max(0, floor.order);
                 foreach (var window in floor.windows)
                 {
-                    if (!window.canBeUsedForEscape || !TryResolveOpeningCenter(floor, window.wallSegmentId, window.offsetAlongWall, out var center))
+                    if (!window.canBeUsedForEscape ||
+                        !TryResolveEscapeWindowData(floor, window, floorBoundsById, out var center, out var outwardNormal))
                     {
                         continue;
                     }
 
+                    var storeyIndex = ComputeStoreyIndex(floor.order, lowestOrder);
                     var risk = Mathf.Max(0.01f, window.escapeRiskMultiplier);
+                    var landingFloorId = storeyIndex <= 1 ? floor.floorId : lowestOrderFloorId;
+                    var landingLocalPosition = center + (outwardNormal * DefaultLandingClearance);
+                    var windowInjury = ComputeWindowInjury(storeyIndex, risk);
                     AddNode(new RouteNode
                     {
                         nodeId = WindowId(window.windowId),
@@ -139,9 +160,12 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                         localPosition = center,
                         objectId = window.windowId,
                         isEscapeWindow = true,
-                        escapeRouteCost = Mathf.Max(0f, window.escapeCost) + (storeys * StoreyRoutingPenalty * risk),
-                        windowInjury = Mathf.Clamp01(storeys * StoreyInjury * risk),
-                        windowFatal = storeys >= FatalStoreys
+                        escapeRouteCost = Mathf.Max(0f, window.escapeCost) + (windowInjury * WindowRiskRouteWeight) + ((storeyIndex - 1) * WindowStoreyRoutePenalty),
+                        windowInjury = windowInjury,
+                        landingFloorId = landingFloorId,
+                        landingLocalPosition = landingLocalPosition,
+                        escapeOutwardNormal = outwardNormal,
+                        storeyIndex = storeyIndex
                     });
                 }
             }
@@ -183,34 +207,15 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         // sameFloor a<->b (distance). costToSafe[n] = least forward cost from n to SAFE.
         private void ComputeCostToSafe()
         {
-            var reverse = new Dictionary<string, List<(string node, float weight)>>(StringComparer.Ordinal);
-            void AddReverse(string from, string to, float weight)
-            {
-                if (!reverse.TryGetValue(to, out var list))
-                {
-                    list = new List<(string, float)>();
-                    reverse[to] = list;
-                }
-
-                list.Add((from, weight));
-            }
-
             foreach (var node in nodesById.Values)
             {
                 if (node.isExit)
                 {
-                    // forward: exit -> SAFE (0)
-                    AddReverse(node.nodeId, SafeNodeId, 0f);
-                }
-                else if (node.isEscapeWindow)
-                {
-                    // forward: escape window -> SAFE (penalty cost), so agents prefer real exits.
-                    AddReverse(node.nodeId, SafeNodeId, node.escapeRouteCost);
+                    AddEdge(node.nodeId, SafeNodeId, 0f);
                 }
                 else if (!string.IsNullOrWhiteSpace(node.linkedNodeId) && nodesById.ContainsKey(node.linkedNodeId))
                 {
-                    // forward: portal -> linked (travelCost)
-                    AddReverse(node.nodeId, node.linkedNodeId, node.portalTravelCost);
+                    AddEdge(node.nodeId, node.linkedNodeId, node.portalTravelCost);
                 }
             }
 
@@ -223,9 +228,89 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                     for (var j = i + 1; j < list.Count; j += 1)
                     {
                         var distance = Vector2.Distance(list[i].localPosition, list[j].localPosition);
-                        AddReverse(list[i].nodeId, list[j].nodeId, distance);
-                        AddReverse(list[j].nodeId, list[i].nodeId, distance);
+                        AddEdge(list[i].nodeId, list[j].nodeId, distance);
+                        AddEdge(list[j].nodeId, list[i].nodeId, distance);
                     }
+                }
+            }
+
+            // Escape windows are one-way transitions to an exterior landing point on the landing
+            // floor. After that landing, the agent continues using the normal routing graph from the
+            // nearest nodes/exits on that landing floor.
+            foreach (var node in nodesById.Values)
+            {
+                if (!node.isEscapeWindow ||
+                    string.IsNullOrWhiteSpace(node.landingFloorId) ||
+                    !nodesByFloor.TryGetValue(node.landingFloorId, out var landingNodes))
+                {
+                    continue;
+                }
+
+                for (var i = 0; i < landingNodes.Count; i += 1)
+                {
+                    var destination = landingNodes[i];
+                    if (string.Equals(destination.nodeId, node.nodeId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var transitionCost = node.escapeRouteCost + Vector2.Distance(node.landingLocalPosition, destination.localPosition);
+                    AddEdge(node.nodeId, destination.nodeId, transitionCost);
+                }
+            }
+
+            var dist = ComputeDynamicCostToSafe(null, null);
+            foreach (var node in nodesById.Values)
+            {
+                node.costToSafe = dist.TryGetValue(node.nodeId, out var d) ? d : float.PositiveInfinity;
+            }
+        }
+
+        public Dictionary<string, float> ComputeDynamicCostToSafe(Func<RouteNode, float> nodePenaltyProvider, Func<RouteNode, bool> nodeBlockedPredicate)
+        {
+            var reverse = new Dictionary<string, List<(string nodeId, float weight)>>(StringComparer.Ordinal);
+
+            void AddReverse(string from, string to, float weight)
+            {
+                if (!reverse.TryGetValue(to, out var list))
+                {
+                    list = new List<(string, float)>();
+                    reverse[to] = list;
+                }
+
+                list.Add((from, weight));
+            }
+
+            foreach (var pair in edgesByNode)
+            {
+                if (!nodesById.TryGetValue(pair.Key, out var fromNode))
+                {
+                    continue;
+                }
+
+                if (nodeBlockedPredicate != null && nodeBlockedPredicate(fromNode))
+                {
+                    continue;
+                }
+
+                var nodePenalty = Mathf.Max(0f, nodePenaltyProvider?.Invoke(fromNode) ?? 0f);
+                for (var i = 0; i < pair.Value.Count; i += 1)
+                {
+                    var edge = pair.Value[i];
+                    if (!string.Equals(edge.toNodeId, SafeNodeId, StringComparison.Ordinal))
+                    {
+                        if (!nodesById.TryGetValue(edge.toNodeId, out var toNode))
+                        {
+                            continue;
+                        }
+
+                        if (nodeBlockedPredicate != null && nodeBlockedPredicate(toNode))
+                        {
+                            continue;
+                        }
+                    }
+
+                    AddReverse(fromNode.nodeId, edge.toNodeId, edge.weight + nodePenalty);
                 }
             }
 
@@ -258,17 +343,14 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 for (var i = 0; i < neighbors.Count; i += 1)
                 {
                     var candidate = currentDist + neighbors[i].weight;
-                    if (!dist.TryGetValue(neighbors[i].node, out var existing) || candidate < existing)
+                    if (!dist.TryGetValue(neighbors[i].nodeId, out var existing) || candidate < existing)
                     {
-                        dist[neighbors[i].node] = candidate;
+                        dist[neighbors[i].nodeId] = candidate;
                     }
                 }
             }
 
-            foreach (var node in nodesById.Values)
-            {
-                node.costToSafe = dist.TryGetValue(node.nodeId, out var d) ? d : float.PositiveInfinity;
-            }
+            return dist;
         }
 
         private void AddNode(RouteNode node)
@@ -290,6 +372,22 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             {
                 sinks.Add(node);
             }
+        }
+
+        private void AddEdge(string fromNodeId, string toNodeId, float weight)
+        {
+            if (string.IsNullOrWhiteSpace(fromNodeId) || string.IsNullOrWhiteSpace(toNodeId))
+            {
+                return;
+            }
+
+            if (!edgesByNode.TryGetValue(fromNodeId, out var edges))
+            {
+                edges = new List<RouteEdge>();
+                edgesByNode[fromNodeId] = edges;
+            }
+
+            edges.Add(new RouteEdge(toNodeId, Mathf.Max(0f, weight)));
         }
 
         private static bool TryResolveOpeningCenter(FloorData floor, string wallSegmentId, float offsetAlongWall, out Vector2 center)
@@ -320,5 +418,80 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private static string StairId(string id) => "stair:" + id;
         private static string TeleId(string id) => "tele:" + id;
         private static string WindowId(string id) => "win:" + id;
+
+        private static int ComputeStoreyIndex(int floorOrder, int lowestOrder)
+        {
+            return Mathf.Max(1, (floorOrder - lowestOrder) + 1);
+        }
+
+        private static float ComputeWindowInjury(int storeyIndex, float riskMultiplier)
+        {
+            var baseInjury = storeyIndex switch
+            {
+                <= 1 => FloorOneWindowInjury,
+                2 => FloorTwoWindowInjury,
+                3 => FloorThreeWindowInjury,
+                _ => FloorThreeWindowInjury + ((storeyIndex - 3) * ExtraStoreyWindowInjury),
+            };
+
+            return Mathf.Clamp01(baseInjury * Mathf.Max(0.01f, riskMultiplier));
+        }
+
+        private static bool TryResolveEscapeWindowData(
+            FloorData floor,
+            WindowData window,
+            IReadOnlyDictionary<string, Rect> floorBoundsById,
+            out Vector2 center,
+            out Vector2 outwardNormal)
+        {
+            center = Vector2.zero;
+            outwardNormal = Vector2.zero;
+            if (floor == null ||
+                window == null ||
+                !TryResolveOpeningCenter(floor, window.wallSegmentId, window.offsetAlongWall, out center) ||
+                !floorBoundsById.TryGetValue(floor.floorId, out var bounds))
+            {
+                return false;
+            }
+
+            var wall = floor.wallSegments.Find(candidate => string.Equals(candidate.wallSegmentId, window.wallSegmentId, StringComparison.Ordinal));
+            if (wall == null)
+            {
+                return false;
+            }
+
+            var direction = wall.endPoint - wall.startPoint;
+            var length = direction.magnitude;
+            if (length <= 0.0001f)
+            {
+                return false;
+            }
+
+            var tangent = direction / length;
+            var normalA = new Vector2(-tangent.y, tangent.x);
+            var normalB = -normalA;
+            var centerToBounds = center - bounds.center;
+            var scoreA = Vector2.Dot(centerToBounds, normalA);
+            var scoreB = Vector2.Dot(centerToBounds, normalB);
+            if (Mathf.Abs(scoreA - scoreB) <= 0.001f)
+            {
+                return false;
+            }
+
+            outwardNormal = scoreA > scoreB ? normalA : normalB;
+            return outwardNormal.sqrMagnitude > 0.0001f;
+        }
+
+        private readonly struct RouteEdge
+        {
+            public RouteEdge(string toNodeId, float weight)
+            {
+                this.toNodeId = toNodeId;
+                this.weight = weight;
+            }
+
+            public readonly string toNodeId;
+            public readonly float weight;
+        }
     }
 }

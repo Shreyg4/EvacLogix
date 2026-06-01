@@ -127,11 +127,19 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                             continue;
                         }
 
-                        var area = obstacle.discourageWeight >= ImpassableThreshold ? NotWalkableArea : SoftObstacleArea;
+                        // Impassable obstacles are tall Not-Walkable blocks that carve the floor.
+                        // Soft obstacles must stay PASSABLE: a tall solid would leave no clearance and
+                        // block like a wall, so instead lay a THIN floor-level patch tagged with the
+                        // costly area — agents can cross it (discouraged by area cost + speed penalty)
+                        // when it's the only route.
+                        var isImpassable = obstacle.discourageWeight >= ImpassableThreshold;
+                        var area = isImpassable ? NotWalkableArea : SoftObstacleArea;
+                        var height = isImpassable ? WallHeight : SlabHeight;
+                        var centerY = isImpassable ? WallHeight * 0.5f : 0f;
                         var worldCenter = placement.ToWorld(obstacle.center);
-                        var navCenter = new Vector3(worldCenter.x, WallHeight * 0.5f, worldCenter.y);
+                        var navCenter = new Vector3(worldCenter.x, centerY, worldCenter.y);
                         var rotation = Quaternion.Euler(0f, -obstacle.rotationDegrees, 0f);
-                        var size = new Vector3(Mathf.Max(0.01f, obstacle.size.x), WallHeight, Mathf.Max(0.01f, obstacle.size.y));
+                        var size = new Vector3(Mathf.Max(0.01f, obstacle.size.x), height, Mathf.Max(0.01f, obstacle.size.y));
                         sources.Add(new NavMeshBuildSource
                         {
                             shape = NavMeshBuildSourceShape.Box,

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
 using UnityEngine;
@@ -81,7 +82,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                     for (var c = 0; c < floorColliders.Count; c += 1)
                     {
                         var collider = floorColliders[c];
-                        DrawQuad("Wall", placement.ToWorld(collider.center), collider.size, collider.rotationDegrees, WallColor, WallOrder);
+                        DrawQuad("Wall", placement.ToWorld(collider.center), collider.size, collider.rotationDegrees, WallColor, WallOrder, true);
                     }
                 }
 
@@ -92,7 +93,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
 
                 foreach (var obstacle in floor.obstacles)
                 {
-                    DrawQuad("Obstacle", placement.ToWorld(obstacle.center), obstacle.size, obstacle.rotationDegrees, ObstacleColor, FillOrder);
+                    DrawQuad("Obstacle", placement.ToWorld(obstacle.center), obstacle.size, obstacle.rotationDegrees, ObstacleColor, FillOrder, obstacle.discourageWeight >= 0.99f);
                 }
 
                 foreach (var stairPortal in floor.stairPortals)
@@ -119,7 +120,13 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
 
             EnsureFireRoot();
-            var count = cells?.Count ?? 0;
+            var fireService = GetComponent<SandboxFireSimulationService>();
+            var visibleCells = cells == null
+                ? new List<SandboxFireCellData>()
+                : fireService == null
+                    ? new List<SandboxFireCellData>(cells)
+                    : cells.Where(fireService.IsVisuallyBurning).ToList();
+            var count = visibleCells.Count;
             while (fireSprites.Count < count)
             {
                 var fireObject = new GameObject("Fire");
@@ -132,13 +139,13 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
 
             for (var i = 0; i < fireSprites.Count; i += 1)
             {
-                if (i >= count || !layoutService.TryGetPlacement(cells[i].floorId, out var placement))
+                if (i >= count || !layoutService.TryGetPlacement(visibleCells[i].floorId, out var placement))
                 {
                     fireSprites[i].SetActive(false);
                     continue;
                 }
 
-                var cell = cells[i];
+                var cell = visibleCells[i];
                 var world = placement.ToWorld(cell.position);
                 var fireObject = fireSprites[i];
                 fireObject.SetActive(true);
@@ -217,7 +224,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
         }
 
-        private void DrawQuad(string label, Vector2 worldCenter, Vector2 size, float rotationDegrees, Color color, int sortingOrder)
+        private void DrawQuad(string label, Vector2 worldCenter, Vector2 size, float rotationDegrees, Color color, int sortingOrder, bool addCollider = false)
         {
             var quad = new GameObject(label);
             quad.transform.SetParent(transform, false);
@@ -229,6 +236,12 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             spriteRenderer.sprite = GetSquareSprite();
             spriteRenderer.color = color;
             spriteRenderer.sortingOrder = sortingOrder;
+            if (addCollider)
+            {
+                var collider = quad.AddComponent<BoxCollider2D>();
+                collider.size = Vector2.one;
+            }
+
             spawned.Add(quad);
         }
 
