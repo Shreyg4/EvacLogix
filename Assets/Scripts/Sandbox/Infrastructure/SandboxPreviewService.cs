@@ -114,6 +114,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         [SerializeField] private List<string> activeFireOriginSelectionIds = new();
         [SerializeField] private PreviewParameterData activePreviewParameters = new();
         [SerializeField] private SandboxPreviewReportData lastPreviewReport = new();
+        [SerializeField] private int interactionModeChangedFrame = -1;
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxValidationService validationService;
@@ -135,6 +136,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         public IReadOnlyList<string> ActiveFireOriginSelectionIds => activeFireOriginSelectionIds;
         public PreviewParameterData ActivePreviewParameters => activePreviewParameters;
         public SandboxPreviewReportData LastPreviewReport => lastPreviewReport;
+        public int InteractionModeChangedFrame => interactionModeChangedFrame;
 
         private void Awake()
         {
@@ -164,6 +166,8 @@ namespace EvacLogix.Sandbox.Infrastructure
         public void ExitPreviewMode()
         {
             interactionMode = SandboxPreviewInteractionMode.None;
+            interactionModeChangedFrame = Time.frameCount;
+            validationService?.ClearPreviewPlacementValidationIssue();
             if (!isPreviewModeActive)
             {
                 RaisePreviewStateChanged();
@@ -184,6 +188,8 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             interactionMode = nextMode;
+            interactionModeChangedFrame = Time.frameCount;
+            validationService?.ClearPreviewPlacementValidationIssue();
             RaisePreviewStateChanged();
         }
 

@@ -25,6 +25,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private const float StairHitRadius = 0.55f;
         private const float RectangleHandleHitRadius = 0.28f;
         private const float FireStartHitRadius = 0.5f;
+        private const float SpawnPointHitRadius = 0.5f;
         private const float SelectionDragThreshold = 0.2f;
         private const float AlignmentSnapPixelTolerance = 8f;
         private const float MinEraseBrushRadius = 0.35f;
@@ -1221,6 +1222,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             CollectStairsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
             CollectTeleportsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
             CollectFireStartsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
+            CollectSpawnPointsInBrush(floor, worldPoint, brushRadius, hits, knownObjectIds);
 
             return hits
                 .OrderBy(hit => GetBrushErasePriority(hit.kind))
@@ -1481,6 +1483,48 @@ namespace EvacLogix.Sandbox.UI.Overlays
             }
         }
 
+        private void CollectSpawnPointsInBrush(
+            FloorData floor,
+            Vector2 worldPoint,
+            float brushRadius,
+            List<SandboxHitResult> hits,
+            HashSet<string> knownObjectIds)
+        {
+            var project = workspaceService?.ActiveProject;
+            if (project == null)
+            {
+                return;
+            }
+
+            foreach (var layout in project.spawnLayouts)
+            {
+                foreach (var spawnPoint in layout.spawnPoints)
+                {
+                    if (spawnPoint.floorId != floor.floorId || !IsInteractable(SandboxVisualObjectType.Spawn, spawnPoint.spawnPointId))
+                    {
+                        continue;
+                    }
+
+                    var distance = Vector2.Distance(worldPoint, spawnPoint.position);
+                    if (distance > SpawnPointHitRadius + brushRadius)
+                    {
+                        continue;
+                    }
+
+                    AddBrushHit(
+                        hits,
+                        knownObjectIds,
+                        new SandboxHitResult
+                        {
+                            kind = SandboxHitKind.Spawn,
+                            objectId = spawnPoint.spawnPointId,
+                            label = "spawn point",
+                            score = distance
+                        });
+                }
+            }
+        }
+
         private static void AddBrushHit(List<SandboxHitResult> hits, HashSet<string> knownObjectIds, SandboxHitResult hit)
         {
             if (!knownObjectIds.Add(hit.objectId))
@@ -1537,6 +1581,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
             EvaluateStairs(floor, worldPoint, ref hit);
             EvaluateTeleports(floor, worldPoint, ref hit);
             EvaluateFireStarts(floor, worldPoint, ref hit);
+            EvaluateSpawnPoints(floor, worldPoint, ref hit);
             return hit.kind != SandboxHitKind.None;
         }
 
@@ -1589,6 +1634,12 @@ namespace EvacLogix.Sandbox.UI.Overlays
             if (project != null && project.fireOrigins.Any(candidate => candidate.floorId == floor.floorId && candidate.fireOriginId == objectId))
             {
                 hit = new SandboxHitResult { kind = SandboxHitKind.FireStart, objectId = objectId, label = "fire start" };
+                return true;
+            }
+
+            if (TryFindSpawnPoint(objectId, out _))
+            {
+                hit = new SandboxHitResult { kind = SandboxHitKind.Spawn, objectId = objectId, label = "spawn point" };
                 return true;
             }
 
@@ -2016,6 +2067,66 @@ namespace EvacLogix.Sandbox.UI.Overlays
                         score = distance
                     });
             }
+        }
+
+        private void EvaluateSpawnPoints(FloorData floor, Vector2 worldPoint, ref SandboxHitResult bestHit)
+        {
+            var project = workspaceService?.ActiveProject;
+            if (project == null)
+            {
+                return;
+            }
+
+            foreach (var layout in project.spawnLayouts)
+            {
+                foreach (var spawnPoint in layout.spawnPoints)
+                {
+                    if (spawnPoint.floorId != floor.floorId || !IsInteractable(SandboxVisualObjectType.Spawn, spawnPoint.spawnPointId))
+                    {
+                        continue;
+                    }
+
+                    var distance = Vector2.Distance(worldPoint, spawnPoint.position);
+                    if (distance > SpawnPointHitRadius)
+                    {
+                        continue;
+                    }
+
+                    TryPromoteHit(
+                        ref bestHit,
+                        new SandboxHitResult
+                        {
+                            kind = SandboxHitKind.Spawn,
+                            objectId = spawnPoint.spawnPointId,
+                            label = "spawn point",
+                            score = distance
+                        });
+                }
+            }
+        }
+
+        private bool TryFindSpawnPoint(string objectId, out SpawnPointData spawnPoint)
+        {
+            spawnPoint = null;
+            var floor = workspaceService?.ActiveFloor;
+            var project = workspaceService?.ActiveProject;
+            if (floor == null || project == null || string.IsNullOrWhiteSpace(objectId))
+            {
+                return false;
+            }
+
+            foreach (var layout in project.spawnLayouts)
+            {
+                spawnPoint = layout.spawnPoints.FirstOrDefault(candidate =>
+                    candidate.floorId == floor.floorId &&
+                    string.Equals(candidate.spawnPointId, objectId, StringComparison.Ordinal));
+                if (spawnPoint != null)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private bool TryBuildOpeningHit(

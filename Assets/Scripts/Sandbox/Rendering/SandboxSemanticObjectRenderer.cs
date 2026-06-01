@@ -312,6 +312,14 @@ namespace EvacLogix.Sandbox.Rendering
                         DrawLockBadge(camera, fireOrigin.position);
                     }
                 }
+
+                foreach (var spawnPoint in project.spawnLayouts.SelectMany(layout => layout.spawnPoints))
+                {
+                    if (spawnPoint.floorId == floor.floorId && IsLockedAndVisible(spawnPoint.spawnPointId, SandboxVisualObjectType.Spawn))
+                    {
+                        DrawLockBadge(camera, spawnPoint.position);
+                    }
+                }
             }
         }
 
@@ -590,6 +598,21 @@ namespace EvacLogix.Sandbox.Rendering
                 if (fireOrigin != null)
                 {
                     RenderFireStartMarker($"DragGhost_{objectId}", fireOrigin.position + delta, fireOrigin.size, new Color(0.9f, 0.2f, 0.1f, 0.6f));
+                    continue;
+                }
+
+                var spawnPoint = project?.spawnLayouts
+                    .SelectMany(layout => layout.spawnPoints)
+                    .FirstOrDefault(point =>
+                        point.floorId == floor.floorId &&
+                        string.Equals(point.spawnPointId, objectId, StringComparison.Ordinal));
+                if (spawnPoint != null)
+                {
+                    var baseColor = ResolveSelectionColor(spawnPoint.spawnPointId, ResolveBaseColor(SandboxVisualObjectType.Spawn));
+                    RenderSpawnPointMarker(
+                        $"DragGhost_{objectId}",
+                        spawnPoint.position + delta,
+                        new Color(baseColor.r, baseColor.g, baseColor.b, 0.6f));
                 }
             }
 
@@ -908,8 +931,8 @@ namespace EvacLogix.Sandbox.Rendering
         private void RenderSpawnPointMarker(string name, Vector2 center, Color color)
         {
             var haloColor = new Color(color.r, color.g, color.b, Mathf.Clamp01(color.a * 0.35f));
-            RenderCircle($"{name}_Halo", center, markerRadius * 1.2f, haloColor);
-            RenderCircle($"{name}_Ring", center, markerRadius * 0.8f, color);
+            RenderCircle($"{name}_Halo", center, markerRadius * 0.6f, haloColor);
+            RenderCircle($"{name}_Ring", center, markerRadius * 0.4f, color);
         }
 
         // Fire start marker: a black ellipse (matching the bounding box, so stretching makes an oval)

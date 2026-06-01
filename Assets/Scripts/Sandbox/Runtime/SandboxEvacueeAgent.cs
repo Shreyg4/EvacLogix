@@ -4,6 +4,8 @@ using UnityEngine.AI;
 namespace EvacLogix.Sandbox.Runtime
 {
     [RequireComponent(typeof(SpriteRenderer))]
+    [RequireComponent(typeof(CircleCollider2D))]
+    [RequireComponent(typeof(Rigidbody2D))]
     public sealed class SandboxEvacueeAgent : MonoBehaviour
     {
         [SerializeField] private SandboxAgentProfile profile;
@@ -19,6 +21,8 @@ namespace EvacLogix.Sandbox.Runtime
         [SerializeField] private Color dangerColor = new(0.95f, 0.25f, 0.2f, 1f);
 
         private SpriteRenderer spriteRenderer;
+        private CircleCollider2D circleCollider;
+        private Rigidbody2D cachedRigidbody2D;
         private GameObject navAgentObject;
         private NavMeshAgent navMeshAgent;
         private float floorElevation;
@@ -30,6 +34,7 @@ namespace EvacLogix.Sandbox.Runtime
         public float Health => health;
         public bool HasExited => hasExited;
         public Vector2 CurrentDestination => currentDestination;
+        public float Radius => GetProfileRadius();
         public Vector2 CurrentWorldPosition => navAgentObject != null
             ? new Vector2(navAgentObject.transform.position.x, navAgentObject.transform.position.z)
             : (Vector2)transform.position;
@@ -37,11 +42,30 @@ namespace EvacLogix.Sandbox.Runtime
         private void Awake()
         {
             spriteRenderer = GetComponent<SpriteRenderer>();
+            circleCollider = GetComponent<CircleCollider2D>();
+            cachedRigidbody2D = GetComponent<Rigidbody2D>();
             if (spriteRenderer.sprite == null)
             {
                 spriteRenderer.sprite = GenerateFallbackSprite();
             }
 
+            if (circleCollider != null)
+            {
+                circleCollider.radius = 0.5f;
+                circleCollider.offset = Vector2.zero;
+                circleCollider.isTrigger = false;
+            }
+
+            if (cachedRigidbody2D != null)
+            {
+                cachedRigidbody2D.bodyType = RigidbodyType2D.Kinematic;
+                cachedRigidbody2D.gravityScale = 0f;
+                cachedRigidbody2D.freezeRotation = true;
+                cachedRigidbody2D.interpolation = RigidbodyInterpolation2D.Interpolate;
+                cachedRigidbody2D.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
+            }
+
+            UpdateVisualFootprint();
             spriteRenderer.color = healthyColor;
         }
 
@@ -66,6 +90,7 @@ namespace EvacLogix.Sandbox.Runtime
             repathTimer = 0f;
             currentDestination = startPosition;
             EnsureNavAgentObject();
+            UpdateVisualFootprint();
             SyncNavAgentPosition(startPosition);
             SyncVisualPosition();
             RefreshTint();
@@ -127,6 +152,11 @@ namespace EvacLogix.Sandbox.Runtime
             {
                 navMeshAgent.isStopped = true;
                 navMeshAgent.ResetPath();
+                // Pull the finished agent out of the crowd simulation so still-evacuating agents stop
+                // avoiding it and can path straight through, instead of cramming behind it at the exit.
+                // The agent no longer moves, so disabling the component is safe; the sprite stays put.
+                navMeshAgent.obstacleAvoidanceType = ObstacleAvoidanceType.NoObstacleAvoidance;
+                navMeshAgent.enabled = false;
             }
 
             if (spriteRenderer != null)
@@ -233,7 +263,20 @@ namespace EvacLogix.Sandbox.Runtime
             navMeshAgent.speed = GetProfileSpeed();
             navMeshAgent.acceleration = Mathf.Max(1f, GetProfileSpeed() * 4f);
             navMeshAgent.stoppingDistance = GetProfileExitReachDistance();
-            navMeshAgent.obstacleAvoidanceType = ObstacleAvoidanceType.HighQualityObstacleAvoidance;
+            navMeshAgent.obstacleAvoidanceType = profile != null
+                ? profile.ObstacleAvoidanceQuality
+                : ObstacleAvoidanceType.HighQualityObstacleAvoidance;
+        }
+
+        // Sets the agent's RVO avoidance priority (0-99, lower = higher priority). Assigned a seeded
+        // random value per agent at spawn so contested space is resolved by one agent yielding rather
+        // than both mirroring each other into a jitter.
+        public void SetAvoidancePriority(int priority)
+        {
+            if (navMeshAgent != null)
+            {
+                navMeshAgent.avoidancePriority = Mathf.Clamp(priority, 0, 99);
+            }
         }
 
         private void SyncNavAgentPosition(Vector2 worldPosition)
@@ -272,6 +315,17 @@ namespace EvacLogix.Sandbox.Runtime
 
             var navPosition = navAgentObject.transform.position;
             transform.position = new Vector3(navPosition.x, navPosition.z, transform.position.z);
+        }
+
+        private void UpdateVisualFootprint()
+        {
+            var diameter = Mathf.Max(0.1f, GetProfileRadius() * 2f);
+            transform.localScale = new Vector3(diameter, diameter, 1f);
+            if (circleCollider != null)
+            {
+                circleCollider.radius = 0.5f;
+                circleCollider.offset = Vector2.zero;
+            }
         }
 
         private Vector3 ToNavPosition(Vector2 worldPosition)

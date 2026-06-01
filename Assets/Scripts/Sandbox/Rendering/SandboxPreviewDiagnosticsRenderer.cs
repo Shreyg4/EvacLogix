@@ -96,8 +96,8 @@ namespace EvacLogix.Sandbox.Rendering
                 {
                     foreach (var spawnPoint in layout.spawnPoints.Where(point => point.floorId == floor.floorId))
                     {
-                        RenderCircle($"SpawnPointHalo_{spawnPoint.spawnPointId}", spawnPoint.position, markerRadius * 1.35f, new Color(agentColor.r, agentColor.g, agentColor.b, 0.25f));
-                        RenderCircle($"SpawnPoint_{spawnPoint.spawnPointId}", spawnPoint.position, markerRadius * 0.85f, agentColor);
+                        RenderCircle($"SpawnPointHalo_{spawnPoint.spawnPointId}", spawnPoint.position, markerRadius * 0.675f, new Color(agentColor.r, agentColor.g, agentColor.b, 0.25f));
+                        RenderCircle($"SpawnPoint_{spawnPoint.spawnPointId}", spawnPoint.position, markerRadius * 0.425f, agentColor);
                     }
                 }
             }
@@ -106,6 +106,11 @@ namespace EvacLogix.Sandbox.Rendering
             {
                 foreach (var fireCell in fireSimulationService.ActiveFireCells.Where(cell => cell.floorId == floor.floorId))
                 {
+                    if (!fireSimulationService.IsVisuallyBurning(fireCell))
+                    {
+                        continue;
+                    }
+
                     var radius = markerRadius * (0.75f + Mathf.Clamp01(fireCell.intensity) * 0.95f);
                     var alpha = Mathf.Lerp(0.15f, 0.85f, Mathf.Clamp01(fireCell.intensity));
                     RenderCircle(
