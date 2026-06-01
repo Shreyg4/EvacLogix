@@ -32,6 +32,8 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private const float PortalClearMargin = 0.75f;
         private const float ImpassableThreshold = 0.99f;
         private const float FireRoutePenaltyWeight = 10f;
+        private const float CongestionAvoidanceRadius = 1.5f;
+        private const float CongestionRoutePenaltyWeight = 4f;
 
         private BuildingProjectData project;
         private SandboxFloorLayoutService layoutService;
@@ -107,11 +109,16 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         // is the NavMeshAgent's job; here we handle repath, exit arrival, and casualty resolution.
         public void UpdateAgents(float deltaTime)
         {
-            for (var i = 0; i < agents.Count; i += 1)
+            for (var i = agents.Count - 1; i >= 0; i -= 1)
             {
                 var agent = agents[i];
                 if (agent == null || resolvedAgentIds.Contains(agent.AgentId))
                 {
+                    if (agent == null)
+                    {
+                        agents.RemoveAt(i);
+                    }
+
                     continue;
                 }
 
@@ -128,6 +135,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 if (agent.Health <= 0f)
                 {
                     ResolveCasualty(agent);
+                    DespawnAgentAt(i);
                     continue;
                 }
 
@@ -136,10 +144,15 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                     if (target.isExit)
                     {
                         ResolveEvacuated(agent, target.objectId);
+                        DespawnAgentAt(i);
                     }
                     else if (target.isEscapeWindow)
                     {
                         ResolveWindowEscape(agent, target);
+                        if (resolvedAgentIds.Contains(agent.AgentId))
+                        {
+                            DespawnAgentAt(i);
+                        }
                     }
                     else
                     {
@@ -153,19 +166,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         {
             for (var i = 0; i < agents.Count; i += 1)
             {
-                if (agents[i] == null)
-                {
-                    continue;
-                }
-
-                if (Application.isPlaying)
-                {
-                    Destroy(agents[i].gameObject);
-                }
-                else
-                {
-                    DestroyImmediate(agents[i].gameObject);
-                }
+                DestroyAgentObject(agents[i]);
             }
 
             agents.Clear();
@@ -265,7 +266,10 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 }
 
                 var world = placement.ToWorld(node.localPosition);
-                var total = Vector2.Distance(position, world) + node.costToSafe + GetFireRoutePenalty(agent.FloorId, placement, position, world);
+                var total = Vector2.Distance(position, world) +
+                            node.costToSafe +
+                            GetFireRoutePenalty(agent.FloorId, placement, position, world) +
+                            GetCongestionRoutePenalty(agent, position, world);
                 if (total < bestCost)
                 {
                     bestCost = total;
@@ -310,7 +314,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 }
 
                 var world = sinkPlacement.ToWorld(sinks[i].localPosition);
-                var distance = Vector2.Distance(position, world);
+                var distance = Vector2.Distance(position, world) + GetCongestionRoutePenalty(agent, position, world);
                 if (distance < bestSinkDistance)
                 {
                     bestSinkDistance = distance;
@@ -411,6 +415,36 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             agent.MarkExited();
         }
 
+        private void DespawnAgentAt(int agentIndex)
+        {
+            if (agentIndex < 0 || agentIndex >= agents.Count)
+            {
+                return;
+            }
+
+            var agent = agents[agentIndex];
+            agents.RemoveAt(agentIndex);
+            DestroyAgentObject(agent);
+        }
+
+        private static void DestroyAgentObject(SandboxEvacueeAgent agent)
+        {
+            if (agent == null)
+            {
+                return;
+            }
+
+            agent.DespawnNow();
+            if (Application.isPlaying)
+            {
+                Destroy(agent.gameObject);
+            }
+            else
+            {
+                DestroyImmediate(agent.gameObject);
+            }
+        }
+
         // Escaping through a window applies the fall injury; fatal heights (or injury that drops the
         // agent) are casualties, otherwise the agent evacuates (counted under the window's id).
         private void ResolveWindowEscape(SandboxEvacueeAgent agent, SandboxBuildingRouteGraph.RouteNode node)
@@ -485,6 +519,50 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
 
             return penalty;
+        }
+
+        private float GetCongestionRoutePenalty(SandboxEvacueeAgent routedAgent, Vector2 from, Vector2 to)
+        {
+            if (routedAgent == null)
+            {
+                return 0f;
+            }
+
+            var radius = Mathf.Max(0.1f, CongestionAvoidanceRadius);
+            var penalty = 0f;
+            for (var i = 0; i < agents.Count; i += 1)
+            {
+                var other = agents[i];
+                if (other == null ||
+                    other.HasExited ||
+                    resolvedAgentIds.Contains(other.AgentId) ||
+                    string.Equals(other.AgentId, routedAgent.AgentId, StringComparison.Ordinal) ||
+                    !string.Equals(other.FloorId, routedAgent.FloorId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var distance = DistancePointToSegment(other.CurrentWorldPosition, from, to);
+                if (distance < radius)
+                {
+                    penalty += (1f - (distance / radius)) * CongestionRoutePenaltyWeight;
+                }
+            }
+
+            return penalty;
+        }
+
+        private static float DistancePointToSegment(Vector2 point, Vector2 start, Vector2 end)
+        {
+            var segment = end - start;
+            var lengthSquared = segment.sqrMagnitude;
+            if (lengthSquared <= 0.0001f)
+            {
+                return Vector2.Distance(point, start);
+            }
+
+            var t = Mathf.Clamp01(Vector2.Dot(point - start, segment) / lengthSquared);
+            return Vector2.Distance(point, start + segment * t);
         }
 
         // Slows an agent while it stands on a soft (non-impassable) obstacle, per its speed penalty.

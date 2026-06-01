@@ -95,6 +95,7 @@ namespace EvacLogix.Tests.EditMode
 
                 Assert.That(simulationService.ActiveAgents.Count, Is.EqualTo(0));
                 Assert.That(agent == null, Is.True);
+                Assert.That(GameObject.Find("Agent-fixture_NavMeshAgent"), Is.Null);
                 Assert.That(simulationService.LastSimulationRunReport.summary.completedSuccessfully, Is.True);
                 Assert.That(simulationService.LastSimulationRunReport.summary.evacuatedAgents, Is.EqualTo(1));
                 Assert.That(simulationService.LastSimulationRunReport.summary.deadAgents, Is.EqualTo(0));

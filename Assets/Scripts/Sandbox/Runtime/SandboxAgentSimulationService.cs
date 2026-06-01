@@ -80,6 +80,8 @@ namespace EvacLogix.Sandbox.Runtime
         [SerializeField] private string agentRootName = "AgentRoot";
         [SerializeField] private bool autoStartOnPreviewRun = true;
         [SerializeField] private float heatmapCellSize = 1f;
+        [SerializeField] private float congestionAvoidanceRadius = 1.5f;
+        [SerializeField] private float congestionRoutePenaltyWeight = 4f;
         [SerializeField] private List<SandboxEvacueeAgent> activeAgents = new();
         [SerializeField] private SandboxSimulationRunReportData lastSimulationRunReport = new();
 
@@ -260,7 +262,7 @@ namespace EvacLogix.Sandbox.Runtime
                 agentSpawnFloorIds[agent.AgentId] = sample.floorId;
                 AccumulateTravelDensity(project, agent, 0f);
 
-                var destination = ChooseExitDestination(project, sample.floorId, sample.position, fireOrigins, fireCells, out var exitId);
+                var destination = ChooseExitDestination(project, sample.floorId, sample.position, fireOrigins, fireCells, sample.spawnPointId, out var exitId);
                 if (!string.IsNullOrWhiteSpace(exitId))
                 {
                     agent.SetDestination(exitId, destination);
@@ -339,7 +341,7 @@ namespace EvacLogix.Sandbox.Runtime
                 var position = agent.CurrentWorldPosition;
                 if (agent.NeedsRepath() || agent.IsAtDestination())
                 {
-                    var destination = ChooseExitDestination(project, agent.FloorId, position, fireOrigins, fireCells, out var exitId);
+                    var destination = ChooseExitDestination(project, agent.FloorId, position, fireOrigins, fireCells, agent.AgentId, out var exitId);
                     if (!string.IsNullOrWhiteSpace(exitId))
                     {
                         agent.SetDestination(exitId, destination);
@@ -391,6 +393,7 @@ namespace EvacLogix.Sandbox.Runtime
             Vector2 origin,
             IReadOnlyList<FireOriginData> fireOrigins,
             IReadOnlyList<SandboxFireCellData> fireCells,
+            string ignoredAgentId,
             out string exitId)
         {
             exitId = string.Empty;
@@ -412,7 +415,8 @@ namespace EvacLogix.Sandbox.Runtime
                 var exitZone = floor.exits[i];
                 var distance = Vector2.Distance(origin, exitZone.center);
                 var firePenalty = GetFirePenalty(origin, exitZone.center, floorId, fireOrigins, fireCells);
-                var score = distance + firePenalty - Mathf.Max(0f, exitZone.priority * 0.25f);
+                var congestionPenalty = GetCongestionRoutePenalty(floorId, origin, exitZone.center, ignoredAgentId);
+                var score = distance + firePenalty + congestionPenalty - Mathf.Max(0f, exitZone.priority * 0.25f);
                 if (score < bestScore)
                 {
                     bestScore = score;
@@ -469,6 +473,44 @@ namespace EvacLogix.Sandbox.Runtime
             }
 
             return penalty;
+        }
+
+        private float GetCongestionRoutePenalty(string floorId, Vector2 origin, Vector2 destination, string ignoredAgentId)
+        {
+            var radius = Mathf.Max(0.1f, congestionAvoidanceRadius);
+            var penalty = 0f;
+            for (var i = 0; i < activeAgents.Count; i += 1)
+            {
+                var agent = activeAgents[i];
+                if (agent == null ||
+                    agent.HasExited ||
+                    string.Equals(agent.AgentId, ignoredAgentId, StringComparison.Ordinal) ||
+                    !string.Equals(agent.FloorId, floorId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var distance = DistancePointToSegment(agent.CurrentWorldPosition, origin, destination);
+                if (distance < radius)
+                {
+                    penalty += (1f - (distance / radius)) * Mathf.Max(0f, congestionRoutePenaltyWeight);
+                }
+            }
+
+            return penalty;
+        }
+
+        private static float DistancePointToSegment(Vector2 point, Vector2 start, Vector2 end)
+        {
+            var segment = end - start;
+            var lengthSquared = segment.sqrMagnitude;
+            if (lengthSquared <= 0.0001f)
+            {
+                return Vector2.Distance(point, start);
+            }
+
+            var t = Mathf.Clamp01(Vector2.Dot(point - start, segment) / lengthSquared);
+            return Vector2.Distance(point, start + segment * t);
         }
 
         private float ComputeFireExposure(Vector2 position, IReadOnlyList<FireOriginData> fireOrigins, IReadOnlyList<SandboxFireCellData> fireCells, string floorId)
@@ -573,10 +615,12 @@ namespace EvacLogix.Sandbox.Runtime
 
             if (Application.isPlaying)
             {
+                agent.DespawnNow();
                 UnityEngine.Object.Destroy(agent.gameObject);
             }
             else
             {
+                agent.DespawnNow();
                 UnityEngine.Object.DestroyImmediate(agent.gameObject);
             }
         }

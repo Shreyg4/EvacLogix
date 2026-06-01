@@ -135,6 +135,20 @@ namespace EvacLogix.Sandbox.Runtime
             }
         }
 
+        public void DespawnNow()
+        {
+            hasExited = true;
+            if (navMeshAgent != null)
+            {
+                navMeshAgent.isStopped = true;
+                navMeshAgent.ResetPath();
+                navMeshAgent.enabled = false;
+            }
+
+            DestroyNavAgentObject();
+            gameObject.SetActive(false);
+        }
+
         public void Tick(float deltaTime, Vector2 movement, float fireExposure)
         {
             Tick(deltaTime, fireExposure);
