@@ -1,3 +1,4 @@
+using System.IO;
 using System.Linq;
 using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Authoring.Commands;
@@ -186,6 +187,74 @@ namespace EvacLogix.Tests.EditMode
             var copiedPortal = sourceFloor.teleportPortals.Single(portal => portal.teleportPortalId != sourcePortalId);
             Assert.That(copiedPortal.targetFloorId, Is.EqualTo(string.Empty));
             Assert.That(copiedPortal.targetTeleportPortalId, Is.EqualTo(string.Empty));
+
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void SaveLoadService_SavesLoadsAndDeletesBrowserLibraryProjects()
+        {
+            var host = CreatePhase8Host(
+                out var workspaceService,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _);
+            var saveLoadService = host.GetComponent<SandboxSaveLoadService>();
+            var libraryRoot = Path.Combine(Application.temporaryCachePath, "EvacLogixTests", nameof(SaveLoadService_SavesLoadsAndDeletesBrowserLibraryProjects));
+            if (Directory.Exists(libraryRoot))
+            {
+                Directory.Delete(libraryRoot, true);
+            }
+
+            saveLoadService.ConfigureProjectLibrary(libraryRoot);
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate, "Library Project");
+            var originalProjectId = workspaceService.ActiveProject.projectId;
+
+            Assert.That(saveLoadService.SaveActiveProjectToLibrary(), Is.True);
+            var savedProjects = saveLoadService.GetSavedProjects();
+            Assert.That(savedProjects.Length, Is.EqualTo(1));
+            Assert.That(savedProjects[0].displayName, Is.EqualTo("Library Project"));
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.BlankTemplate, "Other Project");
+            Assert.That(saveLoadService.LoadProjectFromLibrary(originalProjectId), Is.Not.Null);
+            Assert.That(workspaceService.ActiveProject.projectId, Is.EqualTo(originalProjectId));
+            Assert.That(workspaceService.ActiveProject.metadata.buildingName, Is.EqualTo("Library Project"));
+
+            Assert.That(saveLoadService.DeleteProjectFromLibrary(originalProjectId), Is.True);
+            Assert.That(saveLoadService.GetSavedProjects(), Is.Empty);
+
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void SaveLoadService_ImportedJsonIsUnsavedUntilUserSaves()
+        {
+            var host = CreatePhase8Host(
+                out var workspaceService,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _);
+            var saveLoadService = host.GetComponent<SandboxSaveLoadService>();
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate, "Imported Project");
+            var json = saveLoadService.SerializeActiveProject();
+
+            Assert.That(saveLoadService.LoadProjectFromJson(json), Is.Not.Null);
+            Assert.That(saveLoadService.HasUnsavedChanges, Is.True);
 
             Object.DestroyImmediate(host);
         }

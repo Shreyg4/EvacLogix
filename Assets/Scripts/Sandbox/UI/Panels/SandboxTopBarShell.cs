@@ -32,10 +32,12 @@ namespace EvacLogix.Sandbox.UI.Panels
         public bool IsBrowserFileActionBusy => browserFileActionCoordinator != null && browserFileActionCoordinator.IsBusy;
         public bool UsesBrowserPersistenceMode => saveLoadService != null && saveLoadService.UsesBrowserPersistenceMode;
         public string PersistenceModeSummary => UsesBrowserPersistenceMode
-            ? "Browser mode uses local autosave storage and browser-based import/export instead of arbitrary file paths."
+            ? "Browser mode saves projects to this browser/device. Use JSON import/export to move projects elsewhere."
             : "Working files are stored using local project paths.";
         public bool HasRecoveryPrompt => fileActionService != null && fileActionService.HasRecoveryPrompt;
         public string RecoveryPromptMessage => fileActionService?.RecoveryPromptMessage ?? string.Empty;
+        public bool HasUnsavedChanges => saveLoadService != null && saveLoadService.HasUnsavedChanges;
+        public bool HasSavedBrowserProjects => saveLoadService != null && saveLoadService.GetSavedProjects().Length > 0;
         public bool IsPreviewModeActive => previewService != null && previewService.IsPreviewModeActive;
         public string PreviewSummary => previewService?.LastPreviewReport?.summary ?? string.Empty;
         public bool HasCompletedSimulationRunReport => agentSimulationService != null && agentSimulationService.HasCompletedSimulationRunReport;
@@ -123,6 +125,52 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             RefreshLifecycleState();
             return didSave;
+        }
+
+        public bool SaveProjectToBrowserLibrary(string projectName = "")
+        {
+            var didSave = saveLoadService != null && saveLoadService.SaveActiveProjectToLibrary(projectName);
+            if (statusBar != null)
+            {
+                statusBar.StatusMessage = didSave
+                    ? "Saved sandbox project to browser storage."
+                    : saveLoadService?.LastError ?? "Project was not saved.";
+            }
+
+            RefreshLifecycleState();
+            return didSave;
+        }
+
+        public SandboxSavedProjectInfo[] GetSavedBrowserProjects()
+        {
+            return saveLoadService?.GetSavedProjects() ?? System.Array.Empty<SandboxSavedProjectInfo>();
+        }
+
+        public bool LoadBrowserProject(string projectId)
+        {
+            var project = saveLoadService?.LoadProjectFromLibrary(projectId);
+            if (statusBar != null)
+            {
+                statusBar.StatusMessage = project != null
+                    ? "Loaded sandbox project from browser storage."
+                    : saveLoadService?.LastError ?? "Project was not loaded.";
+            }
+
+            RefreshLifecycleState();
+            return project != null;
+        }
+
+        public bool DeleteBrowserProject(string projectId)
+        {
+            var didDelete = saveLoadService != null && saveLoadService.DeleteProjectFromLibrary(projectId);
+            if (statusBar != null)
+            {
+                statusBar.StatusMessage = didDelete
+                    ? "Deleted saved sandbox project."
+                    : saveLoadService?.LastError ?? "Project was not deleted.";
+            }
+
+            return didDelete;
         }
 
         public bool LoadProject(string filePath)

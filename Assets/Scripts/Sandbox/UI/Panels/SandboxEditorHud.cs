@@ -38,6 +38,15 @@ namespace EvacLogix.Sandbox.UI.Panels
             Basement = 2,
         }
 
+        private enum ProjectLibraryModalMode
+        {
+            None = 0,
+            Load = 1,
+            SaveName = 2,
+            ConfirmUnsaved = 3,
+            ConfirmDelete = 4,
+        }
+
         private enum FloorCategory
         {
             All = 0,
@@ -64,6 +73,13 @@ namespace EvacLogix.Sandbox.UI.Panels
         [SerializeField] private Vector2 floorTabsScrollPosition;
         [SerializeField] private Vector2 inspectorScrollPosition;
         [SerializeField] private Vector2 validationScrollPosition;
+        [SerializeField] private Vector2 newProjectScrollPosition;
+        [SerializeField] private Vector2 projectLibraryScrollPosition;
+        [SerializeField] private ProjectLibraryModalMode projectLibraryModalMode = ProjectLibraryModalMode.None;
+        [SerializeField] private string saveProjectNameDraft = string.Empty;
+        [SerializeField] private string pendingDeleteProjectId = string.Empty;
+        [SerializeField] private string pendingDeleteProjectName = string.Empty;
+        [SerializeField] private string projectLibraryMessage = string.Empty;
         [SerializeField] private FloorCategory selectedFloorCategory = FloorCategory.All;
 
         private SandboxTopBarShell topBarShell;
@@ -167,6 +183,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         private bool hasLoggedWebGlDependencyStatus;
         private bool hasLoggedBrowserActionMode;
         private float uiScale = 1f;
+        private Action pendingUnsavedContinuation;
 
         private const float MinUiScale = 1f;
         private const float MaxUiScale = 2f;
@@ -262,6 +279,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                     DrawNewProjectModal();
                 }
 
+                DrawProjectLibraryModal();
                 if (showReturnToMenuConfirm)
                 {
                     DrawReturnToMenuModal();
@@ -321,12 +339,12 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUILayout.Label($"{projectName}  |  {topBarShell?.LifecycleStateLabel ?? "Draft"}  |  {topBarShell?.ModeLabel ?? "Edit Mode"}", bodyStyle);
 
             GUILayout.BeginHorizontal();
-            DrawActionButton("New", () => topBarShell?.OpenNewProjectDialog());
+            DrawActionButton("New", RequestNewProject);
 
             if (topBarShell != null && topBarShell.UsesBrowserHostedFileActions)
             {
-                DrawActionButton("Save", () => { }, false);
-                DrawActionButton("Load", () => { }, false);
+                DrawActionButton("Save", () => { SaveCurrentBrowserProject(); }, workspaceService?.ActiveProject != null);
+                DrawActionButton("Load", RequestLoadBrowserProject, topBarShell.HasSavedBrowserProjects);
                 DrawActionButton("Export JSON", () => { topBarShell.RequestBrowserProjectJsonExport(); }, workspaceService?.ActiveProject != null && !topBarShell.IsBrowserFileActionBusy);
                 DrawActionButton("Import JSON", () => { topBarShell.RequestBrowserProjectJsonImport(); }, !topBarShell.IsBrowserFileActionBusy);
             }
@@ -2010,12 +2028,44 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUI.color = previousColor;
 
             GUILayout.BeginArea(modalRect, GUIContent.none, modalWindowStyle ?? GUI.skin.window);
+            newProjectScrollPosition = GUILayout.BeginScrollView(
+                newProjectScrollPosition,
+                false,
+                true,
+                GUILayout.Height(Mathf.Max(120f, modalRect.height - 24f)));
             GUILayout.Label("Start a Sandbox Project", headerStyle);
-            GUILayout.Label("Choose a starting template to unlock the tool palette and authoring overlays.", bodyStyle);
+            GUILayout.Label("Choose a saved project or name a new project to unlock the editor.", bodyStyle);
             GUILayout.Space(8f);
+
+            if (topBarShell != null && topBarShell.UsesBrowserHostedFileActions && topBarShell.HasSavedBrowserProjects)
+            {
+                DrawActionButton("Load Saved Project", () =>
+                {
+                    newProjectDialogShell?.Close();
+                    projectLibraryModalMode = ProjectLibraryModalMode.Load;
+                    projectLibraryMessage = string.Empty;
+                });
+                GUILayout.Space(8f);
+            }
+
+            GUILayout.Label("Project Name", subheaderStyle);
+            newProjectDialogShell.ProjectNameDraft = GUILayout.TextField(newProjectDialogShell.ProjectNameDraft ?? string.Empty);
+            if (!string.IsNullOrWhiteSpace(newProjectDialogShell.ValidationMessage))
+            {
+                GUILayout.Label(newProjectDialogShell.ValidationMessage, bodyStyle);
+            }
 
             DrawActionButton("Create Default Project", () => newProjectDialogShell?.CreateDefaultProject());
             DrawActionButton("Create Blank Project", () => newProjectDialogShell?.CreateBlankProject());
+
+            if (topBarShell != null && topBarShell.UsesBrowserHostedFileActions)
+            {
+                DrawActionButton("Import JSON", () =>
+                {
+                    newProjectDialogShell?.Close();
+                    topBarShell.RequestBrowserProjectJsonImport();
+                }, !topBarShell.IsBrowserFileActionBusy);
+            }
 
             if (workspaceService?.ActiveProject != null)
             {
@@ -2024,7 +2074,238 @@ namespace EvacLogix.Sandbox.UI.Panels
 
             GUILayout.Space(10f);
             GUILayout.Label("Tip: after creating a project, import a blueprint path in the Inspector and then pick a wall tool on the left.", bodyStyle);
+            GUILayout.EndScrollView();
             GUILayout.EndArea();
+        }
+
+        private void DrawProjectLibraryModal()
+        {
+            if (projectLibraryModalMode == ProjectLibraryModalMode.None)
+            {
+                return;
+            }
+            var previousColor = GUI.color;
+            GUI.color = ModalBackdropColor;
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), solidTexture ?? Texture2D.whiteTexture);
+            GUI.color = previousColor;
+
+            GUILayout.BeginArea(modalRect, GUIContent.none, modalWindowStyle ?? GUI.skin.window);
+            switch (projectLibraryModalMode)
+            {
+                case ProjectLibraryModalMode.Load:
+                    DrawLoadProjectModalContents();
+                    break;
+                case ProjectLibraryModalMode.SaveName:
+                    DrawSaveNameModalContents();
+                    break;
+                case ProjectLibraryModalMode.ConfirmUnsaved:
+                    DrawUnsavedChangesModalContents();
+                    break;
+                case ProjectLibraryModalMode.ConfirmDelete:
+                    DrawDeleteProjectModalContents();
+                    break;
+            }
+
+            GUILayout.EndArea();
+        }
+
+        private void DrawLoadProjectModalContents()
+        {
+            GUILayout.Label("Load Saved Project", headerStyle);
+            GUILayout.Label("Saved projects live in this browser/device. Use Import JSON for files from elsewhere.", bodyStyle);
+            GUILayout.Space(8f);
+
+            var projects = topBarShell?.GetSavedBrowserProjects() ?? Array.Empty<SandboxSavedProjectInfo>();
+            if (projects.Length == 0)
+            {
+                GUILayout.Label("No saved projects yet.", bodyStyle);
+            }
+            else
+            {
+                var scrollHeight = Mathf.Clamp(projects.Length * 84f, 84f, modalRect.height - 130f);
+                projectLibraryScrollPosition = GUILayout.BeginScrollView(
+                    projectLibraryScrollPosition,
+                    false,
+                    true,
+                    GUILayout.Height(scrollHeight));
+                for (var i = 0; i < projects.Length; i += 1)
+                {
+                    var project = projects[i];
+                    GUILayout.BeginVertical(insetPanelBoxStyle ?? GUI.skin.box);
+                    GUILayout.Label(project.displayName, subheaderStyle);
+                    GUILayout.Label($"Last saved: {FormatProjectTimestamp(project.savedUtc)}", bodyStyle);
+                    GUILayout.BeginHorizontal();
+                    DrawActionButton("Open", () =>
+                    {
+                        topBarShell?.LoadBrowserProject(project.projectId);
+                        projectLibraryModalMode = ProjectLibraryModalMode.None;
+                    });
+                    DrawActionButton("Delete", () =>
+                    {
+                        pendingDeleteProjectId = project.projectId;
+                        pendingDeleteProjectName = project.displayName;
+                        projectLibraryModalMode = ProjectLibraryModalMode.ConfirmDelete;
+                    });
+                    GUILayout.EndHorizontal();
+                    GUILayout.EndVertical();
+                }
+
+                GUILayout.EndScrollView();
+            }
+
+            if (!string.IsNullOrWhiteSpace(projectLibraryMessage))
+            {
+                GUILayout.Label(projectLibraryMessage, bodyStyle);
+            }
+
+            DrawActionButton("Cancel", () => projectLibraryModalMode = ProjectLibraryModalMode.None);
+        }
+
+        private void DrawSaveNameModalContents()
+        {
+            GUILayout.Label("Name Project", headerStyle);
+            GUILayout.Label("A project name is required before saving to browser storage.", bodyStyle);
+            saveProjectNameDraft = GUILayout.TextField(saveProjectNameDraft ?? string.Empty);
+            if (!string.IsNullOrWhiteSpace(projectLibraryMessage))
+            {
+                GUILayout.Label(projectLibraryMessage, bodyStyle);
+            }
+
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Save", () =>
+            {
+                if (string.IsNullOrWhiteSpace(saveProjectNameDraft))
+                {
+                    projectLibraryMessage = "Project name is required.";
+                    return;
+                }
+
+                if (topBarShell?.SaveProjectToBrowserLibrary(saveProjectNameDraft.Trim()) == true)
+                {
+                    projectLibraryMessage = string.Empty;
+                    ContinueAfterSave();
+                }
+            });
+            DrawActionButton("Cancel", () => projectLibraryModalMode = ProjectLibraryModalMode.None);
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawUnsavedChangesModalContents()
+        {
+            GUILayout.Label("Unsaved Changes", headerStyle);
+            GUILayout.Label("Save this project before continuing, discard changes, or cancel.", bodyStyle);
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Save and Continue", () =>
+            {
+                if (!SaveCurrentBrowserProject())
+                {
+                    return;
+                }
+
+                ContinueAfterSave();
+            });
+            DrawActionButton("Discard Changes", () =>
+            {
+                var continuation = pendingUnsavedContinuation;
+                pendingUnsavedContinuation = null;
+                projectLibraryModalMode = ProjectLibraryModalMode.None;
+                continuation?.Invoke();
+            });
+            DrawActionButton("Cancel", () =>
+            {
+                pendingUnsavedContinuation = null;
+                projectLibraryModalMode = ProjectLibraryModalMode.None;
+            });
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawDeleteProjectModalContents()
+        {
+            GUILayout.Label("Delete Project", headerStyle);
+            GUILayout.Label($"Delete '{pendingDeleteProjectName}' from this browser?", bodyStyle);
+            GUILayout.BeginHorizontal();
+            DrawActionButton("Delete Project", () =>
+            {
+                topBarShell?.DeleteBrowserProject(pendingDeleteProjectId);
+                pendingDeleteProjectId = string.Empty;
+                pendingDeleteProjectName = string.Empty;
+                projectLibraryModalMode = ProjectLibraryModalMode.Load;
+            });
+            DrawActionButton("Cancel", () => projectLibraryModalMode = ProjectLibraryModalMode.Load);
+            GUILayout.EndHorizontal();
+        }
+
+        private void RequestNewProject()
+        {
+            RunAfterUnsavedCheck(OpenNewProjectDialog);
+        }
+
+        private void OpenNewProjectDialog()
+        {
+            pendingUnsavedContinuation = null;
+            projectLibraryModalMode = ProjectLibraryModalMode.None;
+            projectLibraryMessage = string.Empty;
+
+            if (newProjectDialogShell != null)
+            {
+                newProjectDialogShell.Open();
+                return;
+            }
+
+            topBarShell?.OpenNewProjectDialog();
+        }
+
+        private void RequestLoadBrowserProject()
+        {
+            RunAfterUnsavedCheck(() =>
+            {
+                projectLibraryModalMode = ProjectLibraryModalMode.Load;
+                projectLibraryMessage = string.Empty;
+            });
+        }
+
+        private bool SaveCurrentBrowserProject()
+        {
+            var currentName = workspaceService?.ActiveProject?.metadata?.buildingName ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(currentName))
+            {
+                saveProjectNameDraft = "New Project";
+                projectLibraryMessage = string.Empty;
+                projectLibraryModalMode = ProjectLibraryModalMode.SaveName;
+                return false;
+            }
+
+            return topBarShell?.SaveProjectToBrowserLibrary(currentName) == true;
+        }
+
+        private void RunAfterUnsavedCheck(Action continuation)
+        {
+            if (topBarShell != null && topBarShell.HasUnsavedChanges)
+            {
+                pendingUnsavedContinuation = continuation;
+                projectLibraryModalMode = ProjectLibraryModalMode.ConfirmUnsaved;
+                return;
+            }
+
+            continuation?.Invoke();
+        }
+
+        private void ContinueAfterSave()
+        {
+            var continuation = pendingUnsavedContinuation;
+            pendingUnsavedContinuation = null;
+            projectLibraryModalMode = ProjectLibraryModalMode.None;
+            continuation?.Invoke();
+        }
+
+        private static string FormatProjectTimestamp(string timestamp)
+        {
+            if (DateTime.TryParse(timestamp, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+            {
+                return parsed.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+            }
+
+            return "Unknown";
         }
 
         private void DrawReturnToMenuModal()
@@ -2047,7 +2328,6 @@ namespace EvacLogix.Sandbox.UI.Panels
             DrawActionButton("Cancel", () => showReturnToMenuConfirm = false);
             GUILayout.EndArea();
         }
-
         private void DrawInspectorSection(string title)
         {
             GUILayout.Space(8f);
@@ -2311,8 +2591,15 @@ namespace EvacLogix.Sandbox.UI.Panels
             };
 
             panelBoxStyle ??= new GUIStyle(GUI.skin?.box ?? GUIStyle.none);
-            insetPanelBoxStyle ??= new GUIStyle(GUI.skin?.box ?? GUIStyle.none);
-            modalWindowStyle ??= new GUIStyle(GUI.skin?.window ?? GUIStyle.none);
+            insetPanelBoxStyle ??= new GUIStyle(GUI.skin?.box ?? GUIStyle.none)
+            {
+                padding = new RectOffset(8, 8, 8, 8),
+                margin = new RectOffset(0, 0, 4, 4)
+            };
+            modalWindowStyle ??= new GUIStyle(GUI.skin?.window ?? GUIStyle.none)
+            {
+                padding = new RectOffset(12, 12, 12, 12)
+            };
 
             ApplySolidBackground(panelBoxStyle, hudPanelTexture);
             ApplySolidBackground(insetPanelBoxStyle, hudInsetPanelTexture);
@@ -2443,7 +2730,18 @@ namespace EvacLogix.Sandbox.UI.Panels
             ApplyCustomPanelPositions();
 
             var modalWidth = Mathf.Min(480f, logicalScreenWidth - 40f);
-            var modalHeight = 210f;
+            float modalHeight;
+            if (projectLibraryModalMode == ProjectLibraryModalMode.Load)
+            {
+                var projectCount = topBarShell?.GetSavedBrowserProjects().Length ?? 0;
+                var scrollHeight = Mathf.Clamp(projectCount * 84f, 84f, 300f);
+                modalHeight = Mathf.Min(150f + scrollHeight, logicalScreenHeight - 40f);
+            }
+            else
+            {
+                modalHeight = 210f;
+            }
+
             modalRect = new Rect(
                 (logicalScreenWidth - modalWidth) * 0.5f,
                 (logicalScreenHeight - modalHeight) * 0.5f,
@@ -2674,7 +2972,8 @@ namespace EvacLogix.Sandbox.UI.Panels
                 || inspectorRect.Contains(guiPoint)
                 || validationRect.Contains(guiPoint)
                 || statusBarRect.Contains(guiPoint)
-                || (newProjectDialogShell != null && newProjectDialogShell.IsOpen);
+                || (newProjectDialogShell != null && newProjectDialogShell.IsOpen)
+                || projectLibraryModalMode != ProjectLibraryModalMode.None;
 
             inputRouter.SetManualOverride(isOverHud ? SandboxInputTarget.UI : SandboxInputTarget.None);
         }

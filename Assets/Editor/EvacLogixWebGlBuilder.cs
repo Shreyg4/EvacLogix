@@ -8,6 +8,7 @@ namespace EvacLogix.Editor
 {
     public static class EvacLogixWebGlBuilder
     {
+        [UnityEditor.MenuItem("EvacLogix/Build WebGL")]
         public static void Build()
         {
             var outputPath = Path.GetFullPath("EvacLogixBuild");
