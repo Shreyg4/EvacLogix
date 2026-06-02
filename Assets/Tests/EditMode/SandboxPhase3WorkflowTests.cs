@@ -245,15 +245,37 @@ namespace EvacLogix.Tests.EditMode
 
             Assert.That(workspace.ActiveProject, Is.Not.Null);
             Assert.That(workspace.ActiveProject.floors.Count, Is.EqualTo(1));
+            Assert.That(workspace.ActiveProject.metadata.buildingName, Is.EqualTo("New Project"));
             Assert.That(onboarding.IsVisible, Is.True);
             Assert.That(onboarding.OnboardingSteps.Count, Is.GreaterThanOrEqualTo(4));
-            Assert.That(statusBar.StatusMessage, Is.EqualTo("Created default sandbox project."));
+            Assert.That(statusBar.StatusMessage, Is.EqualTo("Created default sandbox project 'New Project'."));
             Assert.That(dialog.IsOpen, Is.False);
 
             Object.DestroyImmediate(dialogObject);
             Object.DestroyImmediate(statusBarObject);
             Object.DestroyImmediate(overlayObject);
             Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void EditorHud_NewButtonOpensDialogDirectlyWhenTopBarIsUnavailable()
+        {
+            var dialogObject = new GameObject("Dialog");
+            var dialog = dialogObject.AddComponent<SandboxNewProjectDialogShell>();
+            dialog.SendMessage("Awake");
+            dialog.Close();
+
+            var hudObject = new GameObject("Hud");
+            var hud = hudObject.AddComponent<SandboxEditorHud>();
+            hud.SendMessage("Awake");
+
+            hud.SendMessage("RequestNewProject", SendMessageOptions.DontRequireReceiver);
+
+            Assert.That(dialog.IsOpen, Is.True);
+            Assert.That(dialog.ProjectNameDraft, Is.EqualTo("New Project"));
+
+            Object.DestroyImmediate(hudObject);
+            Object.DestroyImmediate(dialogObject);
         }
 
         [Test]

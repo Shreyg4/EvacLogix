@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/Applications/Unity/Hub/Editor/6000.4.0f1/Unity.app/Contents/MacOS/Unity -quit -batchmode -projectPath '/Users/shreyassundarganesh/Documents/382 AI/EvacLogix' -buildTarget WebGL -executeMethod EvacLogix.Editor.EvacLogixWebGlBuilder.Build -logFile /tmp/unity-build.log)",
+      "Bash(echo \"Exit code: $?\")"
+    ]
+  }
+}

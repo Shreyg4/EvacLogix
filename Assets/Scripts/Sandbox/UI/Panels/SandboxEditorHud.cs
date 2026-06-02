@@ -86,6 +86,10 @@ namespace EvacLogix.Sandbox.UI.Panels
         private GUIStyle bodyStyle;
         private GUIStyle activeToolButtonStyle;
         private GUIStyle collapseToggleStyle;
+        private GUIStyle modalWindowStyle;
+        private GUIStyle insetPanelBoxStyle;
+        private Texture2D solidTexture;
+        private static readonly Color ModalBackdropColor = new Color(0f, 0f, 0f, 0.5f);
         private RectOffset buttonPadding;
 
         private const float CollapsedPanelHeight = 30f;
@@ -1441,11 +1445,12 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
             else
             {
+                var scrollHeight = Mathf.Clamp(projects.Length * 84f, 84f, modalRect.height - 130f);
                 projectLibraryScrollPosition = GUILayout.BeginScrollView(
                     projectLibraryScrollPosition,
                     false,
                     true,
-                    GUILayout.Height(240f));
+                    GUILayout.Height(scrollHeight));
                 for (var i = 0; i < projects.Length; i += 1)
                 {
                     var project = projects[i];
@@ -1476,7 +1481,7 @@ namespace EvacLogix.Sandbox.UI.Panels
                 GUILayout.Label(projectLibraryMessage, bodyStyle);
             }
 
-            DrawActionButton("Close", () => projectLibraryModalMode = ProjectLibraryModalMode.None);
+            DrawActionButton("Cancel", () => projectLibraryModalMode = ProjectLibraryModalMode.None);
         }
 
         private void DrawSaveNameModalContents()
@@ -1555,9 +1560,21 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void RequestNewProject()
         {
+            RunAfterUnsavedCheck(OpenNewProjectDialog);
+        }
+
+        private void OpenNewProjectDialog()
+        {
             pendingUnsavedContinuation = null;
             projectLibraryModalMode = ProjectLibraryModalMode.None;
             projectLibraryMessage = string.Empty;
+
+            if (newProjectDialogShell != null)
+            {
+                newProjectDialogShell.Open();
+                return;
+            }
+
             topBarShell?.OpenNewProjectDialog();
         }
 
@@ -1855,6 +1872,24 @@ namespace EvacLogix.Sandbox.UI.Panels
                 margin = new RectOffset(0, 0, 0, 0)
             };
 
+            modalWindowStyle ??= new GUIStyle(GUI.skin?.window ?? GUIStyle.none)
+            {
+                padding = new RectOffset(12, 12, 12, 12)
+            };
+
+            insetPanelBoxStyle ??= new GUIStyle(GUI.skin?.box ?? GUIStyle.none)
+            {
+                padding = new RectOffset(8, 8, 8, 8),
+                margin = new RectOffset(0, 0, 4, 4)
+            };
+
+            if (solidTexture == null)
+            {
+                solidTexture = new Texture2D(1, 1);
+                solidTexture.SetPixel(0, 0, Color.white);
+                solidTexture.Apply();
+            }
+
             if (activeToolButtonStyle.padding == null)
             {
                 activeToolButtonStyle.padding = new RectOffset(buttonPadding.left, buttonPadding.right, buttonPadding.top, buttonPadding.bottom);
@@ -1892,7 +1927,18 @@ namespace EvacLogix.Sandbox.UI.Panels
             statusBarRect = new Rect(margin, logicalScreenHeight - statusBarHeight - margin, logicalScreenWidth - (margin * 2f), statusBarHeight);
 
             var modalWidth = Mathf.Min(480f, logicalScreenWidth - 40f);
-            var modalHeight = 210f;
+            float modalHeight;
+            if (projectLibraryModalMode == ProjectLibraryModalMode.Load)
+            {
+                var projectCount = topBarShell?.GetSavedBrowserProjects().Length ?? 0;
+                var scrollHeight = Mathf.Clamp(projectCount * 84f, 84f, 300f);
+                modalHeight = Mathf.Min(150f + scrollHeight, logicalScreenHeight - 40f);
+            }
+            else
+            {
+                modalHeight = 210f;
+            }
+
             modalRect = new Rect(
                 (logicalScreenWidth - modalWidth) * 0.5f,
                 (logicalScreenHeight - modalHeight) * 0.5f,
@@ -1916,7 +1962,8 @@ namespace EvacLogix.Sandbox.UI.Panels
                 || inspectorRect.Contains(guiPoint)
                 || validationRect.Contains(guiPoint)
                 || statusBarRect.Contains(guiPoint)
-                || (newProjectDialogShell != null && newProjectDialogShell.IsOpen);
+                || (newProjectDialogShell != null && newProjectDialogShell.IsOpen)
+                || projectLibraryModalMode != ProjectLibraryModalMode.None;
 
             inputRouter.SetManualOverride(isOverHud ? SandboxInputTarget.UI : SandboxInputTarget.None);
         }

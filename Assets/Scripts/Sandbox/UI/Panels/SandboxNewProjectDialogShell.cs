@@ -30,16 +30,16 @@ namespace EvacLogix.Sandbox.UI.Panels
             onboardingOverlay = FindAnyObjectByType<SandboxOnboardingOverlayShell>();
             statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
             isOpen = workspaceService == null || workspaceService.ActiveProject == null;
+            if (isOpen)
+            {
+                EnsureDefaultProjectName();
+            }
         }
 
         public void Open()
         {
             validationMessage = string.Empty;
-            if (string.IsNullOrWhiteSpace(projectNameDraft))
-            {
-                projectNameDraft = "New Project";
-            }
-
+            EnsureDefaultProjectName();
             isOpen = true;
         }
 
@@ -65,6 +65,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private void CreateProject(SandboxProjectTemplateKind templateKind)
         {
+            EnsureDefaultProjectName();
             if (string.IsNullOrWhiteSpace(projectNameDraft))
             {
                 validationMessage = "Project name is required.";
@@ -82,6 +83,14 @@ namespace EvacLogix.Sandbox.UI.Panels
             selectedTemplate = templateKind;
             validationMessage = string.Empty;
             isOpen = false;
+        }
+
+        private void EnsureDefaultProjectName()
+        {
+            if (string.IsNullOrWhiteSpace(projectNameDraft))
+            {
+                projectNameDraft = "New Project";
+            }
         }
     }
 }
