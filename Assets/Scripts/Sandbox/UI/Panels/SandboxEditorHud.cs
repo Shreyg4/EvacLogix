@@ -101,6 +101,14 @@ namespace EvacLogix.Sandbox.UI.Panels
         private Texture2D modalWindowTexture;
 
         private const float CollapsedPanelHeight = 30f;
+        // Floors panel: fixed chrome (header + category row + add/duplicate/delete row) around the tab
+        // viewport, and the min/max the viewport itself is allowed to size to its content.
+        private const float FloorTabsChrome = 128f;
+        private const float FloorTabsMinViewport = 36f;
+        private const float FloorTabsMaxViewport = 132f;
+        // Measured during the OnGUI draw pass; RecalculateLayout (which runs from Update, where GUI calls
+        // are illegal) reads this cached value to size the floors panel to its content.
+        private float lastFloorTabsContentHeight = FloorTabsMinViewport;
         private static readonly Color HudPanelColor = new(0.06f, 0.09f, 0.14f, 1f);
         private static readonly Color HudInsetPanelColor = new(0.08f, 0.12f, 0.18f, 1f);
         private static readonly Color ModalBackdropColor = new(0.02f, 0.03f, 0.05f, 0.38f);
@@ -435,13 +443,15 @@ namespace EvacLogix.Sandbox.UI.Panels
             GUILayout.Space(4f);
 
             var visibleTabs = GetVisibleFloorTabs();
-            var tabsViewportHeight = Mathf.Max(72f, floorTabsRect.height - 128f);
+            var tabsViewportHeight = Mathf.Max(FloorTabsMinViewport, floorTabsRect.height - FloorTabsChrome);
             var tabsViewportRect = GUILayoutUtility.GetRect(floorTabsRect.width - 24f, tabsViewportHeight);
             var tabsContentWidth = Mathf.Max(0f, tabsViewportRect.width - 18f);
             var tabsContentHeight = CalculateFloorTabsContentHeight(visibleTabs, tabsContentWidth);
+            lastFloorTabsContentHeight = tabsContentHeight;
             var tabsContentRect = new Rect(0f, 0f, tabsContentWidth, tabsContentHeight);
 
-            floorTabsScrollPosition = GUI.BeginScrollView(tabsViewportRect, floorTabsScrollPosition, tabsContentRect, false, true);
+            // Only show the vertical scrollbar when the list actually overflows the viewport.
+            floorTabsScrollPosition = GUI.BeginScrollView(tabsViewportRect, floorTabsScrollPosition, tabsContentRect, false, false);
             DrawWrappedFloorTabs(visibleTabs, tabsContentWidth);
             GUI.EndScrollView();
 
@@ -2381,8 +2391,6 @@ namespace EvacLogix.Sandbox.UI.Panels
             var logicalScreenWidth = Screen.width / uiScale;
             var logicalScreenHeight = Screen.height / uiScale;
             var topBarHeight = topBarCollapsed ? CollapsedPanelHeight : 110f;
-            var floorTabsAvailableHeight = Mathf.Max(CollapsedPanelHeight, logicalScreenHeight - topBarHeight - (margin * 4f) - 58f);
-            var floorTabsHeight = floorTabsCollapsed ? CollapsedPanelHeight : Mathf.Min(220f, floorTabsAvailableHeight);
             var statusBarHeight = statusBarCollapsed ? CollapsedPanelHeight : 58f;
             var toolWidth = 180f;
             var inspectorWidth = 340f;
@@ -2391,12 +2399,29 @@ namespace EvacLogix.Sandbox.UI.Panels
             var centerX = (margin * 2f) + toolWidth;
             var centerWidth = logicalScreenWidth - toolWidth - inspectorWidth - (margin * 4f);
 
-            // Validation is a wide band across the center-bottom; clamp its height so the canvas keeps
-            // a usable minimum on short windows.
+            // Floors sizes to its actual content so a project with only a couple of floors doesn't
+            // reserve a tall panel with an empty scroll area; it only grows (and scrolls) once the tab
+            // list exceeds the viewport cap.
+            var floorTabsAvailableHeight = Mathf.Max(CollapsedPanelHeight, logicalScreenHeight - topBarHeight - (margin * 4f) - 58f);
+            float floorTabsHeight;
+            if (floorTabsCollapsed)
+            {
+                floorTabsHeight = CollapsedPanelHeight;
+            }
+            else
+            {
+                // Use the content height measured during the last OnGUI pass (GUI calls are illegal here).
+                var floorViewport = Mathf.Clamp(lastFloorTabsContentHeight, FloorTabsMinViewport, FloorTabsMaxViewport);
+                floorTabsHeight = Mathf.Min(floorTabsAvailableHeight, FloorTabsChrome + floorViewport);
+            }
+
+            // Validation is a wide band across the center-bottom. Its height is independent of the floors
+            // panel (it reserves only the collapsed floors height), so expanding floors no longer steals
+            // room from validation and clips its content — the scene canvas absorbs the difference.
             const float minCanvasHeight = 220f;
             var maxValidationHeight = Mathf.Max(
                 CollapsedPanelHeight,
-                logicalScreenHeight - contentTop - floorTabsHeight - minCanvasHeight - (margin * 3f));
+                logicalScreenHeight - contentTop - CollapsedPanelHeight - minCanvasHeight - (margin * 3f));
             var validationHeight = validationCollapsed ? CollapsedPanelHeight : Mathf.Min(220f, maxValidationHeight);
 
             var statusY = logicalScreenHeight - statusBarHeight - margin;
