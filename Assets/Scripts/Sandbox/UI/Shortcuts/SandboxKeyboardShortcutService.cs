@@ -49,6 +49,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
         private SandboxClipboardService clipboardService;
         private SandboxCameraController cameraController;
         private SandboxPreviewService previewService;
+        private SandboxToolMode lastNonPanToolMode = SandboxToolMode.Select;
 
         public IReadOnlyList<SandboxShortcutBinding> Bindings => bindings;
         public bool HasBindingConflicts => GetBindingConflicts().Count > 0;
@@ -72,6 +73,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
             if (bindings.Count == 0)
             {
                 bindings = CreateDefaultBindings();
+                UpgradePanBindingIfNeeded();
                 return;
             }
 
@@ -86,6 +88,8 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                     bindings.Add(defaultBinding);
                 }
             }
+
+            UpgradePanBindingIfNeeded();
         }
 
         public IReadOnlyList<SandboxShortcutCatalogEntry> GetShortcutCatalogEntries()
@@ -160,11 +164,30 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
             cameraController ??= FindAnyObjectByType<SandboxCameraController>();
             previewService ??= GetComponent<SandboxPreviewService>();
 
-            if (previewService != null &&
-                previewService.IsPreviewModeActive &&
-                shortcutId != SandboxShortcutId.ResetCamera)
+            if (previewService != null && previewService.IsPreviewModeActive)
             {
-                return;
+                if (IsPreviewAuthoringShortcut(shortcutId))
+                {
+                    // Keep preview authoring shortcuts flowing.
+                }
+                else if (IsToolSwitchShortcut(shortcutId) || shortcutId == SandboxShortcutId.CancelTool)
+                {
+                    // Tool switches and Escape leave preview authoring: clear the spawn/fire
+                    // interaction and exit preview so the request below selects the editor tool
+                    // (Escape -> Select). Without this, Escape was swallowed in preview mode.
+                    previewService.ClearInteractionMode();
+                    previewService.ExitPreviewMode();
+                }
+                else if (shortcutId != SandboxShortcutId.ResetCamera &&
+                         shortcutId != SandboxShortcutId.Undo &&
+                         shortcutId != SandboxShortcutId.Redo &&
+                         shortcutId != SandboxShortcutId.CopySelection &&
+                         shortcutId != SandboxShortcutId.PasteSelection &&
+                         shortcutId != SandboxShortcutId.DuplicateSelection &&
+                         shortcutId != SandboxShortcutId.DeleteSelection)
+                {
+                    return;
+                }
             }
 
             switch (shortcutId)
@@ -173,7 +196,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                     toolStateService?.RequestToolModeChange(SandboxToolMode.Select, commandHistory);
                     break;
                 case SandboxShortcutId.PanTool:
-                    toolStateService?.RequestToolModeChange(SandboxToolMode.Pan, commandHistory);
+                    TogglePanTool();
                     break;
                 case SandboxShortcutId.MeasureTool:
                     toolStateService?.RequestToolModeChange(SandboxToolMode.Measure, commandHistory);
@@ -204,12 +227,18 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                     break;
                 case SandboxShortcutId.SpawnPointTool:
                     toolStateService?.RequestToolModeChange(SandboxToolMode.SpawnPoint, commandHistory);
+                    previewService?.EnterPreviewMode();
+                    previewService?.ConfigureSpawnPlacement(string.Empty, "Main Preview Layout", true);
+                    previewService?.SetInteractionMode(SandboxPreviewInteractionMode.PlaceSpawnPoint);
                     break;
-                case SandboxShortcutId.SpawnBrushTool:
-                    toolStateService?.RequestToolModeChange(SandboxToolMode.SpawnBrush, commandHistory);
+                case SandboxShortcutId.SpawnPointBrushTool:
+                    toolStateService?.RequestToolModeChange(SandboxToolMode.SpawnPointBrush, commandHistory);
+                    previewService?.EnterPreviewMode();
+                    previewService?.ConfigureSpawnPointBrush(1f, string.Empty, "Spawn Point Brush Layout", true);
+                    previewService?.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
                     break;
-                case SandboxShortcutId.RegionTool:
-                    toolStateService?.RequestToolModeChange(SandboxToolMode.Region, commandHistory);
+                case SandboxShortcutId.FireStartTool:
+                    toolStateService?.RequestToolModeChange(SandboxToolMode.FireStart, commandHistory);
                     break;
                 case SandboxShortcutId.Undo:
                     commandHistory?.Undo();
@@ -267,12 +296,34 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 && binding.requiresAlt == altPressed;
         }
 
+        private static bool IsPreviewAuthoringShortcut(SandboxShortcutId shortcutId)
+        {
+            return shortcutId == SandboxShortcutId.SpawnPointTool ||
+                   shortcutId == SandboxShortcutId.SpawnPointBrushTool;
+        }
+
+        private static bool IsToolSwitchShortcut(SandboxShortcutId shortcutId)
+        {
+            return shortcutId == SandboxShortcutId.SelectTool ||
+                   shortcutId == SandboxShortcutId.PanTool ||
+                   shortcutId == SandboxShortcutId.MeasureTool ||
+                   shortcutId == SandboxShortcutId.WallLineTool ||
+                   shortcutId == SandboxShortcutId.WallBrushTool ||
+                   shortcutId == SandboxShortcutId.EraseTool ||
+                   shortcutId == SandboxShortcutId.DoorTool ||
+                   shortcutId == SandboxShortcutId.WindowTool ||
+                   shortcutId == SandboxShortcutId.ExitTool ||
+                   shortcutId == SandboxShortcutId.ObstacleTool ||
+                   shortcutId == SandboxShortcutId.TeleportTool ||
+                   shortcutId == SandboxShortcutId.FireStartTool;
+        }
+
         private static List<SandboxShortcutBinding> CreateDefaultBindings()
         {
             return new List<SandboxShortcutBinding>
             {
                 CreateBinding(SandboxShortcutId.SelectTool, KeyCode.Q),
-                CreateBinding(SandboxShortcutId.PanTool, KeyCode.H),
+                CreateBinding(SandboxShortcutId.PanTool, KeyCode.P),
                 CreateBinding(SandboxShortcutId.MeasureTool, KeyCode.M),
                 CreateBinding(SandboxShortcutId.WallLineTool, KeyCode.L),
                 CreateBinding(SandboxShortcutId.WallBrushTool, KeyCode.B),
@@ -283,8 +334,8 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 CreateBinding(SandboxShortcutId.ObstacleTool, KeyCode.O),
                 CreateBinding(SandboxShortcutId.TeleportTool, KeyCode.Y),
                 CreateBinding(SandboxShortcutId.SpawnPointTool, KeyCode.Alpha1),
-                CreateBinding(SandboxShortcutId.SpawnBrushTool, KeyCode.Alpha2),
-                CreateBinding(SandboxShortcutId.RegionTool, KeyCode.R),
+                CreateBinding(SandboxShortcutId.SpawnPointBrushTool, KeyCode.Alpha2),
+                CreateBinding(SandboxShortcutId.FireStartTool, KeyCode.F),
                 CreateBinding(SandboxShortcutId.Undo, KeyCode.Z, requiresCommandOrControl: true),
                 CreateBinding(SandboxShortcutId.Redo, KeyCode.Z, requiresCommandOrControl: true, requiresShift: true),
                 CreateBinding(SandboxShortcutId.DeleteSelection, KeyCode.Backspace),
@@ -315,9 +366,9 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 SandboxShortcutId.ExitTool => ("Tools", "Exit Tool", "Place named exit zones with width and priority inputs."),
                 SandboxShortcutId.ObstacleTool => ("Tools", "Obstacle Tool", "Place blocking or slowing obstacle geometry."),
                 SandboxShortcutId.TeleportTool => ("Tools", "Teleport Tool", "Place paired stair, elevator, or escalator transitions across floors."),
-                SandboxShortcutId.SpawnPointTool => ("Preview", "Spawn Point Tool", "Place intentional occupant start points for preview."),
-                SandboxShortcutId.SpawnBrushTool => ("Preview", "Spawn Brush Tool", "Paint density-based spawn groups for preview."),
-                SandboxShortcutId.RegionTool => ("Preview", "Region Tool", "Draw named semantic regions for preview semantics."),
+                SandboxShortcutId.SpawnPointTool => ("Spawn", "Spawn Point Tool", "Place individual spawn points on floors that have at least one exit."),
+                SandboxShortcutId.SpawnPointBrushTool => ("Spawn", "Spawn Point Brush Tool", "Paint spawn points on floors that have at least one exit."),
+                SandboxShortcutId.FireStartTool => ("Hazards", "Fire Start Tool", "Place a fire origin that seeds the spreading fire during simulation."),
                 SandboxShortcutId.Undo => ("Editing", "Undo", "Revert the most recent editor command."),
                 SandboxShortcutId.Redo => ("Editing", "Redo", "Reapply the most recently undone editor command."),
                 SandboxShortcutId.DeleteSelection => ("Editing", "Delete Selection", "Delete or clear the current selection safely."),
@@ -375,6 +426,44 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 requiresShift = requiresShift,
                 requiresAlt = requiresAlt,
             };
+        }
+
+        private void TogglePanTool()
+        {
+            if (toolStateService == null)
+            {
+                return;
+            }
+
+            var currentToolMode = toolStateService.CurrentToolMode;
+            if (currentToolMode == SandboxToolMode.Pan)
+            {
+                var nextToolMode = lastNonPanToolMode == SandboxToolMode.Pan
+                    ? toolStateService.DefaultToolMode
+                    : lastNonPanToolMode;
+                toolStateService.RequestToolModeChange(nextToolMode, commandHistory);
+                return;
+            }
+
+            lastNonPanToolMode = currentToolMode;
+            toolStateService.RequestToolModeChange(SandboxToolMode.Pan, commandHistory);
+        }
+
+        private void UpgradePanBindingIfNeeded()
+        {
+            var panBinding = bindings.FirstOrDefault(binding => binding.shortcutId == SandboxShortcutId.PanTool);
+            if (panBinding == null)
+            {
+                return;
+            }
+
+            if (panBinding.keyCode == KeyCode.H &&
+                !panBinding.requiresCommandOrControl &&
+                !panBinding.requiresShift &&
+                !panBinding.requiresAlt)
+            {
+                panBinding.keyCode = KeyCode.P;
+            }
         }
     }
 }

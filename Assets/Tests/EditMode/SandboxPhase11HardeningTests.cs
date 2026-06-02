@@ -57,7 +57,6 @@ namespace EvacLogix.Tests.EditMode
                 "exit",
                 "obstacle",
                 "stair",
-                "region",
                 "spawn",
                 "preview",
                 "scenario"
@@ -80,9 +79,10 @@ namespace EvacLogix.Tests.EditMode
             var harness = CreateHarness();
             harness.workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
 
+            CreateEnclosedRoom(harness.wallAuthoringService);
+
             Assert.That(harness.previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out var spawnLayoutId, null, "Morning Layout", true), Is.True);
             Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(6f, 2f), out var fireOriginId, 1f, 0f, true), Is.True);
-            Assert.That(harness.previewAuthoringService.PlaceRegion(new Vector2(3f, 3f), new Vector2(2f, 2f), out var regionId, "North Zone", RegionSemanticType.SpawnZone), Is.True);
             Assert.That(harness.scenarioManagementService.CreateScenarioPreset(
                 "Morning Drill",
                 new[] { spawnLayoutId },
@@ -106,18 +106,6 @@ namespace EvacLogix.Tests.EditMode
                 1.8f,
                 4f,
                 false), Is.True);
-            Assert.That(harness.inspectorShell.UpdateRegion(
-                regionId,
-                "Restricted North Zone",
-                RegionSemanticType.RestrictedZone,
-                new[]
-                {
-                    new Vector2(1f, 1f),
-                    new Vector2(1f, 4f),
-                    new Vector2(4f, 4f),
-                    new Vector2(4f, 1f)
-                },
-                new[] { new MetadataFieldData { key = "note", value = "keep clear" } }), Is.True);
             Assert.That(harness.inspectorShell.UpdateScenarioPreset(
                 scenarioPresetId,
                 "Evening Drill",
@@ -137,8 +125,6 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(roundTripped.fireOrigins.Single(origin => origin.fireOriginId == fireOriginId).position, Is.EqualTo(new Vector2(7f, 2f)));
             Assert.That(roundTripped.fireOrigins.Single(origin => origin.fireOriginId == fireOriginId).startDelaySeconds, Is.EqualTo(4f).Within(0.001f));
             Assert.That(roundTripped.fireOrigins.Single(origin => origin.fireOriginId == fireOriginId).isPersistent, Is.False);
-            Assert.That(roundTripped.floors.Single().regions.Single(region => region.regionId == regionId).name, Is.EqualTo("Restricted North Zone"));
-            Assert.That(roundTripped.floors.Single().regions.Single(region => region.regionId == regionId).semanticType, Is.EqualTo(RegionSemanticType.RestrictedZone));
             Assert.That(roundTripped.scenarioPresets.Single(preset => preset.scenarioPresetId == scenarioPresetId).name, Is.EqualTo("Evening Drill"));
             Assert.That(roundTripped.scenarioPresets.Single(preset => preset.scenarioPresetId == scenarioPresetId).previewParameters.spreadIntensity, Is.EqualTo(2.1f).Within(0.001f));
             Assert.That(roundTripped.scenarioPresets.Single(preset => preset.scenarioPresetId == scenarioPresetId).metadataFields.Single().value, Is.EqualTo("ops"));
@@ -159,6 +145,7 @@ namespace EvacLogix.Tests.EditMode
             PopulateStressFloor(harness, floorTwoId, 12f);
             PopulateStressFloor(harness, floorThreeId, 24f);
 
+            CreateEnclosedRoom(harness.wallAuthoringService);
             Assert.That(harness.previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out var spawnLayoutId, null, "Stress Layout", true), Is.True);
             Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(-4f, -4f), out var fireOriginId, 1.2f, 1f, true), Is.True);
             Assert.That(harness.scenarioManagementService.CreateScenarioPreset(
@@ -267,6 +254,7 @@ namespace EvacLogix.Tests.EditMode
             var workspaceService = host.AddComponent<SandboxProjectWorkspaceService>();
             var colliderRebuildService = host.AddComponent<SandboxColliderRebuildService>();
             var validationService = host.AddComponent<SandboxValidationService>();
+            var roomDetectionService = host.AddComponent<SandboxRoomDetectionService>();
             var visualOrganizationService = host.AddComponent<SandboxVisualOrganizationService>();
             var clipboardService = host.AddComponent<SandboxClipboardService>();
             var wallSnappingService = host.AddComponent<SandboxWallSnappingService>();
@@ -284,6 +272,7 @@ namespace EvacLogix.Tests.EditMode
             workspaceService.SendMessage("Awake");
             colliderRebuildService.SendMessage("Awake");
             validationService.SendMessage("Awake");
+            roomDetectionService.SendMessage("Awake");
             visualOrganizationService.SendMessage("Awake");
             clipboardService.SendMessage("Awake");
             wallSnappingService.SendMessage("Awake");
@@ -331,6 +320,14 @@ namespace EvacLogix.Tests.EditMode
                 inspectorShell = inspectorShell,
                 legendShell = legendShell
             };
+        }
+
+        private static void CreateEnclosedRoom(SandboxWallAuthoringService wallAuthoringService)
+        {
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(-2f, -2f), new Vector2(4f, -2f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(4f, -2f), new Vector2(4f, 4f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(4f, 4f), new Vector2(-2f, 4f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(-2f, 4f), new Vector2(-2f, -2f), 0.2f), Is.True);
         }
 
         private sealed class Phase11Harness

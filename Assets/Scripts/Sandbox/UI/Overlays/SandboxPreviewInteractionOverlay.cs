@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using EvacLogix.Sandbox.Authoring;
 using EvacLogix.Sandbox.Infrastructure;
 using EvacLogix.Sandbox.UI.Panels;
@@ -8,21 +7,21 @@ namespace EvacLogix.Sandbox.UI.Overlays
 {
     public sealed class SandboxPreviewInteractionOverlay : MonoBehaviour
     {
-        [SerializeField] private float minimumBrushSampleDistance = 0.25f;
+        [SerializeField] private float spawnPointBrushPlacementIntervalSeconds = 0.75f;
 
-        private readonly List<Vector2> activeBrushPoints = new();
         private SandboxPreviewService previewService;
         private SandboxPreviewAuthoringService previewAuthoringService;
         private SandboxStatusBarShell statusBar;
-        private bool regionDragActive;
-        private Vector2 regionStartPoint;
-        private Vector2 lastBrushPoint;
+        private SandboxInputRouter inputRouter;
+        private bool spawnPointBrushActive;
+        private float spawnPointBrushTimer;
 
         private void Awake()
         {
             previewService = FindAnyObjectByType<SandboxPreviewService>();
             previewAuthoringService = FindAnyObjectByType<SandboxPreviewAuthoringService>();
             statusBar = FindAnyObjectByType<SandboxStatusBarShell>();
+            inputRouter = FindAnyObjectByType<SandboxInputRouter>();
         }
 
         private void Update()
@@ -41,18 +40,15 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 case SandboxPreviewInteractionMode.PlaceSpawnPoint:
                     HandleSpawnPointPlacement(worldPoint);
                     break;
-                case SandboxPreviewInteractionMode.PaintSpawnBrush:
-                    HandleSpawnBrushPlacement(worldPoint);
-                    break;
-                case SandboxPreviewInteractionMode.PlaceRegion:
-                    HandleRegionPlacement(worldPoint);
+                case SandboxPreviewInteractionMode.PaintSpawnPointBrush:
+                    HandleSpawnPointBrushPlacement(worldPoint);
                     break;
             }
         }
 
         private void HandleFireOriginPlacement(Vector2 worldPoint)
         {
-            if (!SandboxInputAdapter.GetMouseButtonDown(0))
+            if (!ShouldHandlePreviewClick())
             {
                 return;
             }
@@ -64,7 +60,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     previewService.ActivePreviewParameters.startDelaySeconds,
                     previewService.PendingFireOriginIsPersistent))
             {
-                UpdateStatus("Could not place fire origin on the active floor.");
+                ShowError("Could not place fire origin on the active floor.");
                 return;
             }
 
@@ -74,7 +70,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void HandleSpawnPointPlacement(Vector2 worldPoint)
         {
-            if (!SandboxInputAdapter.GetMouseButtonDown(0))
+            if (!ShouldHandlePreviewClick())
             {
                 return;
             }
@@ -83,100 +79,63 @@ namespace EvacLogix.Sandbox.UI.Overlays
                     worldPoint,
                     out _,
                     out var resolvedLayoutId,
+                    out var failureMessage,
                     previewService.PendingSpawnLayoutId,
                     previewService.PendingSpawnLayoutName,
                     previewService.PendingSpawnLayoutIsPersistent))
             {
-                UpdateStatus("Could not place preview spawn point.");
+                ShowError(string.IsNullOrWhiteSpace(failureMessage) ? "Could not place spawn point." : failureMessage);
                 return;
             }
 
             previewService.SetActiveSpawnLayout(resolvedLayoutId);
-            previewService.ClearInteractionMode();
-            UpdateStatus("Placed preview spawn point.");
+            UpdateStatus("Placed spawn point. Click again to add another.");
         }
 
-        private void HandleSpawnBrushPlacement(Vector2 worldPoint)
+        private void HandleSpawnPointBrushPlacement(Vector2 worldPoint)
         {
-            if (SandboxInputAdapter.GetMouseButtonDown(0))
+            if (ShouldHandlePreviewClick())
             {
-                activeBrushPoints.Clear();
-                activeBrushPoints.Add(worldPoint);
-                lastBrushPoint = worldPoint;
-                UpdateStatus("Painting preview spawn brush.");
+                spawnPointBrushActive = true;
+                spawnPointBrushTimer = 0f;
+                TryPlaceSpawnPointBrushStamp(worldPoint);
+                UpdateStatus("Painting spawn point brush.");
                 return;
             }
 
-            if (SandboxInputAdapter.GetMouseButton(0) && activeBrushPoints.Count > 0)
+            if (SandboxInputAdapter.GetMouseButton(0) && spawnPointBrushActive)
             {
-                if (Vector2.Distance(lastBrushPoint, worldPoint) >= minimumBrushSampleDistance)
+                spawnPointBrushTimer += Time.deltaTime;
+                while (spawnPointBrushTimer >= spawnPointBrushPlacementIntervalSeconds)
                 {
-                    activeBrushPoints.Add(worldPoint);
-                    lastBrushPoint = worldPoint;
+                    spawnPointBrushTimer -= spawnPointBrushPlacementIntervalSeconds;
+                    TryPlaceSpawnPointBrushStamp(worldPoint);
                 }
-            }
-
-            if (SandboxInputAdapter.GetMouseButtonUp(0) && activeBrushPoints.Count >= 3)
-            {
-                if (!previewAuthoringService.PlaceSpawnBrush(
-                        activeBrushPoints,
-                        out _,
-                        out var resolvedLayoutId,
-                        previewService.PendingSpawnBrushDensity,
-                        previewService.PendingSpawnLayoutId,
-                        previewService.PendingSpawnLayoutName,
-                        previewService.PendingSpawnLayoutIsPersistent))
-                {
-                    UpdateStatus("Could not commit preview spawn brush.");
-                    activeBrushPoints.Clear();
-                    return;
-                }
-
-                previewService.SetActiveSpawnLayout(resolvedLayoutId);
-                previewService.ClearInteractionMode();
-                activeBrushPoints.Clear();
-                UpdateStatus("Committed preview spawn brush.");
-                return;
             }
 
             if (SandboxInputAdapter.GetMouseButtonUp(0))
             {
-                activeBrushPoints.Clear();
+                spawnPointBrushActive = false;
+                spawnPointBrushTimer = 0f;
             }
         }
 
-        private void HandleRegionPlacement(Vector2 worldPoint)
+        private void TryPlaceSpawnPointBrushStamp(Vector2 worldPoint)
         {
-            if (SandboxInputAdapter.GetMouseButtonDown(0))
+            if (!previewAuthoringService.PlaceSpawnPoint(
+                    worldPoint,
+                    out _,
+                    out var resolvedLayoutId,
+                    out var failureMessage,
+                    previewService.PendingSpawnLayoutId,
+                    previewService.PendingSpawnLayoutName,
+                    previewService.PendingSpawnLayoutIsPersistent))
             {
-                regionDragActive = true;
-                regionStartPoint = worldPoint;
-                UpdateStatus("Dragging named preview region.");
+                ShowError(string.IsNullOrWhiteSpace(failureMessage) ? "Could not place spawn point." : failureMessage);
                 return;
             }
 
-            if (!regionDragActive || !SandboxInputAdapter.GetMouseButtonUp(0))
-            {
-                return;
-            }
-
-            regionDragActive = false;
-            var size = new Vector2(Mathf.Abs(worldPoint.x - regionStartPoint.x), Mathf.Abs(worldPoint.y - regionStartPoint.y));
-            if (size.x <= 0.05f || size.y <= 0.05f)
-            {
-                UpdateStatus("Preview region was too small to keep.");
-                return;
-            }
-
-            var center = (regionStartPoint + worldPoint) * 0.5f;
-            if (!previewAuthoringService.PlaceRegion(center, size, out _, previewService.PendingRegionName, previewService.PendingRegionSemanticType))
-            {
-                UpdateStatus("Could not place named preview region.");
-                return;
-            }
-
-            previewService.ClearInteractionMode();
-            UpdateStatus("Placed named preview region.");
+            previewService.SetActiveSpawnLayout(resolvedLayoutId);
         }
 
         private static Vector2 ScreenToWorldPoint(Vector3 screenPoint)
@@ -194,10 +153,42 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void UpdateStatus(string message)
         {
+            // Resolve lazily: this overlay is created before the status-bar shell exists, so the
+            // Awake-time lookup can come back null.
+            statusBar ??= FindAnyObjectByType<SandboxStatusBarShell>();
             if (statusBar != null)
             {
                 statusBar.StatusMessage = message;
             }
+        }
+
+        // Surfaces a rejection as a prominent, auto-fading banner over the canvas (plus the status box).
+        private void ShowError(string message)
+        {
+            statusBar ??= FindAnyObjectByType<SandboxStatusBarShell>();
+            if (statusBar != null)
+            {
+                statusBar.ShowNotice(message, true);
+            }
+        }
+
+        private bool ShouldHandlePreviewClick()
+        {
+            if (!SandboxInputAdapter.GetMouseButtonDown(0) || previewService == null)
+            {
+                return false;
+            }
+
+            if (previewService.InteractionModeChangedFrame == Time.frameCount)
+            {
+                return false;
+            }
+
+            inputRouter ??= FindAnyObjectByType<SandboxInputRouter>();
+            var target = inputRouter != null
+                ? inputRouter.ResolvePointerTarget(SandboxInputAdapter.PointerScreenPosition)
+                : SandboxInputTarget.World;
+            return target == SandboxInputTarget.World || target == SandboxInputTarget.PreviewOverlay;
         }
     }
 }

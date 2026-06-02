@@ -57,13 +57,13 @@ namespace EvacLogix.Tests.EditMode
         }
 
         [Test]
-        public void PreviewAuthoring_CreatesFireOriginsLayoutsBrushesAndNamedRegions()
+        public void PreviewAuthoring_CreatesFireOriginsLayoutsAndSpawnPointBrushes()
         {
             var host = CreatePhase10Host(
                 out var workspaceService,
                 out _,
-                out _,
-                out _,
+                out var wallAuthoringService,
+                out var semanticObjectAuthoringService,
                 out var previewAuthoringService,
                 out _,
                 out _,
@@ -71,26 +71,90 @@ namespace EvacLogix.Tests.EditMode
 
             workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
 
+            CreateEnclosedRoom(wallAuthoringService);
+
             Assert.That(previewAuthoringService.PlaceFireOrigin(new Vector2(3f, 3f), out var fireOriginId, 1.5f, 2f, true), Is.True);
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out var spawnPointId, out var persistentLayoutId, null, "Saved Layout", true), Is.True);
-            Assert.That(previewAuthoringService.PlaceSpawnBrush(
+            Assert.That(previewAuthoringService.PlaceSpawnPointBrush(
                 new[] { new Vector2(0f, 0f), new Vector2(0f, 2f), new Vector2(2f, 2f), new Vector2(2f, 0f) },
-                out var spawnBrushId,
+                out var brushedSpawnPointIds,
                 out var temporaryLayoutId,
                 2f,
                 null,
                 "Temporary Layout",
                 false), Is.True);
-            Assert.That(previewAuthoringService.PlaceRegion(new Vector2(4f, 4f), new Vector2(2f, 3f), out var regionId, "North Spawn Zone", RegionSemanticType.SpawnZone), Is.True);
 
             var project = workspaceService.ActiveProject;
             Assert.That(project.fireOrigins.Single(origin => origin.fireOriginId == fireOriginId).isPersistent, Is.True);
             Assert.That(project.spawnLayouts.Single(layout => layout.spawnLayoutId == persistentLayoutId).isPersistent, Is.True);
             Assert.That(project.spawnLayouts.Single(layout => layout.spawnLayoutId == temporaryLayoutId).isPersistent, Is.False);
             Assert.That(project.spawnLayouts.SelectMany(layout => layout.spawnPoints).Any(point => point.spawnPointId == spawnPointId), Is.True);
-            Assert.That(project.spawnLayouts.SelectMany(layout => layout.spawnBrushStrokes).Any(stroke => stroke.spawnBrushStrokeId == spawnBrushId), Is.True);
-            Assert.That(project.floors.Single().regions.Single(region => region.regionId == regionId).name, Is.EqualTo("North Spawn Zone"));
-            Assert.That(project.floors.Single().regions.Single(region => region.regionId == regionId).semanticType, Is.EqualTo(RegionSemanticType.SpawnZone));
+            Assert.That(project.spawnLayouts.SelectMany(layout => layout.spawnPoints).Count(point => brushedSpawnPointIds.Contains(point.spawnPointId)), Is.EqualTo(brushedSpawnPointIds.Count));
+
+            var semanticRendererObject = new GameObject("SemanticRenderer");
+            var semanticRenderer = semanticRendererObject.AddComponent<SandboxSemanticObjectRenderer>();
+            semanticRenderer.SendMessage("Awake");
+            Assert.That(semanticRendererObject.transform.Cast<Transform>().Any(child => child.name.StartsWith($"SpawnPoint_{spawnPointId}", System.StringComparison.Ordinal)), Is.True);
+
+            Object.DestroyImmediate(semanticRendererObject);
+            Object.DestroyImmediate(host);
+        }
+
+        [Test]
+        public void PreviewAuthoring_ReportsDistinctSpawnPlacementFailures()
+        {
+            var host = CreatePhase10Host(
+                out var workspaceService,
+                out _,
+                out var wallAuthoringService,
+                out var semanticObjectAuthoringService,
+                out var previewAuthoringService,
+                out _,
+                out _,
+                out _);
+            var validationService = host.GetComponent<SandboxValidationService>();
+
+            workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+
+            Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out _, out var pointFailure, null, "Layout", true), Is.False);
+            Assert.That(pointFailure, Is.EqualTo("Spawn points must be placed inside a detected room."));
+            Assert.That(validationService.Issues.Any(issue => issue.message == pointFailure && issue.issueType == ValidationIssueType.Preview), Is.True);
+            Assert.That(previewAuthoringService.PlaceSpawnPointBrush(
+                new[] { new Vector2(0f, 0f), new Vector2(0f, 2f), new Vector2(2f, 2f), new Vector2(2f, 0f) },
+                out _,
+                out _,
+                out var brushFailure,
+                1f,
+                null,
+                "Layout",
+                false), Is.False);
+            Assert.That(brushFailure, Is.EqualTo("Spawn point brushes must stay inside detected rooms."));
+            Assert.That(validationService.Issues.Any(issue => issue.message == brushFailure && issue.issueType == ValidationIssueType.Preview), Is.True);
+
+            CreateEnclosedRoom(wallAuthoringService);
+
+            Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out _, out var pointNoAccessFailure, null, "Layout", true), Is.False);
+            Assert.That(pointNoAccessFailure, Is.EqualTo("Spawn points require at least one exit or window on the floor."));
+            Assert.That(previewAuthoringService.PlaceSpawnPointBrush(
+                new[] { new Vector2(0f, 0f), new Vector2(0f, 2f), new Vector2(2f, 2f), new Vector2(2f, 0f) },
+                out _,
+                out _,
+                out var brushNoAccessFailure,
+                1f,
+                null,
+                "Layout",
+                false), Is.False);
+            Assert.That(brushNoAccessFailure, Is.EqualTo("Spawn point brushes require at least one exit or window on the floor."));
+
+            Assert.That(semanticObjectAuthoringService.PlaceExit(new Vector2(1f, 1f), out _, new Vector2(1.5f, 1.5f), 0f, 1.5f, 50f, 1f, "Lobby Exit"), Is.True);
+
+            Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1f, 1f), out _, out _, out _, null, "Layout", true), Is.True);
+            Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(1.2f, 1f), out _, out _, out var overlapFailure, null, "Layout", true), Is.False);
+            Assert.That(overlapFailure, Does.Contain("agent circles"));
+            Assert.That(validationService.Issues.Any(issue =>
+                issue.issueType == ValidationIssueType.Conflict &&
+                issue.message.Contains("agent circles") &&
+                issue.message.Contains("1.20")), Is.True);
 
             Object.DestroyImmediate(host);
         }
@@ -101,7 +165,7 @@ namespace EvacLogix.Tests.EditMode
             var host = CreatePhase10Host(
                 out var workspaceService,
                 out _,
-                out _,
+                out var wallAuthoringService,
                 out var semanticObjectAuthoringService,
                 out var previewAuthoringService,
                 out var previewService,
@@ -113,6 +177,7 @@ namespace EvacLogix.Tests.EditMode
             Assert.That(floorManagementService.AddFloor(out var secondFloorId, "Level 2", 3f), Is.True);
 
             workspaceService.SetActiveFloor(firstFloorId);
+            CreateEnclosedRoom(wallAuthoringService);
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(0f, 0f), out _, out var spawnLayoutId, null, "Evac Layout", true), Is.True);
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(0f, 1f), out _, out _, spawnLayoutId, "Evac Layout", true), Is.True);
             Assert.That(previewAuthoringService.PlaceFireOrigin(new Vector2(-4f, -4f), out var fireOriginId, 1f, 0f, true), Is.True);
@@ -164,7 +229,7 @@ namespace EvacLogix.Tests.EditMode
             var host = CreatePhase10Host(
                 out var workspaceService,
                 out _,
-                out _,
+                out var wallAuthoringService,
                 out var semanticObjectAuthoringService,
                 out var previewAuthoringService,
                 out var previewService,
@@ -172,6 +237,7 @@ namespace EvacLogix.Tests.EditMode
                 out _);
 
             workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            CreateEnclosedRoom(wallAuthoringService);
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(0f, 0f), out _, out _, null, "Validation Layout", true), Is.True);
             Assert.That(previewAuthoringService.PlaceFireOrigin(new Vector2(-3f, -3f), out _, 1f, 0f, true), Is.True);
             Assert.That(semanticObjectAuthoringService.PlaceExit(new Vector2(5f, 0f), out _, new Vector2(2f, 2f), 0f, 1.5f, 20f, 1f, "North Exit"), Is.True);
@@ -191,7 +257,7 @@ namespace EvacLogix.Tests.EditMode
             var host = CreatePhase10Host(
                 out var workspaceService,
                 out _,
-                out _,
+                out var wallAuthoringService,
                 out _,
                 out var previewAuthoringService,
                 out var previewService,
@@ -199,6 +265,7 @@ namespace EvacLogix.Tests.EditMode
                 out _);
 
             workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            CreateEnclosedRoom(wallAuthoringService);
             Assert.That(previewAuthoringService.PlaceSpawnPoint(new Vector2(0f, 0f), out _, out _, null, "Preview Layout", true), Is.True);
             Assert.That(previewAuthoringService.PlaceFireOrigin(new Vector2(-2f, -2f), out _, 1f, 0f, true), Is.True);
 
@@ -229,6 +296,7 @@ namespace EvacLogix.Tests.EditMode
             workspaceService = host.AddComponent<SandboxProjectWorkspaceService>();
             var colliderRebuildService = host.AddComponent<SandboxColliderRebuildService>();
             var validationService = host.AddComponent<SandboxValidationService>();
+            var roomDetectionService = host.AddComponent<SandboxRoomDetectionService>();
             host.AddComponent<SandboxVisualOrganizationService>();
             host.AddComponent<SandboxClipboardService>();
             host.AddComponent<SandboxWallSnappingService>();
@@ -242,6 +310,7 @@ namespace EvacLogix.Tests.EditMode
             workspaceService.SendMessage("Awake");
             colliderRebuildService.SendMessage("Awake");
             validationService.SendMessage("Awake");
+            roomDetectionService.SendMessage("Awake");
             host.GetComponent<SandboxVisualOrganizationService>().SendMessage("Awake");
             host.GetComponent<SandboxClipboardService>().SendMessage("Awake");
             host.GetComponent<SandboxWallSnappingService>().SendMessage("Awake");
@@ -253,5 +322,14 @@ namespace EvacLogix.Tests.EditMode
             floorManagementService.SendMessage("Awake");
             return host;
         }
+
+        private static void CreateEnclosedRoom(SandboxWallAuthoringService wallAuthoringService)
+        {
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(-2f, -2f), new Vector2(4f, -2f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(4f, -2f), new Vector2(4f, 4f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(4f, 4f), new Vector2(-2f, 4f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(-2f, 4f), new Vector2(-2f, -2f), 0.2f), Is.True);
+        }
+
     }
 }

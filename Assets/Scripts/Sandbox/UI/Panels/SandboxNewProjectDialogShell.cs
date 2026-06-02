@@ -1,3 +1,4 @@
+using EvacLogix.Sandbox.Core;
 using EvacLogix.Sandbox.Infrastructure;
 using EvacLogix.Sandbox.UI.Overlays;
 using UnityEngine;
@@ -33,6 +34,18 @@ namespace EvacLogix.Sandbox.UI.Panels
             if (isOpen)
             {
                 EnsureDefaultProjectName();
+            }
+        }
+
+        private void Start()
+        {
+            // Returning from a simulation launched in the editor: re-adopt the project the user left
+            // rather than prompting for a new one (otherwise the round trip looks like it was deleted).
+            // Done in Start so every service has finished Awake before the project is restored.
+            if (workspaceService != null && SandboxSimulationLaunchContext.TryConsumeReturnProject(out var returnProject))
+            {
+                workspaceService.SetActiveProject(returnProject);
+                isOpen = false;
             }
         }
 

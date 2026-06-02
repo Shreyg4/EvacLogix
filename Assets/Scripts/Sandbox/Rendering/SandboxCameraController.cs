@@ -58,6 +58,18 @@ namespace EvacLogix.Sandbox.Rendering
             transform.position = new Vector3(point.x, point.y, transform.position.z);
         }
 
+        // Recenters on world origin and restores the default zoom. Unlike ResetView (which targets the
+        // camera's scene-start position), this always lands on literal (0,0) so it honors the
+        // "Move to Origin" contract regardless of scene setup.
+        public void MoveToOrigin()
+        {
+            FocusOnPoint(Vector2.zero);
+            if (controlledCamera.orthographic)
+            {
+                controlledCamera.orthographicSize = defaultOrthographicSize;
+            }
+        }
+
         public void FrameBounds(Rect bounds, float padding = 1f)
         {
             if (!controlledCamera.orthographic)
@@ -81,12 +93,13 @@ namespace EvacLogix.Sandbox.Rendering
         private void HandlePan()
         {
             var usingMiddleMousePan = SandboxInputAdapter.GetMouseButton(2);
+            var usingRightMousePan = SandboxInputAdapter.IsRightMousePanActive;
             var usingPanToolPrimaryDrag =
                 toolStateService != null &&
                 toolStateService.CurrentToolMode == SandboxToolMode.Pan &&
                 SandboxInputAdapter.GetMouseButton(0);
 
-            if (!usingMiddleMousePan && !usingPanToolPrimaryDrag)
+            if (!usingMiddleMousePan && !usingRightMousePan && !usingPanToolPrimaryDrag)
             {
                 return;
             }

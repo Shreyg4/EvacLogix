@@ -6,19 +6,22 @@ using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Data.Serialization;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Runtime;
 using UnityEngine;
 
 namespace EvacLogix.Sandbox.Authoring
 {
     public sealed class SandboxPreviewAuthoringService : MonoBehaviour
     {
-        [SerializeField] private float defaultSpawnBrushDensity = 1f;
+        [SerializeField] private float defaultSpawnPointBrushDensity = 1f;
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxCommandHistory commandHistory;
         private SandboxSelectionService selectionService;
         private SandboxValidationService validationService;
         private SandboxPreviewService previewService;
+        private SandboxRoomDetectionService roomDetectionService;
+        private SandboxAgentSimulationService agentSimulationService;
 
         public event Action PreviewAuthoringChanged;
 
@@ -29,6 +32,8 @@ namespace EvacLogix.Sandbox.Authoring
             selectionService = GetComponent<SandboxSelectionService>();
             validationService = GetComponent<SandboxValidationService>();
             previewService = GetComponent<SandboxPreviewService>();
+            roomDetectionService = GetComponent<SandboxRoomDetectionService>();
+            agentSimulationService = GetComponent<SandboxAgentSimulationService>();
         }
 
         public IReadOnlyList<SpawnLayoutData> GetSpawnLayouts()
@@ -136,10 +141,46 @@ namespace EvacLogix.Sandbox.Authoring
             string spawnLayoutName = "",
             bool isPersistent = true)
         {
+            return PlaceSpawnPoint(position, out spawnPointId, out resolvedSpawnLayoutId, out _, spawnLayoutId, spawnLayoutName, isPersistent);
+        }
+
+        public bool PlaceSpawnPoint(
+            Vector2 position,
+            out string spawnPointId,
+            out string resolvedSpawnLayoutId,
+            out string failureMessage,
+            string spawnLayoutId = null,
+            string spawnLayoutName = "",
+            bool isPersistent = true)
+        {
             spawnPointId = string.Empty;
             resolvedSpawnLayoutId = string.Empty;
+            failureMessage = string.Empty;
             if (workspaceService?.ActiveFloor == null)
             {
+                failureMessage = "Create or select a floor first.";
+                return false;
+            }
+
+            var activeFloor = workspaceService.ActiveFloor;
+            roomDetectionService?.Recalculate();
+            if (!TryValidateSpawnPointPlacement(activeFloor, position, out failureMessage))
+            {
+                validationService?.SetPreviewPlacementValidationIssue(
+                    activeFloor.floorId,
+                    string.Empty,
+                    "Spawn point placement failed",
+                    failureMessage);
+                return false;
+            }
+
+            if (!TryValidateSpawnPointSpacing(activeFloor.floorId, position, out failureMessage))
+            {
+                validationService?.SetPreviewPlacementValidationIssue(
+                    activeFloor.floorId,
+                    string.Empty,
+                    "Spawn point placement failed",
+                    failureMessage);
                 return false;
             }
 
@@ -168,7 +209,114 @@ namespace EvacLogix.Sandbox.Authoring
 
             if (didPlace)
             {
+                validationService?.ClearPreviewPlacementValidationIssue();
                 spawnPointId = createdSpawnPointId;
+                resolvedSpawnLayoutId = capturedLayoutId;
+            }
+
+            return didPlace;
+        }
+
+        public bool PlaceSpawnPointBrush(
+            IReadOnlyList<Vector2> polygonPoints,
+            out IReadOnlyList<string> spawnPointIds,
+            out string resolvedSpawnLayoutId,
+            float density = -1f,
+            string spawnLayoutId = null,
+            string spawnLayoutName = "",
+            bool isPersistent = false)
+        {
+            return PlaceSpawnPointBrush(
+                polygonPoints,
+                out spawnPointIds,
+                out resolvedSpawnLayoutId,
+                out _,
+                density,
+                spawnLayoutId,
+                spawnLayoutName,
+                isPersistent);
+        }
+
+        public bool PlaceSpawnPointBrush(
+            IReadOnlyList<Vector2> polygonPoints,
+            out IReadOnlyList<string> spawnPointIds,
+            out string resolvedSpawnLayoutId,
+            out string failureMessage,
+            float density = -1f,
+            string spawnLayoutId = null,
+            string spawnLayoutName = "",
+            bool isPersistent = false)
+        {
+            spawnPointIds = Array.Empty<string>();
+            resolvedSpawnLayoutId = string.Empty;
+            failureMessage = string.Empty;
+            if (workspaceService?.ActiveFloor == null || polygonPoints == null || polygonPoints.Count < 3)
+            {
+                failureMessage = "Create or select a floor first.";
+                return false;
+            }
+
+            var activeFloor = workspaceService.ActiveFloor;
+            roomDetectionService?.Recalculate();
+            if (!TryValidateSpawnPointBrushPlacement(activeFloor, polygonPoints, out failureMessage))
+            {
+                validationService?.SetPreviewPlacementValidationIssue(
+                    activeFloor.floorId,
+                    string.Empty,
+                    "Spawn point brush placement failed",
+                    failureMessage);
+                return false;
+            }
+
+            var resolvedDensity = density > 0f ? density : defaultSpawnPointBrushDensity;
+            var sampledPoints = GenerateSpawnPointBrushSamples(polygonPoints, resolvedDensity);
+            if (sampledPoints.Count == 0)
+            {
+                failureMessage = "Spawn point brush did not cover a valid spawn area.";
+                return false;
+            }
+
+            if (!TryValidateSpawnPointSpacing(activeFloor.floorId, sampledPoints, out failureMessage))
+            {
+                validationService?.SetPreviewPlacementValidationIssue(
+                    activeFloor.floorId,
+                    string.Empty,
+                    "Spawn point brush placement failed",
+                    failureMessage);
+                return false;
+            }
+
+            var activeFloorId = workspaceService.ActiveFloor.floorId;
+            var createdSpawnPointIds = sampledPoints.Select(_ => SandboxId.NewId()).ToList();
+            var capturedLayoutId = string.Empty;
+            var didPlace = ExecuteProjectMutation(
+                "Place Spawn Point Brush",
+                project =>
+                {
+                    if (!ResolveOrCreateSpawnLayout(project, spawnLayoutId, spawnLayoutName, isPersistent, out var layout))
+                    {
+                        return false;
+                    }
+
+                    for (var i = 0; i < sampledPoints.Count; i += 1)
+                    {
+                        layout.spawnPoints.Add(new SpawnPointData
+                        {
+                            spawnPointId = createdSpawnPointIds[i],
+                            floorId = activeFloorId,
+                            position = sampledPoints[i]
+                        });
+                    }
+
+                    capturedLayoutId = layout.spawnLayoutId;
+                    return true;
+                },
+                createdSpawnPointIds);
+
+            if (didPlace)
+            {
+                validationService?.ClearPreviewPlacementValidationIssue();
+                spawnPointIds = createdSpawnPointIds;
                 resolvedSpawnLayoutId = capturedLayoutId;
             }
 
@@ -184,45 +332,45 @@ namespace EvacLogix.Sandbox.Authoring
             string spawnLayoutName = "",
             bool isPersistent = false)
         {
+            return PlaceSpawnBrush(
+                polygonPoints,
+                out spawnBrushStrokeId,
+                out resolvedSpawnLayoutId,
+                out _,
+                density,
+                spawnLayoutId,
+                spawnLayoutName,
+                isPersistent);
+        }
+
+        public bool PlaceSpawnBrush(
+            IReadOnlyList<Vector2> polygonPoints,
+            out string spawnBrushStrokeId,
+            out string resolvedSpawnLayoutId,
+            out string failureMessage,
+            float density = -1f,
+            string spawnLayoutId = null,
+            string spawnLayoutName = "",
+            bool isPersistent = false)
+        {
             spawnBrushStrokeId = string.Empty;
             resolvedSpawnLayoutId = string.Empty;
-            if (workspaceService?.ActiveFloor == null || polygonPoints == null || polygonPoints.Count < 3)
+            failureMessage = string.Empty;
+            if (!PlaceSpawnPointBrush(
+                    polygonPoints,
+                    out var spawnPointIds,
+                    out resolvedSpawnLayoutId,
+                    out failureMessage,
+                    density,
+                    spawnLayoutId,
+                    spawnLayoutName,
+                    isPersistent))
             {
                 return false;
             }
 
-            var createdBrushId = SandboxId.NewId();
-            var activeFloorId = workspaceService.ActiveFloor.floorId;
-            var resolvedDensity = density > 0f ? density : defaultSpawnBrushDensity;
-            var capturedLayoutId = string.Empty;
-            var didPlace = ExecuteProjectMutation(
-                "Place Spawn Brush",
-                project =>
-                {
-                    if (!ResolveOrCreateSpawnLayout(project, spawnLayoutId, spawnLayoutName, isPersistent, out var layout))
-                    {
-                        return false;
-                    }
-
-                    layout.spawnBrushStrokes.Add(new SpawnBrushStrokeData
-                    {
-                        spawnBrushStrokeId = createdBrushId,
-                        floorId = activeFloorId,
-                        density = Mathf.Max(0.1f, resolvedDensity),
-                        polygonPoints = polygonPoints.ToList()
-                    });
-                    capturedLayoutId = layout.spawnLayoutId;
-                    return true;
-                },
-                new[] { createdBrushId });
-
-            if (didPlace)
-            {
-                spawnBrushStrokeId = createdBrushId;
-                resolvedSpawnLayoutId = capturedLayoutId;
-            }
-
-            return didPlace;
+            spawnBrushStrokeId = spawnPointIds.FirstOrDefault() ?? string.Empty;
+            return true;
         }
 
         public bool PlaceFireOrigin(
@@ -270,7 +418,8 @@ namespace EvacLogix.Sandbox.Authoring
             Vector2 position,
             float spreadIntensity,
             float startDelaySeconds,
-            bool isPersistent)
+            bool isPersistent,
+            Vector2? size = null)
         {
             if (workspaceService?.ActiveProject == null || string.IsNullOrWhiteSpace(fireOriginId))
             {
@@ -292,115 +441,14 @@ namespace EvacLogix.Sandbox.Authoring
                     fireOrigin.spreadIntensity = Mathf.Max(0.1f, spreadIntensity);
                     fireOrigin.startDelaySeconds = Mathf.Max(0f, startDelaySeconds);
                     fireOrigin.isPersistent = isPersistent;
+                    if (size.HasValue)
+                    {
+                        fireOrigin.size = new Vector2(Mathf.Max(0.2f, size.Value.x), Mathf.Max(0.2f, size.Value.y));
+                    }
+
                     return true;
                 },
                 new[] { fireOriginId });
-        }
-
-        public bool PlaceRegion(
-            Vector2 center,
-            Vector2 size,
-            out string regionId,
-            string name = "",
-            RegionSemanticType semanticType = RegionSemanticType.SpawnZone)
-        {
-            regionId = string.Empty;
-            if (workspaceService?.ActiveFloor == null || size.x <= 0f || size.y <= 0f)
-            {
-                return false;
-            }
-
-            var activeFloorId = workspaceService.ActiveFloor.floorId;
-            var createdRegionId = SandboxId.NewId();
-            var half = size * 0.5f;
-            var polygonPoints = new List<Vector2>
-            {
-                center + new Vector2(-half.x, -half.y),
-                center + new Vector2(-half.x, half.y),
-                center + new Vector2(half.x, half.y),
-                center + new Vector2(half.x, -half.y)
-            };
-
-            var didPlace = ExecuteProjectMutation(
-                "Place Region",
-                project =>
-                {
-                    var floor = project.floors.FirstOrDefault(candidate =>
-                        string.Equals(candidate.floorId, activeFloorId, StringComparison.Ordinal));
-                    if (floor == null)
-                    {
-                        return false;
-                    }
-
-                    floor.regions.Add(new RegionData
-                    {
-                        regionId = createdRegionId,
-                        floorId = activeFloorId,
-                        name = string.IsNullOrWhiteSpace(name)
-                            ? BuildDefaultRegionName(semanticType, floor.regions.Count + 1)
-                            : name.Trim(),
-                        semanticType = semanticType,
-                        polygonPoints = polygonPoints
-                    });
-                    return true;
-                },
-                new[] { createdRegionId });
-
-            if (didPlace)
-            {
-                regionId = createdRegionId;
-            }
-
-            return didPlace;
-        }
-
-        public bool UpdateRegion(
-            string regionId,
-            string name,
-            RegionSemanticType semanticType,
-            IReadOnlyList<Vector2> polygonPoints,
-            IEnumerable<MetadataFieldData> metadataFields)
-        {
-            if (workspaceService?.ActiveProject == null || string.IsNullOrWhiteSpace(regionId))
-            {
-                return false;
-            }
-
-            return ExecuteProjectMutation(
-                "Update Region",
-                project =>
-                {
-                    foreach (var floor in project.floors)
-                    {
-                        var region = floor.regions.FirstOrDefault(candidate =>
-                            string.Equals(candidate.regionId, regionId, StringComparison.Ordinal));
-                        if (region == null)
-                        {
-                            continue;
-                        }
-
-                        if (name != null)
-                        {
-                            region.name = string.IsNullOrWhiteSpace(name) ? region.name : name.Trim();
-                        }
-
-                        region.semanticType = semanticType;
-                        if (polygonPoints != null && polygonPoints.Count >= 3)
-                        {
-                            region.polygonPoints = polygonPoints.ToList();
-                        }
-
-                        if (metadataFields != null)
-                        {
-                            region.metadataFields = CloneMetadataFields(metadataFields);
-                        }
-
-                        return true;
-                    }
-
-                    return false;
-                },
-                new[] { regionId });
         }
 
         private bool ExecuteProjectMutation(
@@ -465,6 +513,183 @@ namespace EvacLogix.Sandbox.Authoring
             return true;
         }
 
+        private bool TryValidateSpawnPointPlacement(FloorData floor, Vector2 position, out string failureMessage)
+        {
+            failureMessage = string.Empty;
+            if (!HasSpawnExits(floor))
+            {
+                failureMessage = "Add at least one exit before placing spawns.";
+                return false;
+            }
+
+            return true;
+        }
+
+        // Spawns need an evacuation goal somewhere in the PROJECT, not on the spawn's own floor —
+        // agents can reach exits on other floors via stair/teleport portals during the simulation.
+        private bool HasSpawnExits(FloorData floor)
+        {
+            var project = workspaceService?.ActiveProject;
+            if (project?.floors == null)
+            {
+                return floor != null && floor.exits.Count > 0;
+            }
+
+            for (var i = 0; i < project.floors.Count; i += 1)
+            {
+                if (project.floors[i].exits.Count > 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool TryValidateSpawnPointBrushPlacement(FloorData floor, IReadOnlyList<Vector2> polygonPoints, out string failureMessage)
+        {
+            failureMessage = string.Empty;
+            if (!HasSpawnExits(floor))
+            {
+                failureMessage = "Add at least one exit before placing spawns.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool TryValidateSpawnPointSpacing(string floorId, Vector2 position, out string failureMessage)
+        {
+            failureMessage = string.Empty;
+            var positions = new List<Vector2> { position };
+            return TryValidateSpawnPointSpacing(floorId, positions, out failureMessage);
+        }
+
+        private bool TryValidateSpawnPointSpacing(string floorId, IReadOnlyList<Vector2> positions, out string failureMessage)
+        {
+            failureMessage = string.Empty;
+            if (string.IsNullOrWhiteSpace(floorId) || positions == null || positions.Count == 0)
+            {
+                return true;
+            }
+
+            var minimumSpacing = Mathf.Max(0.1f, (agentSimulationService != null ? agentSimulationService.AgentRadius : 0.25f) * 2f);
+            var project = workspaceService?.ActiveProject;
+            var existingPoints = project?.spawnLayouts
+                .Where(layout => layout?.spawnPoints != null)
+                .SelectMany(layout => layout.spawnPoints)
+                .Where(point => point != null && string.Equals(point.floorId, floorId, StringComparison.Ordinal))
+                .Select(point => point.position)
+                .ToList() ?? new List<Vector2>();
+
+            for (var pointIndex = 0; pointIndex < positions.Count; pointIndex += 1)
+            {
+                var currentPoint = positions[pointIndex];
+                for (var existingIndex = 0; existingIndex < existingPoints.Count; existingIndex += 1)
+                {
+                    if (Vector2.Distance(currentPoint, existingPoints[existingIndex]) < minimumSpacing)
+                    {
+                        failureMessage = $"Spawn points must stay at least {minimumSpacing:0.00} units apart so their agent circles do not overlap.";
+                        return false;
+                    }
+                }
+
+                for (var nextIndex = pointIndex + 1; nextIndex < positions.Count; nextIndex += 1)
+                {
+                    if (Vector2.Distance(currentPoint, positions[nextIndex]) < minimumSpacing)
+                    {
+                        failureMessage = $"Spawn points must stay at least {minimumSpacing:0.00} units apart so their agent circles do not overlap.";
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static List<Vector2> GenerateSpawnPointBrushSamples(IReadOnlyList<Vector2> polygonPoints, float density)
+        {
+            var samples = new List<Vector2>();
+            if (polygonPoints == null || polygonPoints.Count < 3)
+            {
+                return samples;
+            }
+
+            var minX = polygonPoints.Min(point => point.x);
+            var minY = polygonPoints.Min(point => point.y);
+            var maxX = polygonPoints.Max(point => point.x);
+            var maxY = polygonPoints.Max(point => point.y);
+            var area = Mathf.Max(0.01f, PolygonArea(polygonPoints));
+            var desiredCount = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(0.1f, density) * area), 1, 250);
+            var spacing = Mathf.Sqrt(area / desiredCount);
+
+            for (var y = minY; y <= maxY + spacing * 0.5f && samples.Count < desiredCount; y += spacing)
+            {
+                for (var x = minX; x <= maxX + spacing * 0.5f && samples.Count < desiredCount; x += spacing)
+                {
+                    var candidate = new Vector2(x + spacing * 0.5f, y + spacing * 0.5f);
+                    if (PointInPolygon(candidate, polygonPoints))
+                    {
+                        samples.Add(candidate);
+                    }
+                }
+            }
+
+            if (samples.Count == 0)
+            {
+                samples.Add(CalculateCentroid(polygonPoints));
+            }
+
+            return samples;
+        }
+
+        private static float PolygonArea(IReadOnlyList<Vector2> points)
+        {
+            if (points == null || points.Count < 3)
+            {
+                return 0f;
+            }
+
+            var area = 0f;
+            for (var i = 0; i < points.Count; i += 1)
+            {
+                var next = (i + 1) % points.Count;
+                area += points[i].x * points[next].y - points[next].x * points[i].y;
+            }
+
+            return Mathf.Abs(area) * 0.5f;
+        }
+
+        private static Vector2 CalculateCentroid(IReadOnlyList<Vector2> points)
+        {
+            var sum = Vector2.zero;
+            for (var i = 0; i < points.Count; i += 1)
+            {
+                sum += points[i];
+            }
+
+            return sum / points.Count;
+        }
+
+        private static bool PointInPolygon(Vector2 point, IReadOnlyList<Vector2> polygon)
+        {
+            var isInside = false;
+            for (var i = 0; i < polygon.Count; i += 1)
+            {
+                var j = i == 0 ? polygon.Count - 1 : i - 1;
+                var left = polygon[i];
+                var right = polygon[j];
+                var intersects = ((left.y > point.y) != (right.y > point.y)) &&
+                                 (point.x < (right.x - left.x) * (point.y - left.y) / Mathf.Max(0.0001f, right.y - left.y) + left.x);
+                if (intersects)
+                {
+                    isInside = !isInside;
+                }
+            }
+
+            return isInside;
+        }
+
         private static bool ResolveOrCreateSpawnLayout(
             BuildingProjectData project,
             string spawnLayoutId,
@@ -504,17 +729,6 @@ namespace EvacLogix.Sandbox.Authoring
             };
             project.spawnLayouts.Add(layout);
             return true;
-        }
-
-        private static string BuildDefaultRegionName(RegionSemanticType semanticType, int index)
-        {
-            return semanticType switch
-            {
-                RegionSemanticType.SpawnZone => $"Spawn Zone {index}",
-                RegionSemanticType.RestrictedZone => $"Restricted Zone {index}",
-                RegionSemanticType.Annotation => $"Annotation {index}",
-                _ => $"Region {index}"
-            };
         }
 
         private static List<MetadataFieldData> CloneMetadataFields(IEnumerable<MetadataFieldData> metadataFields)

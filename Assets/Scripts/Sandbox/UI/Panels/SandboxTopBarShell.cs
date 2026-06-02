@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Data.Validation;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Runtime;
 using UnityEngine;
 
 namespace EvacLogix.Sandbox.UI.Panels
@@ -18,6 +19,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         private SandboxNewProjectDialogShell newProjectDialog;
         private SandboxProjectRefreshService projectRefreshService;
         private SandboxPreviewService previewService;
+        private SandboxAgentSimulationService agentSimulationService;
         private SandboxValidationService validationService;
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxSaveLoadService saveLoadService;
@@ -38,6 +40,8 @@ namespace EvacLogix.Sandbox.UI.Panels
         public bool HasSavedBrowserProjects => saveLoadService != null && saveLoadService.GetSavedProjects().Length > 0;
         public bool IsPreviewModeActive => previewService != null && previewService.IsPreviewModeActive;
         public string PreviewSummary => previewService?.LastPreviewReport?.summary ?? string.Empty;
+        public bool HasCompletedSimulationRunReport => agentSimulationService != null && agentSimulationService.HasCompletedSimulationRunReport;
+        public SandboxSimulationRunReportData LastSimulationRunReport => agentSimulationService?.LastSimulationRunReport;
 
         private void Awake()
         {
@@ -47,6 +51,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             newProjectDialog = FindAnyObjectByType<SandboxNewProjectDialogShell>();
             projectRefreshService = FindAnyObjectByType<SandboxProjectRefreshService>();
             previewService = FindAnyObjectByType<SandboxPreviewService>();
+            agentSimulationService = FindAnyObjectByType<SandboxAgentSimulationService>();
             saveLoadService = FindAnyObjectByType<SandboxSaveLoadService>();
             validationService = FindAnyObjectByType<SandboxValidationService>();
             workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();
@@ -298,6 +303,32 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             return previewImageExportBackend != null && previewImageExportBackend.TryExportActiveBlueprintPreview(destinationPath);
+        }
+
+        public bool ExportSimulationSummaryReport(string destinationPath)
+        {
+            var didExport = agentSimulationService != null && agentSimulationService.ExportSimulationSummaryReport(destinationPath);
+            if (statusBar != null)
+            {
+                statusBar.StatusMessage = didExport
+                    ? "Exported simulation summary report."
+                    : "Run a successful simulation before exporting the summary report.";
+            }
+
+            return didExport;
+        }
+
+        public bool ExportSimulationTravelDensityHeatmapReport(string destinationPath)
+        {
+            var didExport = agentSimulationService != null && agentSimulationService.ExportSimulationTravelDensityHeatmapReport(destinationPath);
+            if (statusBar != null)
+            {
+                statusBar.StatusMessage = didExport
+                    ? "Exported simulation travel density heatmap report."
+                    : "Run a successful simulation before exporting the heatmap report.";
+            }
+
+            return didExport;
         }
 
         public void RebuildAll()

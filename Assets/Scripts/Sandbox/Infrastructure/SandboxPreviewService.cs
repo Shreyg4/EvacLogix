@@ -11,8 +11,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         None = 0,
         PlaceFireOrigin = 1,
         PlaceSpawnPoint = 2,
-        PaintSpawnBrush = 3,
-        PlaceRegion = 4,
+        PaintSpawnPointBrush = 3,
     }
 
     public enum SandboxPreviewDiagnosticKind
@@ -110,12 +109,12 @@ namespace EvacLogix.Sandbox.Infrastructure
         [SerializeField] private string pendingSpawnLayoutName = "Main Preview Layout";
         [SerializeField] private string pendingSpawnLayoutId = string.Empty;
         [SerializeField] private bool pendingSpawnLayoutIsPersistent = true;
-        [SerializeField] private float pendingSpawnBrushDensity = 1f;
-        [SerializeField] private string pendingRegionName = "Preview Region";
-        [SerializeField] private RegionSemanticType pendingRegionSemanticType = RegionSemanticType.SpawnZone;
+        [SerializeField] private float pendingSpawnPointBrushDensity = 1f;
         [SerializeField] private bool pendingFireOriginIsPersistent = true;
+        [SerializeField] private List<string> activeFireOriginSelectionIds = new();
         [SerializeField] private PreviewParameterData activePreviewParameters = new();
         [SerializeField] private SandboxPreviewReportData lastPreviewReport = new();
+        [SerializeField] private int interactionModeChangedFrame = -1;
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxValidationService validationService;
@@ -132,12 +131,12 @@ namespace EvacLogix.Sandbox.Infrastructure
         public string PendingSpawnLayoutName => pendingSpawnLayoutName;
         public string PendingSpawnLayoutId => pendingSpawnLayoutId;
         public bool PendingSpawnLayoutIsPersistent => pendingSpawnLayoutIsPersistent;
-        public float PendingSpawnBrushDensity => pendingSpawnBrushDensity;
-        public string PendingRegionName => pendingRegionName;
-        public RegionSemanticType PendingRegionSemanticType => pendingRegionSemanticType;
+        public float PendingSpawnPointBrushDensity => pendingSpawnPointBrushDensity;
         public bool PendingFireOriginIsPersistent => pendingFireOriginIsPersistent;
+        public IReadOnlyList<string> ActiveFireOriginSelectionIds => activeFireOriginSelectionIds;
         public PreviewParameterData ActivePreviewParameters => activePreviewParameters;
         public SandboxPreviewReportData LastPreviewReport => lastPreviewReport;
+        public int InteractionModeChangedFrame => interactionModeChangedFrame;
 
         private void Awake()
         {
@@ -167,6 +166,8 @@ namespace EvacLogix.Sandbox.Infrastructure
         public void ExitPreviewMode()
         {
             interactionMode = SandboxPreviewInteractionMode.None;
+            interactionModeChangedFrame = Time.frameCount;
+            validationService?.ClearPreviewPlacementValidationIssue();
             if (!isPreviewModeActive)
             {
                 RaisePreviewStateChanged();
@@ -187,6 +188,8 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             interactionMode = nextMode;
+            interactionModeChangedFrame = Time.frameCount;
+            validationService?.ClearPreviewPlacementValidationIssue();
             RaisePreviewStateChanged();
         }
 
@@ -205,17 +208,15 @@ namespace EvacLogix.Sandbox.Infrastructure
             RaisePreviewStateChanged();
         }
 
-        public void ConfigureSpawnBrush(float density, string layoutId, string layoutName, bool isPersistent)
+        public void ConfigureSpawnPointBrush(float density, string layoutId, string layoutName, bool isPersistent)
         {
-            pendingSpawnBrushDensity = Mathf.Max(0.1f, density);
+            pendingSpawnPointBrushDensity = Mathf.Max(0.1f, density);
             ConfigureSpawnPlacement(layoutId, layoutName, isPersistent);
         }
 
-        public void ConfigureRegionPlacement(string regionName, RegionSemanticType semanticType)
+        public void ConfigureSpawnBrush(float density, string layoutId, string layoutName, bool isPersistent)
         {
-            pendingRegionName = string.IsNullOrWhiteSpace(regionName) ? "Preview Region" : regionName.Trim();
-            pendingRegionSemanticType = semanticType;
-            RaisePreviewStateChanged();
+            ConfigureSpawnPointBrush(density, layoutId, layoutName, isPersistent);
         }
 
         public void ConfigureFirePlacement(bool isPersistent)
@@ -262,6 +263,25 @@ namespace EvacLogix.Sandbox.Infrastructure
             RaisePreviewStateChanged();
         }
 
+        public void SetActiveFireOriginIds(IEnumerable<string> fireOriginIds)
+        {
+            activeFireOriginSelectionIds = fireOriginIds == null
+                ? new List<string>()
+                : fireOriginIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal).ToList();
+            RaisePreviewStateChanged();
+        }
+
+        public void ClearActiveFireOriginSelection()
+        {
+            if (activeFireOriginSelectionIds.Count == 0)
+            {
+                return;
+            }
+
+            activeFireOriginSelectionIds = new List<string>();
+            RaisePreviewStateChanged();
+        }
+
         public void NotifyPreviewInputsChanged()
         {
             RaisePreviewStateChanged();
@@ -271,6 +291,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         {
             lastPreviewReport = BuildPreviewReport();
             PreviewReportChanged?.Invoke(lastPreviewReport);
+
             return lastPreviewReport.didRun;
         }
 
@@ -474,12 +495,24 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             return project.spawnLayouts
-                .Where(layout => layout.spawnPoints.Count > 0 || layout.spawnBrushStrokes.Count > 0)
+                .Where(layout => layout.spawnPoints.Count > 0)
                 .ToList();
         }
 
-        private static List<FireOriginData> ResolveActiveFireOrigins(BuildingProjectData project, ScenarioPresetData scenarioPreset)
+        private List<FireOriginData> ResolveActiveFireOrigins(BuildingProjectData project, ScenarioPresetData scenarioPreset)
         {
+            if (project == null)
+            {
+                return new List<FireOriginData>();
+            }
+
+            if (activeFireOriginSelectionIds.Count > 0)
+            {
+                return project.fireOrigins
+                    .Where(origin => activeFireOriginSelectionIds.Contains(origin.fireOriginId, StringComparer.Ordinal))
+                    .ToList();
+            }
+
             if (scenarioPreset != null)
             {
                 return project.fireOrigins
@@ -506,60 +539,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                     });
                 }
 
-                for (var strokeIndex = 0; strokeIndex < layout.spawnBrushStrokes.Count; strokeIndex += 1)
-                {
-                    var stroke = layout.spawnBrushStrokes[strokeIndex];
-                    var generatedPoints = GenerateSpawnBrushSamples(stroke);
-                    for (var sampleIndex = 0; sampleIndex < generatedPoints.Count; sampleIndex += 1)
-                    {
-                        samples.Add(new PreviewSample
-                        {
-                            sampleId = $"{stroke.spawnBrushStrokeId}-sample-{sampleIndex:D3}",
-                            floorId = stroke.floorId,
-                            position = generatedPoints[sampleIndex]
-                        });
-                    }
-                }
-            }
-
-            return samples;
-        }
-
-        private static List<Vector2> GenerateSpawnBrushSamples(SpawnBrushStrokeData stroke)
-        {
-            var samples = new List<Vector2>();
-            if (stroke == null || stroke.polygonPoints == null || stroke.polygonPoints.Count < 3)
-            {
-                return samples;
-            }
-
-            var minX = stroke.polygonPoints.Min(point => point.x);
-            var minY = stroke.polygonPoints.Min(point => point.y);
-            var maxX = stroke.polygonPoints.Max(point => point.x);
-            var maxY = stroke.polygonPoints.Max(point => point.y);
-            var spacing = 1f / Mathf.Sqrt(Mathf.Max(0.1f, stroke.density));
-
-            for (var x = minX; x <= maxX + spacing * 0.5f; x += spacing)
-            {
-                for (var y = minY; y <= maxY + spacing * 0.5f; y += spacing)
-                {
-                    var point = new Vector2(x, y);
-                    if (PointInPolygon(point, stroke.polygonPoints))
-                    {
-                        samples.Add(point);
-                    }
-                }
-            }
-
-            if (samples.Count == 0)
-            {
-                var centroid = Vector2.zero;
-                for (var i = 0; i < stroke.polygonPoints.Count; i += 1)
-                {
-                    centroid += stroke.polygonPoints[i];
-                }
-
-                samples.Add(centroid / stroke.polygonPoints.Count);
             }
 
             return samples;
@@ -1011,14 +990,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                 return true;
             }
 
-            if (floor.regions.Any(region =>
-                    region.semanticType == RegionSemanticType.RestrictedZone &&
-                    PointInPolygon(position, region.polygonPoints)))
-            {
-                blockedMessage = "Preview sample starts inside a restricted region.";
-                return true;
-            }
-
             if (fireOrigins.Any(origin =>
                     string.Equals(origin.floorId, floorId, StringComparison.Ordinal) &&
                     Vector2.Distance(position, origin.position) <= hazardRadius))
@@ -1053,20 +1024,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                 }
 
                 if (SegmentIntersectsRect(start, end, obstacle.center, obstacle.size))
-                {
-                    return true;
-                }
-            }
-
-            for (var regionIndex = 0; regionIndex < floor.regions.Count; regionIndex += 1)
-            {
-                var region = floor.regions[regionIndex];
-                if (region.semanticType != RegionSemanticType.RestrictedZone)
-                {
-                    continue;
-                }
-
-                if (PointInPolygon((start + end) * 0.5f, region.polygonPoints))
                 {
                     return true;
                 }

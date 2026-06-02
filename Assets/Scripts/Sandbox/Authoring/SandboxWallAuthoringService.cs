@@ -13,6 +13,8 @@ namespace EvacLogix.Sandbox.Authoring
 {
     public sealed class SandboxWallAuthoringService : MonoBehaviour
     {
+        private const float OpeningEndMargin = 0.05f;
+
         [SerializeField] private float defaultWallThickness = 0.2f;
         [SerializeField] private float brushPointReductionDistance = 0.25f;
         [SerializeField] private int brushSmoothingWindow = 1;
@@ -34,6 +36,7 @@ namespace EvacLogix.Sandbox.Authoring
         private SandboxWallSnappingService wallSnappingService;
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxPreviewService previewService;
+        private SandboxWorkspaceStateService workspaceStateService;
 
         public event Action PreviewStateChanged;
         public event Action TopologyChanged;
@@ -58,6 +61,7 @@ namespace EvacLogix.Sandbox.Authoring
             wallSnappingService = GetComponent<SandboxWallSnappingService>();
             visualOrganizationService = GetComponent<SandboxVisualOrganizationService>();
             previewService = GetComponent<SandboxPreviewService>();
+            workspaceStateService = GetComponent<SandboxWorkspaceStateService>();
         }
 
         public void SetBrushCleanupSettings(int smoothingWindow, float pointReductionDistance, float nearJoinDistance)
@@ -298,6 +302,130 @@ namespace EvacLogix.Sandbox.Authoring
             return wall != null && MoveWallJunctions(wall.endJunctionId, new[] { wall.endJunctionId }, newEndPoint);
         }
 
+        // Sets a wall's length by moving one endpoint along the wall axis. The anchored end stays put
+        // (a shared corner detaches the moved end cleanly, leaving neighbours in place). Rejects with a
+        // message if a door/window on the wall would no longer fit; openings keep their world position.
+        public bool TrySetWallLength(string wallSegmentId, float newLength, bool anchorAtStart, out string error, out float minWorldLength, out string offenderLabel)
+        {
+            error = string.Empty;
+            minWorldLength = 0f;
+            offenderLabel = null;
+            var floor = workspaceService?.ActiveFloor;
+            var wall = floor == null ? null : FindWallSegment(floor, wallSegmentId);
+            if (wall == null)
+            {
+                error = "Wall not found.";
+                return false;
+            }
+
+            if (IsEditingBlocked() || IsWallLocked(wallSegmentId))
+            {
+                error = "Wall is locked.";
+                return false;
+            }
+
+            newLength = Mathf.Max(0.05f, newLength);
+            var oldStart = wall.startPoint;
+            var oldEnd = wall.endPoint;
+            var oldLength = Vector2.Distance(oldStart, oldEnd);
+            if (oldLength <= 0.0001f)
+            {
+                error = "Wall has no direction to resize.";
+                return false;
+            }
+
+            var dir = (oldEnd - oldStart) / oldLength;
+            var newStart = anchorAtStart ? oldStart : oldEnd - dir * newLength;
+
+            // Validate openings on this wall (their world position stays fixed).
+            var minLength = 0f;
+            string offender = null;
+            void CheckOpening(string label, float offset, float width)
+            {
+                var halfWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(workspaceService, workspaceStateService, floor, width) * 0.5f;
+                var worldCenter = oldStart + dir * offset;
+                var newOffset = Vector2.Dot(worldCenter - newStart, dir);
+                if (newOffset - halfWidth < -0.01f || newOffset + halfWidth > newLength + 0.01f)
+                {
+                    offender ??= label;
+                }
+
+                var requiredFromAnchor = anchorAtStart ? offset + halfWidth : (oldLength - offset) + halfWidth;
+                minLength = Mathf.Max(minLength, requiredFromAnchor);
+            }
+
+            foreach (var door in floor.doors.Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal)))
+            {
+                CheckOpening("a door", door.offsetAlongWall, door.width);
+            }
+
+            foreach (var window in floor.windows.Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal)))
+            {
+                CheckOpening("a window", window.offsetAlongWall, window.width);
+            }
+
+            if (offender != null)
+            {
+                // Report the raw world-unit minimum and the offender; the caller formats the
+                // message in the unit the user is actually typing in (grid/feet/meters).
+                offenderLabel = offender;
+                minWorldLength = minLength;
+                error = $"{offender} on this wall would fall off at that length.";
+                return false;
+            }
+
+            return ExecuteProjectMutation(
+                "Set Wall Length",
+                (_, mutableFloor) =>
+                {
+                    var target = FindWallSegment(mutableFloor, wallSegmentId);
+                    if (target == null)
+                    {
+                        return false;
+                    }
+
+                    var start = target.startPoint;
+                    var end = target.endPoint;
+                    var length = Vector2.Distance(start, end);
+                    if (length <= 0.0001f)
+                    {
+                        return false;
+                    }
+
+                    var direction = (end - start) / length;
+
+                    // Capture opening world positions before the endpoint moves so we can re-derive offsets.
+                    var doorCenters = mutableFloor.doors
+                        .Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal))
+                        .ToDictionary(candidate => candidate.doorId, candidate => start + direction * candidate.offsetAlongWall);
+                    var windowCenters = mutableFloor.windows
+                        .Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal))
+                        .ToDictionary(candidate => candidate.windowId, candidate => start + direction * candidate.offsetAlongWall);
+
+                    var moveStart = !anchorAtStart;
+                    var movedTarget = moveStart ? end - direction * newLength : start + direction * newLength;
+                    if (!UpdateWallEndpointPosition(mutableFloor, target, moveStart, movedTarget, 0.01f))
+                    {
+                        return false;
+                    }
+
+                    var resolvedStart = target.startPoint;
+                    var resolvedDirection = (target.endPoint - target.startPoint).normalized;
+                    foreach (var door in mutableFloor.doors.Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal)))
+                    {
+                        door.offsetAlongWall = Vector2.Dot(doorCenters[door.doorId] - resolvedStart, resolvedDirection);
+                    }
+
+                    foreach (var window in mutableFloor.windows.Where(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal)))
+                    {
+                        window.offsetAlongWall = Vector2.Dot(windowCenters[window.windowId] - resolvedStart, resolvedDirection);
+                    }
+
+                    return true;
+                },
+                new[] { wallSegmentId });
+        }
+
         public bool MoveWallJunctions(string primaryJunctionId, IEnumerable<string> selectedJunctionIds, Vector2 targetPoint)
         {
             if (string.IsNullOrWhiteSpace(primaryJunctionId) || selectedJunctionIds == null)
@@ -436,7 +564,7 @@ namespace EvacLogix.Sandbox.Authoring
             var newJunctionId = SandboxId.NewId();
             return ExecuteProjectMutation(
                 "Split Wall",
-                (_, floor) =>
+                (project, floor) =>
                 {
                     var wall = FindWallSegment(floor, wallSegmentId);
                     if (wall == null)
@@ -453,6 +581,7 @@ namespace EvacLogix.Sandbox.Authoring
 
                     var originalEndJunctionId = wall.endJunctionId;
                     var originalEndPoint = wall.endPoint;
+                    var originalWallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
                     var originalEndJunction = FindJunction(floor, originalEndJunctionId);
                     var midJunction = FindOrCreateJunction(
                         floor,
@@ -494,6 +623,7 @@ namespace EvacLogix.Sandbox.Authoring
 
                     midJunction.connectedWallSegmentIds.Add(newWallId);
                     floor.wallSegments.Add(newWall);
+                    ReassignAttachedOpeningsForSplit(project, floor, wall.wallSegmentId, newWallId, Vector2.Distance(wall.startPoint, midJunction.position), originalWallLength);
                     return true;
                 },
                 new[] { wallSegmentId, newWallId });
@@ -622,6 +752,7 @@ namespace EvacLogix.Sandbox.Authoring
                         RemoveConnection(endJunction, wall.wallSegmentId);
                     }
 
+                    RemoveAttachedOpenings(floor, wall.wallSegmentId);
                     floor.wallSegments.Remove(wall);
                     PruneJunctionIfOrphan(floor, startJunctionId);
                     PruneJunctionIfOrphan(floor, endJunctionId);
@@ -1029,6 +1160,13 @@ namespace EvacLogix.Sandbox.Authoring
 
                     break;
                 }
+                case SandboxWallSnapTargetKind.Intersection:
+                {
+                    // Placing on a wall crossing: create/reuse a junction there and split every wall
+                    // passing through it, so the new wall actually ties into the intersection instead
+                    // of leaving a disconnected junction floating on top of it.
+                    return SplitWallsAtIntersection(floor, snapResult.position, preferredJunctionId, exclusions);
+                }
             }
 
             return FindOrCreateJunction(
@@ -1075,6 +1213,7 @@ namespace EvacLogix.Sandbox.Authoring
 
             var originalEndJunctionId = wall.endJunctionId;
             var originalEndPoint = wall.endPoint;
+            var originalWallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
             var originalEndJunction = FindJunction(floor, originalEndJunctionId);
             var midJunction = new WallJunctionData
             {
@@ -1109,7 +1248,45 @@ namespace EvacLogix.Sandbox.Authoring
                 tags = new List<string>(wall.tags)
             });
             AddConnection(midJunction, splitWallId);
+            ReassignAttachedOpeningsForSplit(workspaceService?.ActiveProject, floor, wall.wallSegmentId, splitWallId, Vector2.Distance(wall.startPoint, midJunction.position), originalWallLength);
             return midJunction;
+        }
+
+        // Resolves the junction for a point that snapped to a wall crossing: create/reuse a junction
+        // at the point, then split every wall whose interior passes through it so they all connect
+        // there. Returns the shared junction the new wall should attach to.
+        private WallJunctionData SplitWallsAtIntersection(
+            FloorData floor,
+            Vector2 point,
+            string preferredJunctionId,
+            string[] excludedJunctionIds)
+        {
+            var reuseDistance = wallSnappingService != null ? wallSnappingService.JunctionReuseDistance : nearJoinCleanupDistance;
+            var junction = FindOrCreateJunction(floor, point, reuseDistance, preferredJunctionId, excludedJunctionIds);
+            if (junction == null)
+            {
+                return null;
+            }
+
+            var wallsSnapshot = floor.wallSegments.ToArray();
+            for (var i = 0; i < wallsSnapshot.Length; i += 1)
+            {
+                var wall = wallsSnapshot[i];
+                if (junction.connectedWallSegmentIds.Contains(wall.wallSegmentId))
+                {
+                    continue;
+                }
+
+                var projected = ProjectPointOntoSegment(point, wall.startPoint, wall.endPoint);
+                if (Vector2.Distance(projected, point) > 0.06f)
+                {
+                    continue;
+                }
+
+                SplitWallAtProjectedPointUsingExistingJunction(floor, wall.wallSegmentId, junction, projected);
+            }
+
+            return junction;
         }
 
         private void SplitWallAtProjectedPointUsingExistingJunction(
@@ -1138,6 +1315,7 @@ namespace EvacLogix.Sandbox.Authoring
 
             var originalEndJunctionId = wall.endJunctionId;
             var originalEndPoint = wall.endPoint;
+            var originalWallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
             var originalEndJunction = FindJunction(floor, originalEndJunctionId);
             if (originalEndJunction != null)
             {
@@ -1166,6 +1344,7 @@ namespace EvacLogix.Sandbox.Authoring
                 tags = new List<string>(wall.tags)
             });
             AddConnection(existingJunction, splitWallId);
+            ReassignAttachedOpeningsForSplit(workspaceService?.ActiveProject, floor, wall.wallSegmentId, splitWallId, Vector2.Distance(wall.startPoint, projectedPoint), originalWallLength);
         }
 
         private (WallSegmentData wall, Vector2 projectedPoint) FindSegmentSplitCandidate(FloorData floor, WallJunctionData movedJunction)
@@ -1700,7 +1879,10 @@ namespace EvacLogix.Sandbox.Authoring
             return true;
         }
 
-        private static bool AddWallSegment(
+        // Public so non-drawing flows (e.g. clipboard paste) can rebuild a wall with correct junction
+        // topology on a given floor. Pure/static: it only mutates the floor passed in, which is what
+        // clipboard paste needs since it operates on a cloned project.
+        public static bool AddWallSegment(
             FloorData floor,
             string wallSegmentId,
             string startJunctionId,
@@ -1873,7 +2055,7 @@ namespace EvacLogix.Sandbox.Authoring
                 string.Equals(junction.wallJunctionId, wallJunctionId, StringComparison.Ordinal));
         }
 
-        private static bool RemoveWallInternal(FloorData floor, WallSegmentData wall)
+        private bool RemoveWallInternal(FloorData floor, WallSegmentData wall)
         {
             if (floor == null || wall == null)
             {
@@ -1894,6 +2076,7 @@ namespace EvacLogix.Sandbox.Authoring
                 RemoveConnection(endJunction, wall.wallSegmentId);
             }
 
+            RemoveAttachedOpenings(floor, wall.wallSegmentId);
             floor.wallSegments.Remove(wall);
             PruneJunctionIfOrphan(floor, startJunctionId);
             PruneJunctionIfOrphan(floor, endJunctionId);
@@ -1998,6 +2181,172 @@ namespace EvacLogix.Sandbox.Authoring
             return string.Equals(wall.startJunctionId, sharedJunctionId, StringComparison.Ordinal)
                 ? wall.endJunctionId
                 : wall.startJunctionId;
+        }
+
+        private void ReassignAttachedOpeningsForSplit(
+            BuildingProjectData project,
+            FloorData floor,
+            string originalWallSegmentId,
+            string newWallSegmentId,
+            float splitDistance,
+            float originalWallLength)
+        {
+            if (floor == null ||
+                string.IsNullOrWhiteSpace(originalWallSegmentId) ||
+                string.IsNullOrWhiteSpace(newWallSegmentId) ||
+                splitDistance <= 0f ||
+                originalWallLength <= splitDistance)
+            {
+                return;
+            }
+
+            var gridSize = workspaceStateService != null ? workspaceStateService.GridSize : 0.5f;
+            ReassignAttachedDoorsForSplit(project, floor, originalWallSegmentId, newWallSegmentId, splitDistance, originalWallLength, gridSize);
+            ReassignAttachedWindowsForSplit(project, floor, originalWallSegmentId, newWallSegmentId, splitDistance, originalWallLength, gridSize);
+        }
+
+        private void ReassignAttachedDoorsForSplit(
+            BuildingProjectData project,
+            FloorData floor,
+            string originalWallSegmentId,
+            string newWallSegmentId,
+            float splitDistance,
+            float originalWallLength,
+            float gridSize)
+        {
+            var attachedDoors = floor.doors
+                .Where(candidate => string.Equals(candidate.wallSegmentId, originalWallSegmentId, StringComparison.Ordinal))
+                .ToList();
+            if (attachedDoors.Count == 0)
+            {
+                return;
+            }
+
+            var doorsToRemove = new List<DoorData>();
+            for (var i = 0; i < attachedDoors.Count; i += 1)
+            {
+                if (!TryReassignOpeningForSplit(project, floor, attachedDoors[i], attachedDoors[i].width, gridSize, originalWallSegmentId, newWallSegmentId, splitDistance, originalWallLength, out var nextWallId, out var nextOffset))
+                {
+                    doorsToRemove.Add(attachedDoors[i]);
+                    continue;
+                }
+
+                attachedDoors[i].wallSegmentId = nextWallId;
+                attachedDoors[i].offsetAlongWall = nextOffset;
+            }
+
+            if (doorsToRemove.Count > 0)
+            {
+                floor.doors.RemoveAll(candidate => doorsToRemove.Contains(candidate));
+            }
+        }
+
+        private void ReassignAttachedWindowsForSplit(
+            BuildingProjectData project,
+            FloorData floor,
+            string originalWallSegmentId,
+            string newWallSegmentId,
+            float splitDistance,
+            float originalWallLength,
+            float gridSize)
+        {
+            var attachedWindows = floor.windows
+                .Where(candidate => string.Equals(candidate.wallSegmentId, originalWallSegmentId, StringComparison.Ordinal))
+                .ToList();
+            if (attachedWindows.Count == 0)
+            {
+                return;
+            }
+
+            var windowsToRemove = new List<WindowData>();
+            for (var i = 0; i < attachedWindows.Count; i += 1)
+            {
+                if (!TryReassignOpeningForSplit(project, floor, attachedWindows[i], attachedWindows[i].width, gridSize, originalWallSegmentId, newWallSegmentId, splitDistance, originalWallLength, out var nextWallId, out var nextOffset))
+                {
+                    windowsToRemove.Add(attachedWindows[i]);
+                    continue;
+                }
+
+                attachedWindows[i].wallSegmentId = nextWallId;
+                attachedWindows[i].offsetAlongWall = nextOffset;
+            }
+
+            if (windowsToRemove.Count > 0)
+            {
+                floor.windows.RemoveAll(candidate => windowsToRemove.Contains(candidate));
+            }
+        }
+
+        private bool TryReassignOpeningForSplit<T>(
+            BuildingProjectData project,
+            FloorData floor,
+            T opening,
+            float authoredWidth,
+            float gridSize,
+            string originalWallSegmentId,
+            string newWallSegmentId,
+            float splitDistance,
+            float originalWallLength,
+            out string resolvedWallSegmentId,
+            out float resolvedOffset) where T : class
+        {
+            resolvedWallSegmentId = originalWallSegmentId;
+            resolvedOffset = 0f;
+            if (opening == null)
+            {
+                return false;
+            }
+
+            var currentOffset = opening switch
+            {
+                DoorData door => door.offsetAlongWall,
+                WindowData window => window.offsetAlongWall,
+                _ => 0f
+            };
+
+            var leftLength = splitDistance;
+            var rightLength = originalWallLength - splitDistance;
+            var halfWidth = SandboxOpeningWidthUtility.ResolveWorldWidth(project, floor, authoredWidth, gridSize) * 0.5f;
+            var minimumOffset = halfWidth + OpeningEndMargin;
+            var leftMaximumOffset = leftLength - halfWidth - OpeningEndMargin;
+            var rightMaximumOffset = rightLength - halfWidth - OpeningEndMargin;
+            var prefersLeft = currentOffset <= splitDistance;
+
+            if (prefersLeft && leftMaximumOffset >= minimumOffset)
+            {
+                resolvedWallSegmentId = originalWallSegmentId;
+                resolvedOffset = Mathf.Clamp(currentOffset, minimumOffset, leftMaximumOffset);
+                return true;
+            }
+
+            if (!prefersLeft && rightMaximumOffset >= minimumOffset)
+            {
+                resolvedWallSegmentId = newWallSegmentId;
+                resolvedOffset = Mathf.Clamp(currentOffset - splitDistance, minimumOffset, rightMaximumOffset);
+                return true;
+            }
+
+            if (prefersLeft ? rightMaximumOffset >= minimumOffset : leftMaximumOffset >= minimumOffset)
+            {
+                resolvedWallSegmentId = prefersLeft ? newWallSegmentId : originalWallSegmentId;
+                resolvedOffset = prefersLeft
+                    ? minimumOffset
+                    : Mathf.Clamp(currentOffset, minimumOffset, leftMaximumOffset);
+                return resolvedWallSegmentId == newWallSegmentId || resolvedOffset >= minimumOffset;
+            }
+
+            return false;
+        }
+
+        private static void RemoveAttachedOpenings(FloorData floor, string wallSegmentId)
+        {
+            if (floor == null || string.IsNullOrWhiteSpace(wallSegmentId))
+            {
+                return;
+            }
+
+            floor.doors?.RemoveAll(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal));
+            floor.windows?.RemoveAll(candidate => string.Equals(candidate.wallSegmentId, wallSegmentId, StringComparison.Ordinal));
         }
 
         private static bool HasAttachedOpenings(FloorData floor, string wallSegmentId)

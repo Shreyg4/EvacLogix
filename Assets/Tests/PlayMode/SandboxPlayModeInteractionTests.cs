@@ -7,6 +7,7 @@ using EvacLogix.Sandbox.Authoring.Snapping;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Runtime;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -22,6 +23,7 @@ namespace EvacLogix.Tests.PlayMode
             yield return null;
 
             harness.workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            CreateEnclosedRoom(harness.wallAuthoringService);
 
             Assert.That(harness.wallAuthoringService.TryRegisterLinePoint(new Vector2(0f, 0f), out _), Is.False);
             yield return null;
@@ -60,7 +62,7 @@ namespace EvacLogix.Tests.PlayMode
             yield return null;
 
             harness.workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
-            Assert.That(harness.wallAuthoringService.CreateLineWall(new Vector2(0f, 0f), new Vector2(6f, 0f), 0.2f), Is.True);
+            CreateEnclosedRoom(harness.wallAuthoringService);
 
             Assert.That(harness.semanticObjectAuthoringService.PlaceDoor(new Vector2(2f, 0.05f), out _), Is.True);
             Assert.That(harness.semanticObjectAuthoringService.PlaceExit(new Vector2(7f, 0f), out _, new Vector2(2f, 1.5f), 0f, 1.5f, 30f, 1f, "Main Exit"), Is.True);
@@ -74,6 +76,62 @@ namespace EvacLogix.Tests.PlayMode
             Assert.That(harness.workspaceService.ActiveFloor.obstacles.Count, Is.EqualTo(1));
             Assert.That(harness.workspaceService.ActiveProject.spawnLayouts.SelectMany(layout => layout.spawnPoints).Count(), Is.EqualTo(1));
             Assert.That(harness.workspaceService.ActiveProject.fireOrigins.Count, Is.EqualTo(1));
+
+            harness.Destroy();
+        }
+
+        [UnityTest]
+        public IEnumerator PreviewRun_SpawnsRuntimeAgents()
+        {
+            var harness = CreateHarness();
+            yield return null;
+
+            harness.workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            CreateEnclosedRoom(harness.wallAuthoringService);
+
+            Assert.That(harness.semanticObjectAuthoringService.PlaceExit(new Vector2(3f, 3f), out _, new Vector2(1.5f, 1.5f), 0f, 1.5f, 0f, 1f, "Main Exit"), Is.True);
+            Assert.That(harness.previewAuthoringService.PlaceSpawnPoint(new Vector2(0f, 3f), out var spawnPointId, out _, null, "Play Layout", true), Is.True);
+            Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(1f, 1f), out _, 1.2f, 2f, true), Is.True);
+            yield return null;
+
+            harness.previewService.EnterPreviewMode();
+            Assert.That(harness.previewService.RunPreview(), Is.True);
+            yield return null;
+
+            Assert.That(harness.agentSimulationService.SimulationActive, Is.True);
+            Assert.That(harness.agentSimulationService.ActiveAgents.Count, Is.EqualTo(1));
+            Assert.That(harness.agentSimulationService.ActiveAgents[0].AgentId, Is.EqualTo(spawnPointId));
+
+            harness.Destroy();
+        }
+
+        [UnityTest]
+        public IEnumerator FireSimulation_UsesSelectedOriginAndRespectsWalls()
+        {
+            var harness = CreateHarness();
+            yield return null;
+
+            harness.workspaceService.CreateNewProject(SandboxProjectTemplateKind.DefaultTemplate);
+            CreateEnclosedRoom(harness.wallAuthoringService);
+            Assert.That(harness.wallAuthoringService.CreateLineWall(new Vector2(1f, 0f), new Vector2(1f, 6f), 0.2f), Is.True);
+            yield return null;
+
+            harness.colliderService.RebuildAll();
+
+            Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(-1.5f, 3f), out var leftFireOriginId, 10f, 0f, true), Is.True);
+            Assert.That(harness.previewAuthoringService.PlaceFireOrigin(new Vector2(2.5f, 3f), out _, 10f, 0f, true), Is.True);
+            yield return null;
+
+            harness.fireSimulationService.SetActiveFireOriginIds(new[] { leftFireOriginId });
+            harness.fireSimulationService.RestartSimulation();
+
+            for (var i = 0; i < 8; i += 1)
+            {
+                harness.fireSimulationService.AdvanceSimulation(0.25f);
+            }
+
+            Assert.That(harness.fireSimulationService.ActiveFireCells.Count, Is.GreaterThan(0));
+            Assert.That(harness.fireSimulationService.ActiveFireCells.Any(cell => cell.position.x > 1.1f), Is.False);
 
             harness.Destroy();
         }
@@ -108,15 +166,18 @@ namespace EvacLogix.Tests.PlayMode
             host.AddComponent<SandboxToolStateService>();
             var workspaceStateService = host.AddComponent<SandboxWorkspaceStateService>();
             var workspaceService = host.AddComponent<SandboxProjectWorkspaceService>();
-            host.AddComponent<SandboxColliderRebuildService>();
+            var colliderService = host.AddComponent<SandboxColliderRebuildService>();
             host.AddComponent<SandboxValidationService>();
+            host.AddComponent<SandboxRoomDetectionService>();
+            var fireSimulationService = host.AddComponent<SandboxFireSimulationService>();
             host.AddComponent<SandboxVisualOrganizationService>();
             var clipboardService = host.AddComponent<SandboxClipboardService>();
             host.AddComponent<SandboxWallSnappingService>();
             var wallAuthoringService = host.AddComponent<SandboxWallAuthoringService>();
             var semanticObjectAuthoringService = host.AddComponent<SandboxSemanticObjectAuthoringService>();
             host.AddComponent<SandboxFloorManagementService>();
-            host.AddComponent<SandboxPreviewService>();
+            var previewService = host.AddComponent<SandboxPreviewService>();
+            var agentSimulationService = host.AddComponent<SandboxAgentSimulationService>();
             var previewAuthoringService = host.AddComponent<SandboxPreviewAuthoringService>();
 
             return new PlayModeHarness
@@ -126,10 +187,22 @@ namespace EvacLogix.Tests.PlayMode
                 workspaceStateService = workspaceStateService,
                 selectionService = selectionService,
                 clipboardService = clipboardService,
+                colliderService = colliderService,
                 wallAuthoringService = wallAuthoringService,
                 semanticObjectAuthoringService = semanticObjectAuthoringService,
+                previewService = previewService,
+                fireSimulationService = fireSimulationService,
+                agentSimulationService = agentSimulationService,
                 previewAuthoringService = previewAuthoringService
             };
+        }
+
+        private static void CreateEnclosedRoom(SandboxWallAuthoringService wallAuthoringService)
+        {
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(-2f, 0f), new Vector2(4f, 0f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(4f, 0f), new Vector2(4f, 6f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(4f, 6f), new Vector2(-2f, 6f), 0.2f), Is.True);
+            Assert.That(wallAuthoringService.CreateLineWall(new Vector2(-2f, 6f), new Vector2(-2f, 0f), 0.2f), Is.True);
         }
 
         private sealed class PlayModeHarness
@@ -139,8 +212,12 @@ namespace EvacLogix.Tests.PlayMode
             public SandboxWorkspaceStateService workspaceStateService;
             public SandboxSelectionService selectionService;
             public SandboxClipboardService clipboardService;
+            public SandboxColliderRebuildService colliderService;
             public SandboxWallAuthoringService wallAuthoringService;
             public SandboxSemanticObjectAuthoringService semanticObjectAuthoringService;
+            public SandboxPreviewService previewService;
+            public SandboxFireSimulationService fireSimulationService;
+            public SandboxAgentSimulationService agentSimulationService;
             public SandboxPreviewAuthoringService previewAuthoringService;
 
             public void Destroy()

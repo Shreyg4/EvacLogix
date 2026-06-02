@@ -30,6 +30,25 @@ namespace EvacLogix.Sandbox.UI.Panels
         public string PersistenceSummary => persistenceSummary;
         public string RecoveryPromptLabel => recoveryPromptLabel;
 
+        // Transient "notice" channel for important messages the HUD surfaces as a prominent,
+        // auto-fading banner over the canvas (in addition to the slim status box), so rejections
+        // like "Add at least one exit before placing spawns" are impossible to miss.
+        private string noticeMessage = string.Empty;
+        private float noticeTimeRealtime = -1000f;
+        private bool noticeIsError;
+
+        public string NoticeMessage => noticeMessage;
+        public bool NoticeIsError => noticeIsError;
+        public float NoticeAgeSeconds => Time.realtimeSinceStartup - noticeTimeRealtime;
+
+        public void ShowNotice(string message, bool isError = true)
+        {
+            noticeMessage = message ?? string.Empty;
+            noticeIsError = isError;
+            noticeTimeRealtime = Time.realtimeSinceStartup;
+            statusMessage = noticeMessage;
+        }
+
         private void Awake()
         {
             workspaceService = FindAnyObjectByType<SandboxProjectWorkspaceService>();

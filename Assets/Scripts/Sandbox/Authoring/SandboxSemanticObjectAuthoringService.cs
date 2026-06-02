@@ -75,6 +75,8 @@ namespace EvacLogix.Sandbox.Authoring
         public float DefaultOpeningWidth => defaultOpeningWidth;
         public float ObstacleRotationStepDegrees => obstacleRotationStepDegrees;
         public Vector2 DefaultTeleportPortalSize => defaultTeleportPortalSize;
+        public Vector2 DefaultExitZoneSize => defaultExitZoneSize;
+        public Vector2 DefaultObstacleSize => defaultObstacleSize;
         public IReadOnlyList<Color> TeleportPairPalette => teleportPairPalette;
 
         private void Awake()
@@ -209,6 +211,7 @@ namespace EvacLogix.Sandbox.Authoring
         public bool UpdateDoor(
             string doorId,
             float width,
+            string wallSegmentId,
             float offsetAlongWall,
             DoorState state,
             IEnumerable<string> tags,
@@ -229,8 +232,13 @@ namespace EvacLogix.Sandbox.Authoring
                 "Update Door",
                 project =>
                 {
-                    if (!TryFindDoor(project, doorId, out var floor, out var door) ||
-                        !TryFindWall(floor, door.wallSegmentId, out var wall))
+                    if (!TryFindDoor(project, doorId, out var floor, out var door))
+                    {
+                        return false;
+                    }
+
+                    var targetWallSegmentId = string.IsNullOrWhiteSpace(wallSegmentId) ? door.wallSegmentId : wallSegmentId;
+                    if (!TryFindWall(floor, targetWallSegmentId, out var wall))
                     {
                         return false;
                     }
@@ -241,6 +249,7 @@ namespace EvacLogix.Sandbox.Authoring
                         return false;
                     }
 
+                    door.wallSegmentId = targetWallSegmentId;
                     door.width = width;
                     door.offsetAlongWall = clampedOffset;
                     door.state = state;
@@ -255,6 +264,17 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             return didUpdate;
+        }
+
+        public bool TryGetDoorValidationError(string doorId, float width, float offsetAlongWall, out string errorMessage)
+        {
+            width = ResolveOpeningWidth(width, SandboxVisualObjectType.Door);
+            return TryGetOpeningValidationError(
+                doorId,
+                width,
+                offsetAlongWall,
+                SandboxVisualObjectType.Door,
+                out errorMessage);
         }
 
         public bool PlaceWindow(
@@ -321,6 +341,7 @@ namespace EvacLogix.Sandbox.Authoring
         public bool UpdateWindow(
             string windowId,
             float width,
+            string wallSegmentId,
             float offsetAlongWall,
             bool canBeUsedForEscape,
             float escapeCost,
@@ -343,8 +364,13 @@ namespace EvacLogix.Sandbox.Authoring
                 "Update Window",
                 project =>
                 {
-                    if (!TryFindWindow(project, windowId, out var floor, out var window) ||
-                        !TryFindWall(floor, window.wallSegmentId, out var wall))
+                    if (!TryFindWindow(project, windowId, out var floor, out var window))
+                    {
+                        return false;
+                    }
+
+                    var targetWallSegmentId = string.IsNullOrWhiteSpace(wallSegmentId) ? window.wallSegmentId : wallSegmentId;
+                    if (!TryFindWall(floor, targetWallSegmentId, out var wall))
                     {
                         return false;
                     }
@@ -355,6 +381,7 @@ namespace EvacLogix.Sandbox.Authoring
                         return false;
                     }
 
+                    window.wallSegmentId = targetWallSegmentId;
                     window.width = width;
                     window.offsetAlongWall = clampedOffset;
                     window.canBeUsedForEscape = canBeUsedForEscape;
@@ -371,6 +398,17 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             return didUpdate;
+        }
+
+        public bool TryGetWindowValidationError(string windowId, float width, float offsetAlongWall, out string errorMessage)
+        {
+            width = ResolveOpeningWidth(width, SandboxVisualObjectType.Window);
+            return TryGetOpeningValidationError(
+                windowId,
+                width,
+                offsetAlongWall,
+                SandboxVisualObjectType.Window,
+                out errorMessage);
         }
 
         public float GetPlacementOpeningWidth(SandboxVisualObjectType openingType)
@@ -1163,21 +1201,100 @@ namespace EvacLogix.Sandbox.Authoring
             float width,
             string ignoredOpeningId)
         {
+            return TryGetOpeningPlacementValidationError(floor, wall, offsetAlongWall, width, ignoredOpeningId, out _) == null;
+        }
+
+        private bool TryGetOpeningValidationError(
+            string openingId,
+            float width,
+            float offsetAlongWall,
+            SandboxVisualObjectType openingType,
+            out string errorMessage)
+        {
+            errorMessage = string.Empty;
+            if (string.IsNullOrWhiteSpace(openingId) || width <= 0f)
+            {
+                errorMessage = "Invalid opening width.";
+                return true;
+            }
+
+            if (openingType == SandboxVisualObjectType.Door)
+            {
+                if (IsLocked(SandboxVisualObjectType.Door, openingId))
+                {
+                    errorMessage = "This door is locked and cannot be edited.";
+                    return true;
+                }
+
+                if (!TryFindDoor(workspaceService?.ActiveProject, openingId, out var floor, out var door) ||
+                    !TryFindWall(floor, door.wallSegmentId, out var wall))
+                {
+                    errorMessage = "This door is missing a valid host wall.";
+                    return true;
+                }
+
+                var clampedOffset = Mathf.Clamp(offsetAlongWall, 0f, Vector2.Distance(wall.startPoint, wall.endPoint));
+                errorMessage = TryGetOpeningPlacementValidationError(floor, wall, clampedOffset, width, openingId, out _);
+                return !string.IsNullOrWhiteSpace(errorMessage);
+            }
+
+            if (openingType == SandboxVisualObjectType.Window)
+            {
+                if (IsLocked(SandboxVisualObjectType.Window, openingId))
+                {
+                    errorMessage = "This window is locked and cannot be edited.";
+                    return true;
+                }
+
+                if (!TryFindWindow(workspaceService?.ActiveProject, openingId, out var floor, out var window) ||
+                    !TryFindWall(floor, window.wallSegmentId, out var wall))
+                {
+                    errorMessage = "This window is missing a valid host wall.";
+                    return true;
+                }
+
+                var clampedOffset = Mathf.Clamp(offsetAlongWall, 0f, Vector2.Distance(wall.startPoint, wall.endPoint));
+                errorMessage = TryGetOpeningPlacementValidationError(floor, wall, clampedOffset, width, openingId, out _);
+                return !string.IsNullOrWhiteSpace(errorMessage);
+            }
+
+            errorMessage = "Unsupported opening type.";
+            return true;
+        }
+
+        private string TryGetOpeningPlacementValidationError(
+            FloorData floor,
+            WallSegmentData wall,
+            float offsetAlongWall,
+            float width,
+            string ignoredOpeningId,
+            out float worldWidth)
+        {
+            worldWidth = 0f;
             if (floor == null || wall == null || width <= 0f)
             {
-                return false;
+                return "Opening is missing a valid host wall.";
             }
 
-            var worldWidth = ResolveOpeningWorldWidth(floor, width);
+            worldWidth = ResolveOpeningWorldWidth(floor, width);
             var wallLength = Vector2.Distance(wall.startPoint, wall.endPoint);
-            if (wallLength <= Mathf.Epsilon ||
-                offsetAlongWall - (worldWidth * 0.5f) < openingEndMargin ||
+            if (wallLength <= Mathf.Epsilon)
+            {
+                return "Host wall is too short for an opening.";
+            }
+
+            if (offsetAlongWall - (worldWidth * 0.5f) < openingEndMargin ||
                 offsetAlongWall + (worldWidth * 0.5f) > wallLength - openingEndMargin)
             {
-                return false;
+                return "Invalid door/window size: opening would extend beyond the host wall bounds.";
             }
 
-            return !DoesOpeningOverlap(floor, wall.wallSegmentId, offsetAlongWall, width, ignoredOpeningId);
+            if (DoesOpeningOverlap(floor, wall.wallSegmentId, offsetAlongWall, width, ignoredOpeningId))
+            {
+                return "Invalid door/window size: opening would overlap another door or window.";
+            }
+
+            return null;
         }
 
         private bool DoesOpeningOverlap(

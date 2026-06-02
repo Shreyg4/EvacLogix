@@ -278,9 +278,9 @@ namespace EvacLogix.Sandbox.Infrastructure
                 SandboxToolMode.Exit => "Define exits as zones, not points, so capacity and orientation stay explicit.",
                 SandboxToolMode.Obstacle => "Drop obstacles with limited rotation and name the important ones for review.",
                 SandboxToolMode.Teleport => "Place paired stair, elevator, or escalator transitions and switch floors before placing the second endpoint when needed.",
-                SandboxToolMode.SpawnPoint => "Place intentional occupant start points before running preview diagnostics.",
-                SandboxToolMode.SpawnBrush => "Paint a density-based spawn area to approximate crowd pockets quickly.",
-                SandboxToolMode.Region => "Draw named regions only when they help preview semantics, restrictions, or annotations.",
+                SandboxToolMode.SpawnPoint => "Place intentional spawn points on floors that have at least one exit.",
+                SandboxToolMode.SpawnPointBrush => "Paint spawn points on floors that have at least one exit for crowd setup.",
+                SandboxToolMode.FireStart => "Place a fire origin where ignition begins; the fire spreads from here during simulation.",
                 _ => $"Use the {toolMode} tool and check validation feedback after each major edit."
             };
 

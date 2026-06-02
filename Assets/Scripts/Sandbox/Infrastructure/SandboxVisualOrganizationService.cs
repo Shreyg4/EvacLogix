@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using EvacLogix.Sandbox.Authoring.Selection;
+using EvacLogix.Sandbox.Data;
 using UnityEngine;
 
 namespace EvacLogix.Sandbox.Infrastructure
@@ -16,7 +17,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         Teleport = 5,
         Obstacle = 6,
         Spawn = 7,
-        Region = 8,
+        FireStart = 8,
     }
 
     [Serializable]
@@ -48,6 +49,8 @@ namespace EvacLogix.Sandbox.Infrastructure
         [SerializeField] private List<string> lockedObjectIds = new();
 
         private SandboxSelectionService selectionService;
+        private SandboxProjectWorkspaceService workspaceService;
+        private bool suppressProjectWriteback;
 
         public event Action VisualStateChanged;
 
@@ -58,9 +61,42 @@ namespace EvacLogix.Sandbox.Infrastructure
         private void Awake()
         {
             selectionService = GetComponent<SandboxSelectionService>();
+            workspaceService = GetComponent<SandboxProjectWorkspaceService>();
+            if (workspaceService != null)
+            {
+                workspaceService.ActiveProjectChanged += HandleActiveProjectChanged;
+            }
+
             EnsureDefaultStyles();
             hiddenObjectIds = NormalizeIds(hiddenObjectIds);
             lockedObjectIds = NormalizeIds(lockedObjectIds);
+
+            // Adopt any edit-locks the currently loaded project already carries.
+            HandleActiveProjectChanged(workspaceService?.ActiveProject);
+        }
+
+        private void OnDestroy()
+        {
+            if (workspaceService != null)
+            {
+                workspaceService.ActiveProjectChanged -= HandleActiveProjectChanged;
+            }
+        }
+
+        // When a project loads, pull its persisted edit-locks into the runtime state. Suppress the
+        // write-back so we don't immediately echo the freshly loaded list back into the project.
+        private void HandleActiveProjectChanged(BuildingProjectData project)
+        {
+            suppressProjectWriteback = true;
+            try
+            {
+                lockedObjectIds = NormalizeIds(project?.lockedObjectIds);
+                VisualStateChanged?.Invoke();
+            }
+            finally
+            {
+                suppressProjectWriteback = false;
+            }
         }
 
         public IReadOnlyList<SandboxVisualLegendEntry> GetLegendEntries()
@@ -307,7 +343,24 @@ namespace EvacLogix.Sandbox.Infrastructure
         {
             hiddenObjectIds = NormalizeIds(hiddenObjectIds);
             lockedObjectIds = NormalizeIds(lockedObjectIds);
+            if (!suppressProjectWriteback)
+            {
+                WriteLocksToProject();
+            }
+
             VisualStateChanged?.Invoke();
+        }
+
+        // Mirror the current edit-locks into the active project so they are captured on save.
+        private void WriteLocksToProject()
+        {
+            var project = workspaceService?.ActiveProject;
+            if (project == null)
+            {
+                return;
+            }
+
+            project.lockedObjectIds = new List<string>(lockedObjectIds);
         }
 
         private static List<string> NormalizeIds(IEnumerable<string> objectIds)

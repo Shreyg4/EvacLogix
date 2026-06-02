@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using EvacLogix.Sandbox.Authoring.Commands;
 using EvacLogix.Sandbox.Authoring.Tools;
+using EvacLogix.Sandbox.Infrastructure;
 using UnityEngine;
 
 namespace EvacLogix.Sandbox.UI.Panels
@@ -12,6 +13,7 @@ namespace EvacLogix.Sandbox.UI.Panels
 
         private SandboxToolStateService toolStateService;
         private SandboxCommandHistory commandHistory;
+        private SandboxPreviewService previewService;
 
         public IReadOnlyList<SandboxToolMode> AvailableTools => availableTools;
 
@@ -20,6 +22,7 @@ namespace EvacLogix.Sandbox.UI.Panels
             EnsureTools();
             toolStateService = FindAnyObjectByType<SandboxToolStateService>();
             commandHistory = FindAnyObjectByType<SandboxCommandHistory>();
+            previewService = FindAnyObjectByType<SandboxPreviewService>();
         }
 
         private void Reset()
@@ -30,6 +33,7 @@ namespace EvacLogix.Sandbox.UI.Panels
         public void SelectTool(SandboxToolMode toolMode)
         {
             toolStateService?.RequestToolModeChange(toolMode, commandHistory);
+            ConfigurePreviewTool(toolMode);
         }
 
         public bool IsToolActive(SandboxToolMode toolMode)
@@ -45,6 +49,39 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             availableTools = new List<SandboxToolMode>((SandboxToolMode[])Enum.GetValues(typeof(SandboxToolMode)));
+        }
+
+        private void ConfigurePreviewTool(SandboxToolMode toolMode)
+        {
+            previewService ??= FindAnyObjectByType<SandboxPreviewService>();
+            if (previewService == null)
+            {
+                return;
+            }
+
+            switch (toolMode)
+            {
+                case SandboxToolMode.SpawnPoint:
+                    previewService.EnterPreviewMode();
+                    previewService.ConfigureSpawnPlacement(string.Empty, "Main Preview Layout", true);
+                    previewService.SetInteractionMode(SandboxPreviewInteractionMode.PlaceSpawnPoint);
+                    break;
+                case SandboxToolMode.SpawnPointBrush:
+                    previewService.EnterPreviewMode();
+                    previewService.ConfigureSpawnPointBrush(1f, string.Empty, "Spawn Point Brush Layout", true);
+                    previewService.SetInteractionMode(SandboxPreviewInteractionMode.PaintSpawnPointBrush);
+                    break;
+                default:
+                    // Selecting any edit tool must leave preview mode, otherwise the editor stays
+                    // gated (edit overlays and shortcuts are disabled during preview) and the user
+                    // gets trapped with no way back to editing.
+                    if (previewService.IsPreviewModeActive)
+                    {
+                        previewService.ExitPreviewMode();
+                    }
+
+                    break;
+            }
         }
     }
 }

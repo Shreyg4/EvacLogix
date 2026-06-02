@@ -4,6 +4,7 @@ using EvacLogix.Sandbox.Authoring.Selection;
 using EvacLogix.Sandbox.Authoring.Snapping;
 using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Runtime;
 using EvacLogix.Sandbox.Rendering;
 using EvacLogix.Sandbox.UI.Overlays;
 using EvacLogix.Sandbox.UI.Panels;
@@ -33,6 +34,7 @@ namespace EvacLogix.Sandbox.Core
         private const string ValidationHighlightRootName = "ValidationHighlightRoot";
         private const string DiagnosticsOverlayRootName = "DiagnosticsOverlayRoot";
         private const string RoomOverlayRootName = "RoomOverlayRoot";
+        private const string NavMeshPlaneRootName = "NavMeshPlaneRoot";
 
         [SerializeField] private string editorCameraName = "Main Camera";
 
@@ -69,6 +71,7 @@ namespace EvacLogix.Sandbox.Core
             EnsureComponent<SandboxValidationService>(gameObject);
             EnsureComponent<SandboxRoomDetectionService>(gameObject);
             EnsureComponent<SandboxColliderRebuildService>(gameObject);
+            EnsureComponent<SandboxFireSimulationService>(gameObject);
             EnsureComponent<SandboxProjectWorkspaceService>(gameObject);
             EnsureComponent<SandboxFloorManagementService>(gameObject);
             EnsureComponent<SandboxVisualOrganizationService>(gameObject);
@@ -86,12 +89,14 @@ namespace EvacLogix.Sandbox.Core
             EnsureComponent<SandboxSemanticObjectAuthoringService>(gameObject);
             EnsureComponent<SandboxPreviewAuthoringService>(gameObject);
             EnsureComponent<SandboxScenarioManagementService>(gameObject);
+            EnsureComponent<SandboxAgentSimulationService>(gameObject);
 
             var overlayRoot = FindRequiredRoot(OverlayRootName);
             var wallRoot = FindOrCreateNestedRoot(WorldRootName, WallRootName);
             var semanticRoot = FindOrCreateNestedRoot(WorldRootName, "SemanticRoot");
             FindOrCreateNestedRoot(WorldRootName, HandleRootName);
             FindOrCreateNestedRoot(WorldRootName, ColliderRootName);
+            FindOrCreateNestedRoot(WorldRootName, NavMeshPlaneRootName);
             EnsureComponent<SandboxOverviewNavigator>(overlayRoot);
             EnsureComponent<SandboxOnboardingOverlayShell>(overlayRoot);
             EnsureComponent<SandboxCalibrationCaptureOverlay>(overlayRoot);
@@ -99,6 +104,7 @@ namespace EvacLogix.Sandbox.Core
             EnsureComponent<SandboxObjectInteractionOverlay>(overlayRoot);
             EnsureComponent<SandboxSemanticObjectAuthoringOverlay>(overlayRoot);
             EnsureComponent<SandboxMeasurementOverlay>(overlayRoot);
+            EnsureComponent<SandboxAlignmentGuideOverlay>(overlayRoot);
             EnsureComponent<SandboxPreviewInteractionOverlay>(overlayRoot);
             EnsureComponent<SandboxBlueprintOverlayRenderer>(FindRequiredNestedRoot(WorldRootName, BlueprintRootName));
             EnsureComponent<SandboxGridOverlayRenderer>(FindRequiredNestedRoot(WorldRootName, GridRootName));

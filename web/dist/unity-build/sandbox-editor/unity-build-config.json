@@ -1,8 +1,0 @@
-{
-  "loaderUrl": "/unity-build/evac-logix/EvacLogixBuild.loader.js",
-  "dataUrl": "/unity-build/evac-logix/EvacLogixBuild.data",
-  "frameworkUrl": "/unity-build/evac-logix/EvacLogixBuild.framework.js",
-  "codeUrl": "/unity-build/evac-logix/EvacLogixBuild.wasm",
-  "productName": "Evac Simulation",
-  "autoSyncPersistentDataPath": true
-}
