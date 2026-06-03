@@ -36,15 +36,15 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private const float PortalClearMargin = 0.75f;
         private const float EscapeWindowExteriorClearanceBuffer = 0.8f;
         private const float ImpassableThreshold = 0.99f;
-        private const float FireRoutePenaltyWeight = 10f;
-        private const float FireNodePenaltyWeight = 14f;
-        private const float ExitPenaltyWeight = 18f;
+        private const float FireRoutePenaltyWeight = 18f;
+        private const float FireNodePenaltyWeight = 20f;
+        private const float ExitPenaltyWeight = 24f;
         private const float SevereHazardRepathThreshold = 0.92f;
         private const float CongestionAvoidanceRadius = 1.5f;
-        private const float CongestionRoutePenaltyWeight = 4f;
+        private const float CongestionRoutePenaltyWeight = 1.5f;
         // An agent only abandons its current target if an alternative beats it by more than this margin,
         // so a crowd doesn't oscillate between two exits each repath (herd flip-flop).
-        private const float CongestionHysteresisMargin = 6f;
+        private const float CongestionHysteresisMargin = 3f;
         // Fixed seed makes per-agent avoidance priorities (and therefore the run) reproducible.
         private const int AvoidanceSeed = 12345;
 
@@ -406,10 +406,12 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                     continue;
                 }
 
+                var firePenalty = GetFireRoutePenalty(agent.FloorId, placement, position, world);
+                var congestionPenalty = GetCongestionRoutePenalty(agent, position, world);
                 var total = Vector2.Distance(position, world) +
                             costToSafe +
-                            GetFireRoutePenalty(agent.FloorId, placement, position, world) +
-                            GetCongestionRoutePenalty(agent, position, world);
+                            firePenalty +
+                            congestionPenalty;
 
                 // Hysteresis: discount the node the agent is already committed to so it only switches
                 // when an alternative is better by more than the margin (prevents herd flip-flop).
@@ -474,7 +476,9 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 }
 
                 var world = sinkPlacement.ToWorld(sinks[i].localPosition);
-                var distance = Vector2.Distance(position, world) + GetCongestionRoutePenalty(agent, position, world);
+                var distance = Vector2.Distance(position, world) +
+                               GetFireRoutePenalty(agent.FloorId, sinkPlacement, position, world) +
+                               GetCongestionRoutePenalty(agent, position, world);
                 if (distance < bestSinkDistance)
                 {
                     if (ShouldSkipNodeForAgent(agent, sinks[i]))
