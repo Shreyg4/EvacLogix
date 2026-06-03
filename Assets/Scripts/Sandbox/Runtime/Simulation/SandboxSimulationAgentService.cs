@@ -40,8 +40,9 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private const float FireNodePenaltyWeight = 36f;
         private const float ExitPenaltyWeight = 40f;
         private const float SevereHazardRepathThreshold = 0.92f;
-        private const float CongestionAvoidanceRadius = 1.5f;
-        private const float CongestionRoutePenaltyWeight = 0.5f;
+        private const float CongestionAvoidanceRadius = 2.25f;
+        private const float CongestionRoutePenaltyWeight = 2.5f;
+        private const float CongestionRouteDensityExponent = 1.75f;
         // An agent only abandons its current target if an alternative beats it by more than this margin,
         // so a crowd doesn't oscillate between two exits each repath (herd flip-flop).
         private const float CongestionHysteresisMargin = 1.5f;
@@ -1008,23 +1009,38 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
 
             var radius = Mathf.Max(0.1f, CongestionAvoidanceRadius);
+            const int samples = 5;
             var penalty = 0f;
-            for (var i = 0; i < agents.Count; i += 1)
+            for (var sampleIndex = 0; sampleIndex < samples; sampleIndex += 1)
             {
-                var other = agents[i];
-                if (other == null ||
-                    other.HasExited ||
-                    resolvedAgentIds.Contains(other.AgentId) ||
-                    string.Equals(other.AgentId, routedAgent.AgentId, StringComparison.Ordinal) ||
-                    !string.Equals(other.FloorId, routedAgent.FloorId, StringComparison.Ordinal))
+                var t = samples == 1 ? 0.5f : sampleIndex / (float)(samples - 1);
+                var samplePoint = Vector2.Lerp(from, to, t);
+                var crowdDensity = 0f;
+                for (var i = 0; i < agents.Count; i += 1)
                 {
-                    continue;
+                    var other = agents[i];
+                    if (other == null ||
+                        other.HasExited ||
+                        resolvedAgentIds.Contains(other.AgentId) ||
+                        string.Equals(other.AgentId, routedAgent.AgentId, StringComparison.Ordinal) ||
+                        !string.Equals(other.FloorId, routedAgent.FloorId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var distance = Vector2.Distance(samplePoint, other.CurrentWorldPosition);
+                    if (distance >= radius)
+                    {
+                        continue;
+                    }
+
+                    var proximity = 1f - Mathf.Clamp01(distance / radius);
+                    crowdDensity += Mathf.Pow(proximity, CongestionRouteDensityExponent);
                 }
 
-                var distance = DistancePointToSegment(other.CurrentWorldPosition, from, to);
-                if (distance < radius)
+                if (crowdDensity > 0f)
                 {
-                    penalty += (1f - (distance / radius)) * CongestionRoutePenaltyWeight;
+                    penalty += crowdDensity * CongestionRoutePenaltyWeight;
                 }
             }
 
