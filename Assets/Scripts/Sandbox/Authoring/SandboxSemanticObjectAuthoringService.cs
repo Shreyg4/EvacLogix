@@ -107,6 +107,12 @@ namespace EvacLogix.Sandbox.Authoring
                 return false;
             }
 
+            if (openingType == SandboxVisualObjectType.Window && floor.elevation < 0f)
+            {
+                preview = SandboxOpeningPlacementPreview.Invalid(worldPoint, "Windows are not allowed on basement floors.");
+                return false;
+            }
+
             if (openingType != SandboxVisualObjectType.Door && openingType != SandboxVisualObjectType.Window)
             {
                 preview = SandboxOpeningPlacementPreview.Invalid(worldPoint, "Unsupported opening type.");
@@ -1250,6 +1256,12 @@ namespace EvacLogix.Sandbox.Authoring
                     !TryFindWall(floor, window.wallSegmentId, out var wall))
                 {
                     errorMessage = "This window is missing a valid host wall.";
+                    return true;
+                }
+
+                if (floor.elevation < 0f)
+                {
+                    errorMessage = "Windows are not allowed on basement floors.";
                     return true;
                 }
 
