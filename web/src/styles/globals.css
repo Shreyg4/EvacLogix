@@ -6,7 +6,12 @@ html {
   color: var(--color-text);
   background:
     radial-gradient(circle at top, var(--color-background-accent), transparent 36%),
-    linear-gradient(180deg, var(--color-background-top) 0%, #171413 42%, var(--color-background-bottom) 100%);
+    linear-gradient(
+      180deg,
+      var(--color-background-top) 0%,
+      #171413 42%,
+      var(--color-background-bottom) 100%
+    );
 }
 
 * {
@@ -380,8 +385,7 @@ a {
   max-height: 86vh;
   border-radius: 1rem;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  background:
-    linear-gradient(180deg, rgba(15, 16, 18, 0.95) 0%, rgba(7, 7, 8, 1) 100%);
+  background: linear-gradient(180deg, rgba(15, 16, 18, 0.95) 0%, rgba(7, 7, 8, 1) 100%);
   overflow: hidden;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }

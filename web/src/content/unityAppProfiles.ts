@@ -1,4 +1,4 @@
-import type { UnityAppProfile } from "../types/unityAppProfile";
+import type { UnityAppProfile } from "../types/unityAppProfile"
 
 export const unityAppProfiles: UnityAppProfile[] = [
   {
@@ -29,18 +29,20 @@ export const unityAppProfiles: UnityAppProfile[] = [
     allowedBridgeCommands: ["ImportBlueprintImage", "ImportProjectJson", "ExportProjectJson"],
     hidden: true
   }
-];
+]
 
-export const defaultUnityAppProfileId = "evac-sim";
+export const defaultUnityAppProfileId = "evac-sim"
 
-export function getUnityAppProfile(profileId: string | null | undefined): UnityAppProfile | undefined {
-  return unityAppProfiles.find((profile) => profile.id === profileId);
+export function getUnityAppProfile(
+  profileId: string | null | undefined
+): UnityAppProfile | undefined {
+  return unityAppProfiles.find((profile) => profile.id === profileId)
 }
 
 export function getDefaultUnityAppProfile(): UnityAppProfile {
-  return getUnityAppProfile(defaultUnityAppProfileId) ?? unityAppProfiles[0];
+  return getUnityAppProfile(defaultUnityAppProfileId) ?? unityAppProfiles[0]
 }
 
 export function getVisibleUnityAppProfiles(): UnityAppProfile[] {
-  return unityAppProfiles.filter((profile) => !profile.hidden);
+  return unityAppProfiles.filter((profile) => !profile.hidden)
 }

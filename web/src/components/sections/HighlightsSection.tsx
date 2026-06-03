@@ -1,11 +1,11 @@
-import { Eyebrow } from "../ui/Eyebrow";
-import type { HighlightItem } from "../../types/content";
+import { Eyebrow } from "../ui/Eyebrow"
+import type { HighlightItem } from "../../types/content"
 
 type HighlightsSectionProps = {
-  eyebrow?: string;
-  title: string;
-  items: HighlightItem[];
-};
+  eyebrow?: string
+  title: string
+  items: HighlightItem[]
+}
 
 export function HighlightsSection({ eyebrow, title, items }: HighlightsSectionProps) {
   return (
@@ -21,5 +21,5 @@ export function HighlightsSection({ eyebrow, title, items }: HighlightsSectionPr
         ))}
       </div>
     </section>
-  );
+  )
 }

@@ -1,12 +1,12 @@
-import { Eyebrow } from "../ui/Eyebrow";
-import type { TeamMember } from "../../types/content";
+import { Eyebrow } from "../ui/Eyebrow"
+import type { TeamMember } from "../../types/content"
 
 type TeamSectionProps = {
-  eyebrow?: string;
-  title: string;
-  body?: string;
-  members: TeamMember[];
-};
+  eyebrow?: string
+  title: string
+  body?: string
+  members: TeamMember[]
+}
 
 export function TeamSection({ eyebrow, title, body, members }: TeamSectionProps) {
   return (
@@ -24,5 +24,5 @@ export function TeamSection({ eyebrow, title, body, members }: TeamSectionProps)
         ))}
       </div>
     </section>
-  );
+  )
 }

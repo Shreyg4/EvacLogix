@@ -1,7 +1,7 @@
 type InfoPanelProps = {
-  title: string;
-  body: string;
-};
+  title: string
+  body: string
+}
 
 export function InfoPanel({ title, body }: InfoPanelProps) {
   return (
@@ -9,5 +9,5 @@ export function InfoPanel({ title, body }: InfoPanelProps) {
       <h3>{title}</h3>
       <p>{body}</p>
     </article>
-  );
+  )
 }

@@ -1,4 +1,4 @@
-import { PageHeader } from "../components/layout/PageHeader";
+import { PageHeader } from "../components/layout/PageHeader"
 
 export function NotFoundPage() {
   return (
@@ -11,5 +11,5 @@ export function NotFoundPage() {
         />
       </div>
     </section>
-  );
+  )
 }

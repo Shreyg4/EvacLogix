@@ -1,10 +1,10 @@
-import { createBrowserRouter } from "react-router-dom";
-import { App } from "./App";
-import { appRoutes } from "../utils/routes";
-import { DemoPage } from "../pages/DemoPage";
-import { HomePage } from "../pages/HomePage";
-import { HowItWorksPage } from "../pages/HowItWorksPage";
-import { NotFoundPage } from "../pages/NotFoundPage";
+import { createBrowserRouter } from "react-router-dom"
+import { App } from "./App"
+import { appRoutes } from "../utils/routes"
+import { DemoPage } from "../pages/DemoPage"
+import { HomePage } from "../pages/HomePage"
+import { HowItWorksPage } from "../pages/HowItWorksPage"
+import { NotFoundPage } from "../pages/NotFoundPage"
 
 export const router = createBrowserRouter([
   {
@@ -29,4 +29,4 @@ export const router = createBrowserRouter([
       }
     ]
   }
-]);
+])

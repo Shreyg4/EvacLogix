@@ -1,8 +1,8 @@
-import { DemoPreviewSection } from "../components/sections/DemoPreviewSection";
-import { HeroSection } from "../components/sections/HeroSection";
-import { HighlightsSection } from "../components/sections/HighlightsSection";
-import { StatementSection } from "../components/sections/StatementSection";
-import { TeamSection } from "../components/sections/TeamSection";
+import { DemoPreviewSection } from "../components/sections/DemoPreviewSection"
+import { HeroSection } from "../components/sections/HeroSection"
+import { HighlightsSection } from "../components/sections/HighlightsSection"
+import { StatementSection } from "../components/sections/StatementSection"
+import { TeamSection } from "../components/sections/TeamSection"
 import {
   homeContent,
   homeDemoPreview,
@@ -13,8 +13,8 @@ import {
   homeProblemStatement,
   homeScopeStatement,
   homeSolutionStatement
-} from "../content/homeContent";
-import { teamContent, teamSectionContent } from "../content/teamContent";
+} from "../content/homeContent"
+import { teamContent, teamSectionContent } from "../content/teamContent"
 
 export function HomePage() {
   return (
@@ -63,5 +63,5 @@ export function HomePage() {
         members={teamContent}
       />
     </div>
-  );
+  )
 }

@@ -1,10 +1,10 @@
-import { Eyebrow } from "../ui/Eyebrow";
+import { Eyebrow } from "../ui/Eyebrow"
 
 type StatementSectionProps = {
-  eyebrow?: string;
-  title: string;
-  body: string;
-};
+  eyebrow?: string
+  title: string
+  body: string
+}
 
 export function StatementSection({ eyebrow, title, body }: StatementSectionProps) {
   return (
@@ -13,5 +13,5 @@ export function StatementSection({ eyebrow, title, body }: StatementSectionProps
       <h2 id={`statement-${title}`}>{title}</h2>
       <p>{body}</p>
     </section>
-  );
+  )
 }

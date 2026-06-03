@@ -1,10 +1,10 @@
-import { HeroSection } from "../components/sections/HeroSection";
-import { InfoPanel } from "../components/sections/InfoPanel";
+import { HeroSection } from "../components/sections/HeroSection"
+import { InfoPanel } from "../components/sections/InfoPanel"
 import {
   howItWorksPageContent,
   howItWorksPanels,
   howItWorksPanelsSection
-} from "../content/howItWorksContent";
+} from "../content/howItWorksContent"
 
 export function HowItWorksPage() {
   return (
@@ -20,5 +20,5 @@ export function HowItWorksPage() {
         </div>
       </section>
     </div>
-  );
+  )
 }

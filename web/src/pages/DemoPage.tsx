@@ -1,22 +1,22 @@
-import { useMemo } from "react";
-import { useSearchParams } from "react-router-dom";
-import { HeroSection } from "../components/sections/HeroSection";
-import { StatementSection } from "../components/sections/StatementSection";
-import { UnityEmbed } from "../components/unity/UnityEmbed";
+import { useMemo } from "react"
+import { useSearchParams } from "react-router-dom"
+import { HeroSection } from "../components/sections/HeroSection"
+import { StatementSection } from "../components/sections/StatementSection"
+import { UnityEmbed } from "../components/unity/UnityEmbed"
 import {
   demoGuidanceContent,
   demoInstructions,
   demoPageContent,
-  defaultDemoProfile,
-} from "../content/demoContent";
-import { getUnityAppProfile } from "../content/unityAppProfiles";
+  defaultDemoProfile
+} from "../content/demoContent"
+import { getUnityAppProfile } from "../content/unityAppProfiles"
 
 export function DemoPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams] = useSearchParams()
   const selectedProfile = useMemo(() => {
-    const requestedProfileId = searchParams.get("app");
-    return getUnityAppProfile(requestedProfileId) ?? defaultDemoProfile;
-  }, [searchParams]);
+    const requestedProfileId = searchParams.get("app")
+    return getUnityAppProfile(requestedProfileId) ?? defaultDemoProfile
+  }, [searchParams])
 
   return (
     <div className="page-stack page-demo">
@@ -38,5 +38,5 @@ export function DemoPage() {
         allowedBridgeCommands={selectedProfile.allowedBridgeCommands}
       />
     </div>
-  );
+  )
 }
