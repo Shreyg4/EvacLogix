@@ -41,6 +41,8 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private const float FireRoutePenaltyWeight = 30f;
         private const float FireNodePenaltyWeight = 36f;
         private const float ExitPenaltyWeight = 40f;
+        private const float WindowFirePenaltyMultiplier = 0.35f;
+        private const float WindowCongestionPenaltyMultiplier = 0.75f;
         private const float SevereHazardRepathThreshold = 0.92f;
         private const float CongestionAvoidanceRadius = 2.25f;
         private const float CongestionRoutePenaltyWeight = 2.5f;
@@ -417,6 +419,11 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
 
                 var firePenalty = GetFireRoutePenalty(agent.FloorId, placement, position, world);
                 var congestionPenalty = GetCongestionRoutePenalty(agent, position, world);
+                if (node.isEscapeWindow)
+                {
+                    firePenalty *= WindowFirePenaltyMultiplier;
+                    congestionPenalty *= WindowCongestionPenaltyMultiplier;
+                }
                 var total = Vector2.Distance(position, world) +
                             costToSafe +
                             firePenalty +
@@ -485,9 +492,17 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 }
 
                 var world = sinkPlacement.ToWorld(sinks[i].localPosition);
+                var sinkFirePenalty = GetFireRoutePenalty(agent.FloorId, sinkPlacement, position, world);
+                var sinkCongestionPenalty = GetCongestionRoutePenalty(agent, position, world);
+                if (sinks[i].isEscapeWindow)
+                {
+                    sinkFirePenalty *= WindowFirePenaltyMultiplier;
+                    sinkCongestionPenalty *= WindowCongestionPenaltyMultiplier;
+                }
+
                 var distance = Vector2.Distance(position, world) +
-                               GetFireRoutePenalty(agent.FloorId, sinkPlacement, position, world) +
-                               GetCongestionRoutePenalty(agent, position, world);
+                               sinkFirePenalty +
+                               sinkCongestionPenalty;
                 if (distance < bestSinkDistance)
                 {
                     if (ShouldSkipNodeForAgent(agent, sinks[i]))
