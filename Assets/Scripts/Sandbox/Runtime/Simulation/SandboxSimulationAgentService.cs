@@ -389,6 +389,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             avoidedNodeByAgent.TryGetValue(agent.AgentId, out var avoidedNodeId);
             agentTargets.TryGetValue(agent.AgentId, out var currentTarget);
             var currentTargetId = currentTarget?.nodeId;
+            var localPosition = agent.CurrentWorldPosition - placement.OriginOffset;
 
             var floorNodes = routeGraph.GetFloorNodes(agent.FloorId);
             var position = agent.CurrentWorldPosition;
@@ -400,6 +401,10 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             SandboxBuildingRouteGraph.RouteNode fallback = null;
             var fallbackWorld = position;
             var fallbackCost = float.MaxValue;
+            SandboxBuildingRouteGraph.RouteNode bestWindow = null;
+            var bestWindowWorld = position;
+            var bestWindowCost = float.MaxValue;
+            var fireBlockedExitPath = false;
             for (var i = 0; i < floorNodes.Count; i += 1)
             {
                 var node = floorNodes[i];
@@ -434,6 +439,11 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                     total -= firePenalty * WindowEmergencyBonusWeight;
                 }
 
+                if (node.isExit && !fireBlockedExitPath && GetPathHazardPeak(agent.FloorId, localPosition, node.localPosition) >= SevereHazardRepathThreshold)
+                {
+                    fireBlockedExitPath = true;
+                }
+
                 // Hysteresis: discount the node the agent is already committed to so it only switches
                 // when an alternative is better by more than the margin (prevents herd flip-flop).
                 var comparison = total;
@@ -449,6 +459,13 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                     fallbackWorld = world;
                 }
 
+                if (node.isEscapeWindow && comparison < bestWindowCost)
+                {
+                    bestWindowCost = comparison;
+                    bestWindow = node;
+                    bestWindowWorld = world;
+                }
+
                 var isAvoided = avoidedNodeId != null && string.Equals(node.nodeId, avoidedNodeId, StringComparison.Ordinal);
                 if (!isAvoided && comparison < bestCost)
                 {
@@ -459,9 +476,15 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
 
             var chosen = best ?? fallback;
+            var chosenWorld = best != null ? bestWorld : fallbackWorld;
+            if (fireBlockedExitPath && bestWindow != null && (chosen == null || !chosen.isEscapeWindow))
+            {
+                chosen = bestWindow;
+                chosenWorld = bestWindowWorld;
+            }
+
             if (chosen != null)
             {
-                var chosenWorld = best != null ? bestWorld : fallbackWorld;
                 agentTargets[agent.AgentId] = chosen;
                 agent.SetDestination(chosen.objectId, chosenWorld);
                 lastGoalDistanceByAgent[agent.AgentId] = Vector2.Distance(position, chosenWorld);
