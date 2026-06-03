@@ -37,6 +37,21 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
         }
 
+        // True only when a real pointer/mouse device is present this frame. PointerScreenPosition falls
+        // back to Vector2.zero when no device is current (transient on WebGL focus changes), which would
+        // otherwise be read as a genuine cursor jump and jolt the camera.
+        public static bool HasPointer
+        {
+            get
+            {
+#if ENABLE_INPUT_SYSTEM
+                return Pointer.current != null || Mouse.current != null;
+#else
+                return true;
+#endif
+            }
+        }
+
         public static Vector2 MouseScrollDelta
         {
             get

@@ -47,6 +47,13 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
         [SerializeField] private bool angleSnappingEnabled = true;
         [SerializeField] private bool temporarySnappingBypass;
 
+        // Cap on the zoom-aware endpoint-snap reach: keeps a far zoom-out from ballooning the snap radius
+        // and pulling endpoints onto unrelated junctions in dense areas.
+        private const float MaxEndpointSnapWorldDistance = 2f;
+        // The second point of a line is never snapped to within this of its own start, so snapping can't
+        // collapse a line to zero length (which silently rejects the placement).
+        private const float MinAnchorSnapSeparation = 0.1f;
+
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxWorkspaceStateService workspaceStateService;
 
@@ -93,11 +100,21 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
             {
                 // Use a zoom-aware (screen-space) reach so off-grid intersections snap from a
                 // consistent on-screen distance, not just the small fixed world radius.
-                var effectiveEndpointDistance = Mathf.Max(
-                    endpointSnapDistance,
-                    SandboxAlignmentGuideUtility.PixelToleranceToWorld(Camera.main, endpointSnapPixelTolerance));
+                var effectiveEndpointDistance = Mathf.Min(
+                    MaxEndpointSnapWorldDistance,
+                    Mathf.Max(
+                        endpointSnapDistance,
+                        SandboxAlignmentGuideUtility.PixelToleranceToWorld(Camera.main, endpointSnapPixelTolerance)));
+
+                // When placing the second point of a line, never snap onto (or right next to) the start:
+                // that collapses the line to zero length and the placement is silently rejected — the
+                // usual cause of "crowded spots / big intersections won't let me connect lines".
+                bool FarFromAnchor(Vector2 candidate) =>
+                    !anchorPoint.HasValue || Vector2.Distance(candidate, anchorPoint.Value) > MinAnchorSnapSeparation;
+
                 var snappedEndpoint = floor.wallJunctions
                     .Where(junction => Vector2.Distance(junction.position, rawPoint) <= effectiveEndpointDistance)
+                    .Where(junction => FarFromAnchor(junction.position))
                     .OrderBy(junction => Vector2.Distance(junction.position, rawPoint))
                     .FirstOrDefault();
 
@@ -111,7 +128,8 @@ namespace EvacLogix.Sandbox.Authoring.Snapping
 
                 // Snap to where two wall segments cross (not just shared junctions), with priority
                 // over grid/angle so real intersections win.
-                if (SandboxAlignmentGuideUtility.TryFindNearestIntersectionPoint(floor, rawPoint, effectiveEndpointDistance, out var crossing))
+                if (SandboxAlignmentGuideUtility.TryFindNearestIntersectionPoint(floor, rawPoint, effectiveEndpointDistance, out var crossing) &&
+                    FarFromAnchor(crossing))
                 {
                     return new SandboxWallSnapResult(crossing, SandboxWallSnapTargetKind.Intersection, string.Empty);
                 }

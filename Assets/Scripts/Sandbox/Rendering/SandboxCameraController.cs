@@ -19,6 +19,7 @@ namespace EvacLogix.Sandbox.Rendering
         private Vector3 defaultPosition;
         private float defaultOrthographicSize;
         private Vector3 previousMousePosition;
+        private bool wasPanningLastFrame;
 
         private void Awake()
         {
@@ -34,14 +35,27 @@ namespace EvacLogix.Sandbox.Rendering
         {
             if (inputRouter != null && inputRouter.CurrentTarget == SandboxInputTarget.UI)
             {
-                previousMousePosition = SandboxInputAdapter.PointerScreenPosition;
+                // Panning can't continue while the pointer is over UI; force a re-anchor when it returns
+                // so dragging across a panel and back doesn't produce a jump.
+                wasPanningLastFrame = false;
+                UpdatePreviousPointer();
                 return;
             }
 
             HandlePan();
             HandleZoom();
             HandleReset();
-            previousMousePosition = SandboxInputAdapter.PointerScreenPosition;
+            UpdatePreviousPointer();
+        }
+
+        // Tracks the pointer for next frame's pan delta, but ignores frames with no valid pointer device
+        // (their reported position is a bogus Vector2.zero that would corrupt the delta).
+        private void UpdatePreviousPointer()
+        {
+            if (SandboxInputAdapter.HasPointer)
+            {
+                previousMousePosition = SandboxInputAdapter.PointerScreenPosition;
+            }
         }
 
         public void ResetView()
@@ -101,10 +115,39 @@ namespace EvacLogix.Sandbox.Rendering
 
             if (!usingMiddleMousePan && !usingRightMousePan && !usingPanToolPrimaryDrag)
             {
+                wasPanningLastFrame = false;
                 return;
             }
 
-            var mouseDelta = (Vector3)SandboxInputAdapter.PointerScreenPosition - previousMousePosition;
+            // No valid pointer this frame: don't pan from a bogus reading; resume cleanly next frame.
+            if (!SandboxInputAdapter.HasPointer)
+            {
+                wasPanningLastFrame = false;
+                return;
+            }
+
+            var current = (Vector3)SandboxInputAdapter.PointerScreenPosition;
+
+            // First frame of a pan (or resuming after UI/lost pointer): re-anchor and don't move, so a
+            // stale baseline can't jolt the camera.
+            if (!wasPanningLastFrame)
+            {
+                previousMousePosition = current;
+                wasPanningLastFrame = true;
+                return;
+            }
+
+            var mouseDelta = current - previousMousePosition;
+
+            // Clamp the per-frame delta so a single bad pointer read or frame hitch can't fling the view
+            // across the scene (which left you unsure where you were).
+            var maxDelta = Mathf.Max(Screen.width, Screen.height) * 0.25f;
+            if (mouseDelta.sqrMagnitude > maxDelta * maxDelta)
+            {
+                previousMousePosition = current;
+                return;
+            }
+
             var delta = new Vector3(-mouseDelta.x, -mouseDelta.y, 0f);
             transform.position += delta * panSpeed * Mathf.Max(controlledCamera.orthographicSize, 1f);
         }
