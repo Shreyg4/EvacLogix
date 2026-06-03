@@ -151,7 +151,10 @@ namespace EvacLogix.Sandbox.Runtime
             if (navMeshAgent != null)
             {
                 navMeshAgent.isStopped = true;
-                navMeshAgent.ResetPath();
+                if (CanResetNavMeshPath())
+                {
+                    navMeshAgent.ResetPath();
+                }
                 // Pull the finished agent out of the crowd simulation so still-evacuating agents stop
                 // avoiding it and can path straight through, instead of cramming behind it at the exit.
                 // The agent no longer moves, so disabling the component is safe; the sprite stays put.
@@ -171,7 +174,10 @@ namespace EvacLogix.Sandbox.Runtime
             if (navMeshAgent != null)
             {
                 navMeshAgent.isStopped = true;
-                navMeshAgent.ResetPath();
+                if (CanResetNavMeshPath())
+                {
+                    navMeshAgent.ResetPath();
+                }
                 navMeshAgent.enabled = false;
             }
 
@@ -378,6 +384,11 @@ namespace EvacLogix.Sandbox.Runtime
 
             navAgentObject = null;
             navMeshAgent = null;
+        }
+
+        private bool CanResetNavMeshPath()
+        {
+            return navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh;
         }
 
         private static Sprite GenerateFallbackSprite()
