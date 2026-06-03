@@ -36,15 +36,15 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private const float PortalClearMargin = 0.75f;
         private const float EscapeWindowExteriorClearanceBuffer = 0.8f;
         private const float ImpassableThreshold = 0.99f;
-        private const float FireRoutePenaltyWeight = 18f;
-        private const float FireNodePenaltyWeight = 20f;
-        private const float ExitPenaltyWeight = 24f;
+        private const float FireRoutePenaltyWeight = 30f;
+        private const float FireNodePenaltyWeight = 36f;
+        private const float ExitPenaltyWeight = 40f;
         private const float SevereHazardRepathThreshold = 0.92f;
         private const float CongestionAvoidanceRadius = 1.5f;
-        private const float CongestionRoutePenaltyWeight = 1.5f;
+        private const float CongestionRoutePenaltyWeight = 0.5f;
         // An agent only abandons its current target if an alternative beats it by more than this margin,
         // so a crowd doesn't oscillate between two exits each repath (herd flip-flop).
-        private const float CongestionHysteresisMargin = 3f;
+        private const float CongestionHysteresisMargin = 1.5f;
         // Fixed seed makes per-agent avoidance priorities (and therefore the run) reproducible.
         private const int AvoidanceSeed = 12345;
 
