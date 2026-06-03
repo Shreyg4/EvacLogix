@@ -17,7 +17,19 @@ namespace EvacLogix.Sandbox.Rendering
 
         private readonly List<GameObject> activeOverlayObjects = new();
         private readonly List<Sprite> activeOverlaySprites = new();
+        // Decoded blueprint textures cached by reference id. Without this, the image was re-decoded into
+        // a brand-new Texture2D on every Refresh (i.e. every edit, since each edit re-assigns the
+        // project), and the old textures were never destroyed — a leak that eventually starved WebGL
+        // memory until a decode failed and the background silently disappeared.
+        private readonly Dictionary<string, CachedBlueprintTexture> textureCache = new();
         private SandboxProjectWorkspaceService workspaceService;
+
+        private sealed class CachedBlueprintTexture
+        {
+            public Texture2D Texture;
+            public int PayloadSignature;
+            public bool Owned;
+        }
 
         private void Awake()
         {
@@ -37,6 +49,8 @@ namespace EvacLogix.Sandbox.Rendering
                 workspaceService.ActiveProjectChanged -= HandleProjectChanged;
                 workspaceService.ActiveFloorChanged -= HandleFloorChanged;
             }
+
+            PruneTextureCache(null);
         }
 
         public void Refresh()
@@ -51,13 +65,18 @@ namespace EvacLogix.Sandbox.Rendering
             if (renderOnlyActiveFloor)
             {
                 TryRenderFloorBlueprint(workspaceService.ActiveFloor);
-                return;
+            }
+            else
+            {
+                for (var i = 0; i < workspaceService.ActiveProject.floors.Count; i += 1)
+                {
+                    TryRenderFloorBlueprint(workspaceService.ActiveProject.floors[i]);
+                }
             }
 
-            for (var i = 0; i < workspaceService.ActiveProject.floors.Count; i += 1)
-            {
-                TryRenderFloorBlueprint(workspaceService.ActiveProject.floors[i]);
-            }
+            // Drop cached textures for blueprints no longer in the project so the cache can't grow
+            // unbounded across project loads.
+            PruneTextureCache(workspaceService.ActiveProject);
         }
 
         private void HandleProjectChanged(BuildingProjectData project)
@@ -148,7 +167,7 @@ namespace EvacLogix.Sandbox.Rendering
             activeOverlaySprites.Clear();
         }
 
-        private static Texture2D ResolveBlueprintTexture(BlueprintReferenceData blueprintReference)
+        private Texture2D ResolveBlueprintTexture(BlueprintReferenceData blueprintReference)
         {
 #if UNITY_EDITOR
             if (!string.IsNullOrWhiteSpace(blueprintReference.assetPath))
@@ -156,6 +175,7 @@ namespace EvacLogix.Sandbox.Rendering
                 var editorTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(blueprintReference.assetPath);
                 if (editorTexture != null)
                 {
+                    // Editor-owned asset; never cache/destroy it ourselves.
                     return editorTexture;
                 }
             }
@@ -166,6 +186,22 @@ namespace EvacLogix.Sandbox.Rendering
                 return null;
             }
 
+            var signature = blueprintReference.importedPayloadBase64.Length;
+            var cacheKey = blueprintReference.blueprintReferenceId;
+            if (textureCache.TryGetValue(cacheKey, out var cached) &&
+                cached.Owned &&
+                cached.Texture != null &&
+                cached.PayloadSignature == signature)
+            {
+                return cached.Texture;
+            }
+
+            // Payload changed or wasn't cached: drop the stale texture we own before decoding again.
+            if (cached != null && cached.Owned && cached.Texture != null)
+            {
+                DestroyTexture(cached.Texture);
+            }
+
             byte[] bytes;
             try
             {
@@ -173,16 +209,86 @@ namespace EvacLogix.Sandbox.Rendering
             }
             catch
             {
+                textureCache.Remove(cacheKey);
                 return null;
             }
 
             if (bytes.Length == 0)
             {
+                textureCache.Remove(cacheKey);
                 return null;
             }
 
             var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            return texture.LoadImage(bytes, false) ? texture : null;
+            if (!texture.LoadImage(bytes, false))
+            {
+                DestroyTexture(texture);
+                textureCache.Remove(cacheKey);
+                return null;
+            }
+
+            textureCache[cacheKey] = new CachedBlueprintTexture
+            {
+                Texture = texture,
+                PayloadSignature = signature,
+                Owned = true
+            };
+            return texture;
+        }
+
+        // Destroys cached textures we own (decoded from base64) whose blueprint is no longer present in
+        // the project. Pass null to flush the whole cache (teardown).
+        private void PruneTextureCache(BuildingProjectData project)
+        {
+            if (textureCache.Count == 0)
+            {
+                return;
+            }
+
+            var validIds = new HashSet<string>();
+            if (project?.blueprintReferences != null)
+            {
+                for (var i = 0; i < project.blueprintReferences.Count; i += 1)
+                {
+                    validIds.Add(project.blueprintReferences[i].blueprintReferenceId);
+                }
+            }
+
+            var staleKeys = new List<string>();
+            foreach (var pair in textureCache)
+            {
+                if (!validIds.Contains(pair.Key))
+                {
+                    staleKeys.Add(pair.Key);
+                }
+            }
+
+            for (var i = 0; i < staleKeys.Count; i += 1)
+            {
+                if (textureCache.TryGetValue(staleKeys[i], out var entry) && entry.Owned && entry.Texture != null)
+                {
+                    DestroyTexture(entry.Texture);
+                }
+
+                textureCache.Remove(staleKeys[i]);
+            }
+        }
+
+        private static void DestroyTexture(Texture2D texture)
+        {
+            if (texture == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                Destroy(texture);
+            }
+            else
+            {
+                DestroyImmediate(texture);
+            }
         }
     }
 }

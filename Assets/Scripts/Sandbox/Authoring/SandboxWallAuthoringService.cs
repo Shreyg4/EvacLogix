@@ -1130,7 +1130,10 @@ namespace EvacLogix.Sandbox.Authoring
                 case SandboxWallSnapTargetKind.Endpoint:
                 {
                     var endpointJunction = FindJunction(floor, snapResult.referenceId);
-                    if (endpointJunction != null)
+                    // Ignore a snap that resolves to a junction we must avoid (e.g. the line's own start),
+                    // so the segment can't collapse onto itself and get rejected; fall through to make a
+                    // distinct junction at the snapped position instead.
+                    if (endpointJunction != null && !exclusions.Contains(endpointJunction.wallJunctionId))
                     {
                         return endpointJunction;
                     }

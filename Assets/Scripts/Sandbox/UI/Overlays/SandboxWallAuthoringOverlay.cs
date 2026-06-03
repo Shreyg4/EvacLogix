@@ -116,9 +116,12 @@ namespace EvacLogix.Sandbox.UI.Overlays
             wallSnappingService?.SetTemporarySnappingBypass(isFineAdjustmentActive);
 
             var isHoveringHandle = TryGetNearestHandle(currentPointerWorldPoint, out var hoveredJunctionId);
+            // Handle hover/drag is a Select-tool affordance. For the wall tools, don't flag the pointer
+            // as "over a handle" — otherwise the input target becomes Handle (not World) and the click is
+            // blocked from reaching the tool, so you can't begin/continue a line at a junction.
             if (!isJunctionDragActive)
             {
-                inputRouter?.SetPointerOverHandle(isHoveringHandle);
+                inputRouter?.SetPointerOverHandle(currentToolMode == SandboxToolMode.Select && isHoveringHandle);
             }
 
             if (isJunctionDragActive)
@@ -141,7 +144,9 @@ namespace EvacLogix.Sandbox.UI.Overlays
                 return;
             }
 
-            if (SandboxInputAdapter.GetMouseButtonDown(0) && isHoveringHandle)
+            // Dragging a junction handle is a Select-tool action only; with the wall tools, a click on a
+            // junction should begin/continue a line snapped to it, not start a handle drag.
+            if (currentToolMode == SandboxToolMode.Select && SandboxInputAdapter.GetMouseButtonDown(0) && isHoveringHandle)
             {
                 TryBeginJunctionDrag(hoveredJunctionId, currentPointerWorldPoint);
                 return;

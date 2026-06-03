@@ -228,10 +228,14 @@ namespace EvacLogix.Sandbox.Infrastructure
                 yield break;
             }
 
+            // Union BOTH graphs. The authored-junction graph misses faces whose walls cross without an
+            // explicit shared junction (drawn intersecting lines aren't split), while the geometric graph
+            // can miss collinear-connected faces. Previously we returned the authored rooms whenever it
+            // found ANY (e.g. a single triangle), which silently dropped every room only the geometric
+            // graph could see — that's why just the triangle was highlighted.
             var authoredRooms = DetectRoomsFromGraph(floor, BuildAuthoredWallGraph(floor));
-            var rooms = authoredRooms.Count > 0
-                ? authoredRooms
-                : DetectRoomsFromGraph(floor, BuildVirtualWallGraph(floor.wallSegments));
+            var geometricRooms = DetectRoomsFromGraph(floor, BuildVirtualWallGraph(floor.wallSegments));
+            var rooms = MergeDetectedRooms(authoredRooms, geometricRooms);
             for (var i = 0; i < rooms.Count; i += 1)
             {
                 rooms[i].roomId = $"room-{floor.floorId}-{(i + 1):D3}";
@@ -296,6 +300,80 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             return rooms;
+        }
+
+        // Unions rooms from the authored-junction and geometric-intersection graphs, deduplicating the
+        // same physical room (matching area-centroid + area) so it isn't detected/highlighted twice.
+        private static List<SandboxDetectedRoomData> MergeDetectedRooms(
+            List<SandboxDetectedRoomData> authoredRooms,
+            List<SandboxDetectedRoomData> geometricRooms)
+        {
+            var merged = new List<SandboxDetectedRoomData>();
+            var signatures = new HashSet<string>(StringComparer.Ordinal);
+
+            void Append(List<SandboxDetectedRoomData> rooms)
+            {
+                for (var i = 0; i < rooms.Count; i += 1)
+                {
+                    if (signatures.Add(CreateRoomSignature(rooms[i])))
+                    {
+                        merged.Add(rooms[i]);
+                    }
+                }
+            }
+
+            // Authored first so its (explicit) topology wins on duplicates.
+            Append(authoredRooms);
+            Append(geometricRooms);
+            return merged;
+        }
+
+        private static string CreateRoomSignature(SandboxDetectedRoomData room)
+        {
+            var centroid = PolygonAreaCentroid(room.polygonPoints);
+            const float bucket = 0.05f;
+            return string.Format(
+                "{0}:{1}:{2}",
+                Mathf.RoundToInt(centroid.x / bucket),
+                Mathf.RoundToInt(centroid.y / bucket),
+                Mathf.RoundToInt(Mathf.Abs(room.area) / bucket));
+        }
+
+        // Area-weighted centroid: invariant to extra collinear vertices, so the same room expressed with
+        // different vertex counts (authored vs geometric) yields the same signature.
+        private static Vector2 PolygonAreaCentroid(IReadOnlyList<Vector2> points)
+        {
+            if (points == null || points.Count == 0)
+            {
+                return Vector2.zero;
+            }
+
+            var area = 0f;
+            var cx = 0f;
+            var cy = 0f;
+            for (var i = 0; i < points.Count; i += 1)
+            {
+                var current = points[i];
+                var next = points[(i + 1) % points.Count];
+                var cross = (current.x * next.y) - (next.x * current.y);
+                area += cross;
+                cx += (current.x + next.x) * cross;
+                cy += (current.y + next.y) * cross;
+            }
+
+            area *= 0.5f;
+            if (Mathf.Abs(area) < 1e-5f)
+            {
+                var sum = Vector2.zero;
+                for (var i = 0; i < points.Count; i += 1)
+                {
+                    sum += points[i];
+                }
+
+                return sum / points.Count;
+            }
+
+            return new Vector2(cx / (6f * area), cy / (6f * area));
         }
 
         private void RefreshDependencies()
