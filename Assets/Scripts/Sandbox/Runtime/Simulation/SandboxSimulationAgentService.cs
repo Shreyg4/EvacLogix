@@ -43,6 +43,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private const float ExitPenaltyWeight = 40f;
         private const float WindowFirePenaltyMultiplier = 0.35f;
         private const float WindowCongestionPenaltyMultiplier = 0.75f;
+        private const float WindowEmergencyBonusWeight = 2.5f;
         private const float SevereHazardRepathThreshold = 0.92f;
         private const float CongestionAvoidanceRadius = 2.25f;
         private const float CongestionRoutePenaltyWeight = 2.5f;
@@ -428,6 +429,10 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                             costToSafe +
                             firePenalty +
                             congestionPenalty;
+                if (node.isEscapeWindow)
+                {
+                    total -= firePenalty * WindowEmergencyBonusWeight;
+                }
 
                 // Hysteresis: discount the node the agent is already committed to so it only switches
                 // when an alternative is better by more than the margin (prevents herd flip-flop).
@@ -503,6 +508,10 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 var distance = Vector2.Distance(position, world) +
                                sinkFirePenalty +
                                sinkCongestionPenalty;
+                if (sinks[i].isEscapeWindow)
+                {
+                    distance -= sinkFirePenalty * WindowEmergencyBonusWeight;
+                }
                 if (distance < bestSinkDistance)
                 {
                     if (ShouldSkipNodeForAgent(agent, sinks[i]))
