@@ -1,5 +1,5 @@
-import type { SiteContent } from "../types/content";
-import { appRoutes } from "../utils/routes";
+import type { SiteContent } from "../types/content"
+import { appRoutes } from "../utils/routes"
 
 export const siteContent: SiteContent = {
   brandName: "EvacLogix",
@@ -21,4 +21,4 @@ export const siteContent: SiteContent = {
   status: {
     scopeNote: "EvacLogix is a simulation experience, not a real-time emergency guidance system."
   }
-};
+}

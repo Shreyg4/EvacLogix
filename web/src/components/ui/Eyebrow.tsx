@@ -1,7 +1,7 @@
 type EyebrowProps = {
-  children: string;
-};
+  children: string
+}
 
 export function Eyebrow({ children }: EyebrowProps) {
-  return <p className="eyebrow">{children}</p>;
+  return <p className="eyebrow">{children}</p>
 }

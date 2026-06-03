@@ -1,6 +1,6 @@
-import { screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { renderAppAt } from "./testUtils";
+import { screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { renderAppAt } from "./testUtils"
 
 describe("demo page", () => {
   beforeEach(() => {
@@ -8,49 +8,53 @@ describe("demo page", () => {
       new Response(null, {
         status: 404
       })
-    );
-  });
+    )
+  })
 
   afterEach(() => {
-    vi.restoreAllMocks();
-  });
+    vi.restoreAllMocks()
+  })
 
   it("shows a visible launch control on first render", async () => {
-    renderAppAt("/demo");
+    renderAppAt("/demo")
 
-    expect(await screen.findByRole("button", { name: "Play Simulation" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Unity simulation frame")).toBeInTheDocument();
-  });
+    expect(await screen.findByRole("button", { name: "Play Simulation" })).toBeInTheDocument()
+    expect(screen.getByLabelText("Unity simulation frame")).toBeInTheDocument()
+  })
 
   it("transitions to the unavailable fallback after launch", async () => {
-    const user = userEvent.setup();
-    renderAppAt("/demo");
+    const user = userEvent.setup()
+    renderAppAt("/demo")
 
-    await user.click(await screen.findByRole("button", { name: "Play Simulation" }));
+    await user.click(await screen.findByRole("button", { name: "Play Simulation" }))
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Simulation unavailable" })).toBeInTheDocument();
-    });
+      expect(screen.getByRole("heading", { name: "Simulation unavailable" })).toBeInTheDocument()
+    })
 
-    expect(screen.getByText(/current build could not be launched/i)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open Unity Play" })).toBeInTheDocument();
-  });
+    expect(screen.getByText(/current build could not be launched/i)).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Open Unity Play" })).toBeInTheDocument()
+  })
 
   it("keeps guidance visible throughout the fallback flow", async () => {
-    const user = userEvent.setup();
-    renderAppAt("/demo");
+    const user = userEvent.setup()
+    renderAppAt("/demo")
 
-    await user.click(await screen.findByRole("button", { name: "Play Simulation" }));
+    await user.click(await screen.findByRole("button", { name: "Play Simulation" }))
 
     await waitFor(() => {
-      expect(screen.getByText("Press play to attempt launching the embedded simulation.")).toBeInTheDocument();
-    });
-  });
+      expect(
+        screen.getByText("Press play to attempt launching the embedded simulation.")
+      ).toBeInTheDocument()
+    })
+  })
 
   it("can resolve a hidden sandbox target intentionally without exposing it in main navigation", async () => {
-    renderAppAt("/demo?app=sandbox-editor");
+    renderAppAt("/demo?app=sandbox-editor")
 
-    expect(await screen.findByRole("button", { name: "Launch Sandbox Editor" })).toBeInTheDocument();
-    expect(screen.getAllByRole("heading", { name: "Embedded Sandbox Editor" }).length).toBeGreaterThan(0);
-  });
-});
+    expect(await screen.findByRole("button", { name: "Launch Sandbox Editor" })).toBeInTheDocument()
+    expect(
+      screen.getAllByRole("heading", { name: "Embedded Sandbox Editor" }).length
+    ).toBeGreaterThan(0)
+  })
+})

@@ -1,5 +1,5 @@
-import { NavLink } from "react-router-dom";
-import { siteContent } from "../../content/siteContent";
+import { NavLink } from "react-router-dom"
+import { siteContent } from "../../content/siteContent"
 
 export function Header() {
   return (
@@ -29,5 +29,5 @@ export function Header() {
         </ul>
       </nav>
     </header>
-  );
+  )
 }

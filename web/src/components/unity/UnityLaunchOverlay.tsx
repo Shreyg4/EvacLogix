@@ -1,16 +1,12 @@
-import { Button } from "../ui/Button";
+import { Button } from "../ui/Button"
 
 type UnityLaunchOverlayProps = {
-  title: string;
-  launchLabel: string;
-  onLaunch: () => void;
-};
+  title: string
+  launchLabel: string
+  onLaunch: () => void
+}
 
-export function UnityLaunchOverlay({
-  title,
-  launchLabel,
-  onLaunch
-}: UnityLaunchOverlayProps) {
+export function UnityLaunchOverlay({ title, launchLabel, onLaunch }: UnityLaunchOverlayProps) {
   return (
     <div className="unity-overlay unity-overlay-idle">
       <p className="eyebrow">Embedded Simulation</p>
@@ -19,5 +15,5 @@ export function UnityLaunchOverlay({
         {launchLabel}
       </Button>
     </div>
-  );
+  )
 }

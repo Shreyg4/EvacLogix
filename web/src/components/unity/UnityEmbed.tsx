@@ -1,32 +1,32 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react"
 import {
   createUnityInstanceBridge,
   fetchUnityBuildConfig,
   fetchUnityBuildConfigFromPath,
   loadUnityLoader,
   validateUnityBuildConfig
-} from "../../utils/unity";
-import { UnityFallback } from "./UnityFallback";
-import { UnityLaunchOverlay } from "./UnityLaunchOverlay";
-import type { UnityEmbedProps, UnityEmbedState } from "./unity.types";
-import type { UnityBrowserBridgeApi } from "../../types/unityBridge";
-import type { UnityInstance } from "../../utils/unity";
+} from "../../utils/unity"
+import { UnityFallback } from "./UnityFallback"
+import { UnityLaunchOverlay } from "./UnityLaunchOverlay"
+import type { UnityEmbedProps, UnityEmbedState } from "./unity.types"
+import type { UnityBrowserBridgeApi } from "../../types/unityBridge"
+import type { UnityInstance } from "../../utils/unity"
 
 type UnityAspectRatioOption = {
-  label: string;
-  value: string;
-};
+  label: string
+  value: string
+}
 
 type KeyboardWithLock = {
-  lock?: (keyCodes?: string[]) => Promise<void>;
-  unlock?: () => void;
-};
+  lock?: (keyCodes?: string[]) => Promise<void>
+  unlock?: () => void
+}
 
-const unityAspectRatioStorageKey = "evaclogix:unity-aspect-ratio";
-const unityUiScaleStorageKey = "evaclogix:unity-ui-scale";
-const unityUiScaleStep = 0.25;
-const unityUiScaleMin = 1;
-const unityUiScaleMax = 2;
+const unityAspectRatioStorageKey = "evaclogix:unity-aspect-ratio"
+const unityUiScaleStorageKey = "evaclogix:unity-ui-scale"
+const unityUiScaleStep = 0.25
+const unityUiScaleMin = 1
+const unityUiScaleMax = 2
 
 const unityAspectRatioOptions: UnityAspectRatioOption[] = [
   { label: "16:9", value: "16 / 9" },
@@ -34,21 +34,24 @@ const unityAspectRatioOptions: UnityAspectRatioOption[] = [
   { label: "3:2", value: "3 / 2" },
   { label: "1:1", value: "1 / 1" },
   { label: "Tall", value: "9 / 16" }
-];
+]
 
 function getInitialUnityAspectRatio(): UnityAspectRatioOption {
-  const storedValue = window.localStorage.getItem(unityAspectRatioStorageKey);
-  return unityAspectRatioOptions.find((option) => option.value === storedValue) ?? unityAspectRatioOptions[0];
+  const storedValue = window.localStorage.getItem(unityAspectRatioStorageKey)
+  return (
+    unityAspectRatioOptions.find((option) => option.value === storedValue) ??
+    unityAspectRatioOptions[0]
+  )
 }
 
 function getInitialUnityUiScale(): number {
-  const storedValue = Number(window.localStorage.getItem(unityUiScaleStorageKey));
+  const storedValue = Number(window.localStorage.getItem(unityUiScaleStorageKey))
 
   if (!Number.isFinite(storedValue)) {
-    return unityUiScaleMin;
+    return unityUiScaleMin
   }
 
-  return Math.min(unityUiScaleMax, Math.max(unityUiScaleMin, storedValue));
+  return Math.min(unityUiScaleMax, Math.max(unityUiScaleMin, storedValue))
 }
 
 export function UnityEmbed({
@@ -64,194 +67,198 @@ export function UnityEmbed({
   allowedBridgeCommands = [],
   launchTimeoutMs = 60000
 }: UnityEmbedProps) {
-  const [state, setState] = useState<UnityEmbedState>("idle");
-  const [showReadyOverlay, setShowReadyOverlay] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [aspectRatio, setAspectRatio] = useState<UnityAspectRatioOption>(getInitialUnityAspectRatio);
-  const [uiScale, setUiScale] = useState(getInitialUnityUiScale);
-  const unityFrameRef = useRef<HTMLDivElement | null>(null);
-  const canvasHostRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const unityInstanceRef = useRef<UnityInstance | null>(null);
-  const uiScaleRef = useRef(uiScale);
+  const [state, setState] = useState<UnityEmbedState>("idle")
+  const [showReadyOverlay, setShowReadyOverlay] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [aspectRatio, setAspectRatio] = useState<UnityAspectRatioOption>(getInitialUnityAspectRatio)
+  const [uiScale, setUiScale] = useState(getInitialUnityUiScale)
+  const unityFrameRef = useRef<HTMLDivElement | null>(null)
+  const canvasHostRef = useRef<HTMLDivElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const unityInstanceRef = useRef<UnityInstance | null>(null)
+  const uiScaleRef = useRef(uiScale)
 
   const selectDefaultUnityTool = () => {
-    unityInstanceRef.current?.SendMessage?.("UI", "SelectDefaultTool");
-  };
+    unityInstanceRef.current?.SendMessage?.("UI", "SelectDefaultTool")
+  }
 
   useEffect(() => {
-    const bridge = window.EvacLogixSandboxBridge as UnityBrowserBridgeApi | undefined;
-    bridge?.setAllowedCommands(allowedBridgeCommands);
+    const bridge = window.EvacLogixSandboxBridge as UnityBrowserBridgeApi | undefined
+    bridge?.setAllowedCommands(allowedBridgeCommands)
 
     return () => {
-      bridge?.setAllowedCommands([]);
-    };
-  }, [allowedBridgeCommands]);
+      bridge?.setAllowedCommands([])
+    }
+  }, [allowedBridgeCommands])
 
   useEffect(() => {
     if (state !== "ready") {
-      setShowReadyOverlay(false);
-      return;
+      setShowReadyOverlay(false)
+      return
     }
 
-    setShowReadyOverlay(true);
+    setShowReadyOverlay(true)
     const timeoutId = window.setTimeout(() => {
-      setShowReadyOverlay(false);
-    }, 1200);
+      setShowReadyOverlay(false)
+    }, 1200)
 
     return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [state]);
+      window.clearTimeout(timeoutId)
+    }
+  }, [state])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(document.fullscreenElement === unityFrameRef.current);
-    };
+      setIsFullscreen(document.fullscreenElement === unityFrameRef.current)
+    }
 
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("fullscreenchange", handleFullscreenChange)
 
     return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-    };
-  }, []);
+      document.removeEventListener("fullscreenchange", handleFullscreenChange)
+    }
+  }, [])
 
   useEffect(() => {
-    const keyboard = (navigator as Navigator & { keyboard?: KeyboardWithLock }).keyboard;
+    const keyboard = (navigator as Navigator & { keyboard?: KeyboardWithLock }).keyboard
 
     if (!isFullscreen || state !== "ready") {
-      keyboard?.unlock?.();
-      return;
+      keyboard?.unlock?.()
+      return
     }
 
     keyboard?.lock?.(["Escape"]).catch(() => {
       // Browsers without Keyboard Lock will keep their native Escape fullscreen behavior.
-    });
+    })
 
     return () => {
-      keyboard?.unlock?.();
-    };
-  }, [isFullscreen, state]);
+      keyboard?.unlock?.()
+    }
+  }, [isFullscreen, state])
 
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || state !== "ready" || document.fullscreenElement !== unityFrameRef.current) {
-        return;
+      if (
+        event.key !== "Escape" ||
+        state !== "ready" ||
+        document.fullscreenElement !== unityFrameRef.current
+      ) {
+        return
       }
 
-      event.preventDefault();
-      event.stopPropagation();
-      selectDefaultUnityTool();
-    };
-
-    document.addEventListener("keydown", handleEscape, { capture: true });
-
-    return () => {
-      document.removeEventListener("keydown", handleEscape, { capture: true });
-    };
-  }, [state]);
-
-  useEffect(() => {
-    uiScaleRef.current = uiScale;
-    if (state !== "ready") {
-      return;
+      event.preventDefault()
+      event.stopPropagation()
+      selectDefaultUnityTool()
     }
 
-    unityInstanceRef.current?.SendMessage?.("UI", "SetUiScale", uiScale.toFixed(2));
-  }, [state, uiScale]);
+    document.addEventListener("keydown", handleEscape, { capture: true })
+
+    return () => {
+      document.removeEventListener("keydown", handleEscape, { capture: true })
+    }
+  }, [state])
+
+  useEffect(() => {
+    uiScaleRef.current = uiScale
+    if (state !== "ready") {
+      return
+    }
+
+    unityInstanceRef.current?.SendMessage?.("UI", "SetUiScale", uiScale.toFixed(2))
+  }, [state, uiScale])
 
   useEffect(() => {
     if (state !== "launching") {
-      return;
+      return
     }
 
-    let cancelled = false;
+    let cancelled = false
 
     const launchUnity = async () => {
       if (!canvasHostRef.current) {
         if (!cancelled) {
-          setState("unavailable");
+          setState("unavailable")
         }
-        return;
+        return
       }
 
       if (!canvasRef.current) {
-        const canvas = document.createElement("canvas");
-        canvas.id = "evaclogix-unity-canvas";
-        canvas.className = "unity-canvas";
-        canvasHostRef.current.innerHTML = "";
-        canvasHostRef.current.appendChild(canvas);
-        canvasRef.current = canvas;
+        const canvas = document.createElement("canvas")
+        canvas.id = "evaclogix-unity-canvas"
+        canvas.className = "unity-canvas"
+        canvasHostRef.current.innerHTML = ""
+        canvasHostRef.current.appendChild(canvas)
+        canvasRef.current = canvas
       }
 
       const resolvedBuildConfig =
         buildConfig ??
         (buildConfigPath
           ? await fetchUnityBuildConfigFromPath(buildConfigPath)
-          : await fetchUnityBuildConfig());
+          : await fetchUnityBuildConfig())
 
       if (!validateUnityBuildConfig(resolvedBuildConfig)) {
         if (!cancelled) {
-          setState("unavailable");
+          setState("unavailable")
         }
-        return;
+        return
       }
 
       try {
-        await loadUnityLoader(resolvedBuildConfig.loaderUrl);
+        await loadUnityLoader(resolvedBuildConfig.loaderUrl)
 
-        const readyPromise = createUnityInstanceBridge(canvasRef.current, resolvedBuildConfig);
+        const readyPromise = createUnityInstanceBridge(canvasRef.current, resolvedBuildConfig)
         const timeoutPromise = new Promise<never>((_, reject) => {
-          window.setTimeout(() => reject(new Error("Unity launch timed out.")), launchTimeoutMs);
-        });
+          window.setTimeout(() => reject(new Error("Unity launch timed out.")), launchTimeoutMs)
+        })
 
-        const unityInstance = await Promise.race([readyPromise, timeoutPromise]);
+        const unityInstance = await Promise.race([readyPromise, timeoutPromise])
 
         if (!cancelled) {
-          unityInstanceRef.current = unityInstance;
-          unityInstance.SendMessage?.("UI", "SetUiScale", uiScaleRef.current.toFixed(2));
-          setState("ready");
+          unityInstanceRef.current = unityInstance
+          unityInstance.SendMessage?.("UI", "SetUiScale", uiScaleRef.current.toFixed(2))
+          setState("ready")
         }
       } catch {
         if (!cancelled) {
-          setState("unavailable");
+          setState("unavailable")
         }
       }
-    };
+    }
 
-    launchUnity();
+    launchUnity()
 
     return () => {
-      cancelled = true;
-    };
-  }, [buildConfig, buildConfigPath, launchTimeoutMs, state]);
+      cancelled = true
+    }
+  }, [buildConfig, buildConfigPath, launchTimeoutMs, state])
 
   const handleEnterFullscreen = async () => {
     if (!unityFrameRef.current || !document.fullscreenEnabled) {
-      return;
+      return
     }
 
-    await unityFrameRef.current.requestFullscreen();
-  };
+    await unityFrameRef.current.requestFullscreen()
+  }
 
   const handleExitFullscreen = async () => {
     if (!document.fullscreenElement) {
-      return;
+      return
     }
 
-    await document.exitFullscreen();
-  };
+    await document.exitFullscreen()
+  }
 
   const handleAspectRatioChange = (nextAspectRatio: UnityAspectRatioOption) => {
-    setAspectRatio(nextAspectRatio);
-    window.localStorage.setItem(unityAspectRatioStorageKey, nextAspectRatio.value);
-  };
+    setAspectRatio(nextAspectRatio)
+    window.localStorage.setItem(unityAspectRatioStorageKey, nextAspectRatio.value)
+  }
 
   const handleUiScaleChange = (nextScale: number) => {
-    const clampedScale = Math.min(unityUiScaleMax, Math.max(unityUiScaleMin, nextScale));
-    setUiScale(clampedScale);
-    window.localStorage.setItem(unityUiScaleStorageKey, String(clampedScale));
-  };
+    const clampedScale = Math.min(unityUiScaleMax, Math.max(unityUiScaleMin, nextScale))
+    setUiScale(clampedScale)
+    window.localStorage.setItem(unityUiScaleStorageKey, String(clampedScale))
+  }
 
   return (
     <section className="page-card unity-section" aria-labelledby="unity-embed-title">
@@ -275,7 +282,11 @@ export function UnityEmbed({
           {unityAspectRatioOptions.map((option) => (
             <button
               key={option.value}
-              className={option.value === aspectRatio.value ? "unity-ratio-button active" : "unity-ratio-button"}
+              className={
+                option.value === aspectRatio.value
+                  ? "unity-ratio-button active"
+                  : "unity-ratio-button"
+              }
               type="button"
               aria-pressed={option.value === aspectRatio.value}
               onClick={() => handleAspectRatioChange(option)}
@@ -322,7 +333,11 @@ export function UnityEmbed({
         {state === "ready" ? (
           <div className="unity-fullscreen-controls">
             {isFullscreen ? (
-              <button className="unity-fullscreen-button" type="button" onClick={handleExitFullscreen}>
+              <button
+                className="unity-fullscreen-button"
+                type="button"
+                onClick={handleExitFullscreen}
+              >
                 Exit Fullscreen
               </button>
             ) : (
@@ -339,7 +354,11 @@ export function UnityEmbed({
         ) : null}
 
         {state === "idle" ? (
-          <UnityLaunchOverlay title={title} launchLabel={launchLabel} onLaunch={() => setState("launching")} />
+          <UnityLaunchOverlay
+            title={title}
+            launchLabel={launchLabel}
+            onLaunch={() => setState("launching")}
+          />
         ) : null}
 
         {state === "launching" ? (
@@ -366,5 +385,5 @@ export function UnityEmbed({
         ) : null}
       </div>
     </section>
-  );
+  )
 }

@@ -1,7 +1,7 @@
 type TagProps = {
-  label: string;
-};
+  label: string
+}
 
 export function Tag({ label }: TagProps) {
-  return <span className="tag">{label}</span>;
+  return <span className="tag">{label}</span>
 }

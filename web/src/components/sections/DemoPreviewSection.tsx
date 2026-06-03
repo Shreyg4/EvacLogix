@@ -1,11 +1,11 @@
-import { Eyebrow } from "../ui/Eyebrow";
+import { Eyebrow } from "../ui/Eyebrow"
 
 type DemoPreviewSectionProps = {
-  eyebrow?: string;
-  title: string;
-  body: string;
-  placeholderLabel: string;
-};
+  eyebrow?: string
+  title: string
+  body: string
+  placeholderLabel: string
+}
 
 export function DemoPreviewSection({
   eyebrow,
@@ -22,5 +22,5 @@ export function DemoPreviewSection({
         <span>{placeholderLabel}</span>
       </div>
     </section>
-  );
+  )
 }

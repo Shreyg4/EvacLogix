@@ -1,9 +1,9 @@
 type UnityFallbackProps = {
-  message: string;
-  explanation?: string;
-  backupHref?: string;
-  backupLabel?: string;
-};
+  message: string
+  explanation?: string
+  backupHref?: string
+  backupLabel?: string
+}
 
 export function UnityFallback({
   message,
@@ -22,5 +22,5 @@ export function UnityFallback({
         </a>
       ) : null}
     </div>
-  );
+  )
 }

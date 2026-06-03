@@ -1,10 +1,10 @@
-import type { HeroContent } from "../../types/content";
-import { Button } from "../ui/Button";
-import { PageHeader } from "../layout/PageHeader";
+import type { HeroContent } from "../../types/content"
+import { Button } from "../ui/Button"
+import { PageHeader } from "../layout/PageHeader"
 
 type HeroSectionProps = {
-  content: HeroContent;
-};
+  content: HeroContent
+}
 
 export function HeroSection({ content }: HeroSectionProps) {
   return (
@@ -31,5 +31,5 @@ export function HeroSection({ content }: HeroSectionProps) {
         </div>
       )}
     </section>
-  );
+  )
 }
