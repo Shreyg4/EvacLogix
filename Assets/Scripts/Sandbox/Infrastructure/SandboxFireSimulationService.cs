@@ -9,21 +9,21 @@ namespace EvacLogix.Sandbox.Infrastructure
     public sealed class SandboxFireSimulationService : MonoBehaviour
     {
         [SerializeField] private float cellSize = 0.75f;
-        [SerializeField] private float spreadIntervalSeconds = 0.25f;
-        [SerializeField] private float lateralPropagationRate = 0.34f;
-        [SerializeField] private float diagonalPropagationMultiplier = 0.7f;
+        [SerializeField] private float spreadIntervalSeconds = 0.35f;
+        [SerializeField] private float lateralPropagationRate = 0.16f;
+        [SerializeField] private float diagonalPropagationMultiplier = 0.45f;
         [SerializeField] private float hazardRetention = 0.86f;
         [SerializeField] private float persistentSourceInjection = 0.62f;
-        [SerializeField] private float verticalLeakageRate = 0.18f;
-        [SerializeField] private float normalDoorTransmission = 0.82f;
-        [SerializeField] private float closedDoorTransmission = 0.46f;
-        [SerializeField] private float blockedDoorTransmission = 0.22f;
-        [SerializeField] private float standardWindowTransmission = 0.34f;
-        [SerializeField] private float escapeWindowTransmission = 0.68f;
-        [SerializeField] private float stairTransmission = 0.92f;
-        [SerializeField] private float elevatorTransmission = 0.72f;
-        [SerializeField] private float escalatorTransmission = 0.88f;
-        [SerializeField] private float otherConnectorTransmission = 0.58f;
+        [SerializeField] private float verticalLeakageRate = 0.08f;
+        [SerializeField] private float normalDoorTransmission = 0.48f;
+        [SerializeField] private float closedDoorTransmission = 0.18f;
+        [SerializeField] private float blockedDoorTransmission = 0.08f;
+        [SerializeField] private float standardWindowTransmission = 0.18f;
+        [SerializeField] private float escapeWindowTransmission = 0.34f;
+        [SerializeField] private float stairTransmission = 0.55f;
+        [SerializeField] private float elevatorTransmission = 0.42f;
+        [SerializeField] private float escalatorTransmission = 0.50f;
+        [SerializeField] private float otherConnectorTransmission = 0.28f;
         [SerializeField] private float minimumTrackedHazard = 0.025f;
         [SerializeField] private float visibleFlameThreshold = 0.48f;
         [SerializeField] private float hazardCostThreshold = 0.12f;
