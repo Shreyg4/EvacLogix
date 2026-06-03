@@ -47,8 +47,8 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private const float FloorTwoWindowInjury = 0.32f;
         private const float FloorThreeWindowInjury = 0.82f;
         private const float ExtraStoreyWindowInjury = 0.08f;
-        private const float WindowRiskRouteWeight = 12f;
-        private const float WindowStoreyRoutePenalty = 3.5f;
+        private const float WindowRiskRouteWeight = 4f;
+        private const float WindowStoreyRoutePenalty = 1.25f;
 
         private readonly Dictionary<string, RouteNode> nodesById = new(StringComparer.Ordinal);
         private readonly Dictionary<string, List<RouteNode>> nodesByFloor = new(StringComparer.Ordinal);
@@ -160,7 +160,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                         localPosition = center,
                         objectId = window.windowId,
                         isEscapeWindow = true,
-                        escapeRouteCost = Mathf.Max(0f, window.escapeCost) + (windowInjury * WindowRiskRouteWeight) + ((storeyIndex - 1) * WindowStoreyRoutePenalty),
+                        escapeRouteCost = Mathf.Max(0f, window.escapeCost * 0.5f) + (windowInjury * WindowRiskRouteWeight) + ((storeyIndex - 1) * WindowStoreyRoutePenalty),
                         windowInjury = windowInjury,
                         landingFloorId = landingFloorId,
                         landingLocalPosition = landingLocalPosition,

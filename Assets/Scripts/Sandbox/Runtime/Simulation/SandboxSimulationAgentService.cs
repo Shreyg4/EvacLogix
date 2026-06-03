@@ -26,6 +26,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private readonly Dictionary<string, SandboxBuildingRouteGraph.RouteNode> agentTargets = new(StringComparer.Ordinal);
         private readonly HashSet<string> agentsThatUsedEscapeWindow = new(StringComparer.Ordinal);
         private readonly Dictionary<string, HashSet<string>> failedWindowNodesByAgent = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, float> windowExitDelayByAgent = new(StringComparer.Ordinal);
         private readonly Dictionary<string, float> dynamicCostToSafeByNode = new(StringComparer.Ordinal);
 
         // After teleporting onto a portal endpoint, that endpoint is blocked for the agent (it won't
@@ -35,6 +36,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private readonly Dictionary<string, string> blockedPortalByAgent = new(StringComparer.Ordinal);
         private const float PortalClearMargin = 0.75f;
         private const float EscapeWindowExteriorClearanceBuffer = 0.8f;
+        private const float WindowExitDelaySeconds = 1.5f;
         private const float ImpassableThreshold = 0.99f;
         private const float FireRoutePenaltyWeight = 30f;
         private const float FireNodePenaltyWeight = 36f;
@@ -184,6 +186,11 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                     continue;
                 }
 
+                if (TryAdvanceWindowExitDelay(agent, deltaTime, i))
+                {
+                    continue;
+                }
+
                 if (!retreating && agentTargets.TryGetValue(agent.AgentId, out var target) && HasReachedTarget(agent, target))
                 {
                     if (target.isExit)
@@ -293,6 +300,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             blockedPortalByAgent.Clear();
             agentsThatUsedEscapeWindow.Clear();
             failedWindowNodesByAgent.Clear();
+            windowExitDelayByAgent.Clear();
             exitUsage.Clear();
             evacuatedByFloor.Clear();
             casualtiesByFloor.Clear();
@@ -713,6 +721,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             Increment(evacuatedByFloor, agent.FloorId);
             agentTargets.Remove(agent.AgentId);
             blockedPortalByAgent.Remove(agent.AgentId);
+            windowExitDelayByAgent.Remove(agent.AgentId);
             agent.MarkExited();
         }
 
@@ -727,6 +736,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             Increment(casualtiesByFloor, agent.FloorId);
             agentTargets.Remove(agent.AgentId);
             blockedPortalByAgent.Remove(agent.AgentId);
+            windowExitDelayByAgent.Remove(agent.AgentId);
             agent.MarkExited();
         }
 
@@ -776,8 +786,54 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 return;
             }
 
+            if (!windowExitDelayByAgent.ContainsKey(agent.AgentId))
+            {
+                windowExitDelayByAgent[agent.AgentId] = WindowExitDelaySeconds;
+            }
+        }
+
+        private bool TryAdvanceWindowExitDelay(SandboxEvacueeAgent agent, float deltaTime, int agentIndex)
+        {
+            if (agent == null || !windowExitDelayByAgent.TryGetValue(agent.AgentId, out var remaining))
+            {
+                return false;
+            }
+
+            remaining -= deltaTime;
+            if (remaining > 0f)
+            {
+                windowExitDelayByAgent[agent.AgentId] = remaining;
+                return true;
+            }
+
+            windowExitDelayByAgent.Remove(agent.AgentId);
+            if (agentTargets.TryGetValue(agent.AgentId, out var target) && target != null && target.isEscapeWindow)
+            {
+                CompleteWindowEscape(agent, target);
+                if (resolvedAgentIds.Contains(agent.AgentId))
+                {
+                    DespawnAgentAt(agentIndex);
+                }
+            }
+
+            return true;
+        }
+
+        private void CompleteWindowEscape(SandboxEvacueeAgent agent, SandboxBuildingRouteGraph.RouteNode node)
+        {
+            if (agent == null || node == null)
+            {
+                return;
+            }
+
             agentsThatUsedEscapeWindow.Add(agent.AgentId);
             MarkWindowFailedForAgent(agent, node.nodeId);
+            if (!TryResolveEscapeWindowLanding(agent, node, out var landingFloorId, out var landingWorldPosition))
+            {
+                RouteAgent(agent);
+                return;
+            }
+
             agent.Relocate(landingFloorId, landingWorldPosition);
             agent.ApplyInjury(node.windowInjury);
             if (agent.Health <= 0f)
