@@ -134,7 +134,7 @@ namespace EvacLogix.Sandbox.Runtime
             currentDestination = destination;
             repathTimer = 0f;
 
-            if (navMeshAgent != null)
+            if (CanControlNavMeshAgent())
             {
                 navMeshAgent.isStopped = false;
                 if (TryGetNavPosition(destination, out var navDestination))
@@ -148,10 +148,13 @@ namespace EvacLogix.Sandbox.Runtime
         {
             hasExited = true;
             health = Mathf.Clamp01(health);
-            if (navMeshAgent != null)
+            if (CanControlNavMeshAgent())
             {
                 navMeshAgent.isStopped = true;
-                navMeshAgent.ResetPath();
+                if (CanResetNavMeshPath())
+                {
+                    navMeshAgent.ResetPath();
+                }
                 // Pull the finished agent out of the crowd simulation so still-evacuating agents stop
                 // avoiding it and can path straight through, instead of cramming behind it at the exit.
                 // The agent no longer moves, so disabling the component is safe; the sprite stays put.
@@ -168,10 +171,13 @@ namespace EvacLogix.Sandbox.Runtime
         public void DespawnNow()
         {
             hasExited = true;
-            if (navMeshAgent != null)
+            if (CanControlNavMeshAgent())
             {
                 navMeshAgent.isStopped = true;
-                navMeshAgent.ResetPath();
+                if (CanResetNavMeshPath())
+                {
+                    navMeshAgent.ResetPath();
+                }
                 navMeshAgent.enabled = false;
             }
 
@@ -378,6 +384,16 @@ namespace EvacLogix.Sandbox.Runtime
 
             navAgentObject = null;
             navMeshAgent = null;
+        }
+
+        private bool CanResetNavMeshPath()
+        {
+            return CanControlNavMeshAgent();
+        }
+
+        private bool CanControlNavMeshAgent()
+        {
+            return navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh;
         }
 
         private static Sprite GenerateFallbackSprite()

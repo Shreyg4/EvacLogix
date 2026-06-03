@@ -47,8 +47,8 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private const float FloorTwoWindowInjury = 0.32f;
         private const float FloorThreeWindowInjury = 0.82f;
         private const float ExtraStoreyWindowInjury = 0.08f;
-        private const float WindowRiskRouteWeight = 12f;
-        private const float WindowStoreyRoutePenalty = 3.5f;
+        private const float WindowRiskRouteWeight = 1.5f;
+        private const float WindowStoreyRoutePenalty = 0.5f;
 
         private readonly Dictionary<string, RouteNode> nodesById = new(StringComparer.Ordinal);
         private readonly Dictionary<string, List<RouteNode>> nodesByFloor = new(StringComparer.Ordinal);
@@ -81,6 +81,8 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             var floorBoundsById = new Dictionary<string, Rect>(StringComparer.Ordinal);
             var lowestOrder = int.MaxValue;
             var lowestOrderFloorId = string.Empty;
+            var lowestAboveGroundOrder = int.MaxValue;
+            var lowestAboveGroundFloorId = string.Empty;
             foreach (var floor in project.floors)
             {
                 elevationByFloor[floor.floorId] = floor.elevation;
@@ -90,6 +92,18 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                     lowestOrder = floor.order;
                     lowestOrderFloorId = floor.floorId;
                 }
+
+                if (floor.elevation >= 0f && floor.order < lowestAboveGroundOrder)
+                {
+                    lowestAboveGroundOrder = floor.order;
+                    lowestAboveGroundFloorId = floor.floorId;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(lowestAboveGroundFloorId))
+            {
+                lowestAboveGroundOrder = lowestOrder;
+                lowestAboveGroundFloorId = lowestOrderFloorId;
             }
 
             // Create nodes.
@@ -148,9 +162,9 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                         continue;
                     }
 
-                    var storeyIndex = ComputeStoreyIndex(floor.order, lowestOrder);
+                    var storeyIndex = ComputeStoreyIndex(floor.order, lowestAboveGroundOrder);
                     var risk = Mathf.Max(0.01f, window.escapeRiskMultiplier);
-                    var landingFloorId = storeyIndex <= 1 ? floor.floorId : lowestOrderFloorId;
+                    var landingFloorId = storeyIndex <= 1 ? floor.floorId : lowestAboveGroundFloorId;
                     var landingLocalPosition = center + (outwardNormal * DefaultLandingClearance);
                     var windowInjury = ComputeWindowInjury(storeyIndex, risk);
                     AddNode(new RouteNode
@@ -160,7 +174,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                         localPosition = center,
                         objectId = window.windowId,
                         isEscapeWindow = true,
-                        escapeRouteCost = Mathf.Max(0f, window.escapeCost) + (windowInjury * WindowRiskRouteWeight) + ((storeyIndex - 1) * WindowStoreyRoutePenalty),
+                        escapeRouteCost = Mathf.Max(0f, window.escapeCost * 0.25f) + (windowInjury * WindowRiskRouteWeight) + ((storeyIndex - 1) * WindowStoreyRoutePenalty),
                         windowInjury = windowInjury,
                         landingFloorId = landingFloorId,
                         landingLocalPosition = landingLocalPosition,
