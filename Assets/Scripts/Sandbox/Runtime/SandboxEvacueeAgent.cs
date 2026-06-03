@@ -134,7 +134,7 @@ namespace EvacLogix.Sandbox.Runtime
             currentDestination = destination;
             repathTimer = 0f;
 
-            if (navMeshAgent != null)
+            if (CanControlNavMeshAgent())
             {
                 navMeshAgent.isStopped = false;
                 if (TryGetNavPosition(destination, out var navDestination))
@@ -148,7 +148,7 @@ namespace EvacLogix.Sandbox.Runtime
         {
             hasExited = true;
             health = Mathf.Clamp01(health);
-            if (navMeshAgent != null)
+            if (CanControlNavMeshAgent())
             {
                 navMeshAgent.isStopped = true;
                 if (CanResetNavMeshPath())
@@ -171,7 +171,7 @@ namespace EvacLogix.Sandbox.Runtime
         public void DespawnNow()
         {
             hasExited = true;
-            if (navMeshAgent != null)
+            if (CanControlNavMeshAgent())
             {
                 navMeshAgent.isStopped = true;
                 if (CanResetNavMeshPath())
@@ -387,6 +387,11 @@ namespace EvacLogix.Sandbox.Runtime
         }
 
         private bool CanResetNavMeshPath()
+        {
+            return CanControlNavMeshAgent();
+        }
+
+        private bool CanControlNavMeshAgent()
         {
             return navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh;
         }
