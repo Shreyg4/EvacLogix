@@ -64,6 +64,7 @@ namespace EvacLogix.Sandbox.Infrastructure
         public IReadOnlyList<SandboxFireCellData> ActiveFireCells => activeFireCells;
         public IReadOnlyList<string> ActiveFireOriginSelectionIds => activeFireOriginSelectionIds;
         public int HazardRevision => hazardRevision;
+        public float CellSize => Mathf.Max(0.01f, cellSize);
         public float VisibleFlameThreshold => Mathf.Clamp01(visibleFlameThreshold);
         public float HazardCostThreshold => Mathf.Clamp01(hazardCostThreshold);
         public float HazardDamageThreshold => Mathf.Clamp01(hazardDamageThreshold);

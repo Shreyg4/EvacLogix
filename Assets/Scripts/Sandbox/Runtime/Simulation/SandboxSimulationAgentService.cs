@@ -231,6 +231,24 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 ReleasePortalBlockIfCleared(agent);
                 TickAvoidCooldown(agent, deltaTime);
 
+                // Once an agent has committed to a window jump, run ONLY the fall (still taking fire
+                // exposure while it waits) and do not run repath/recovery — those would re-target the
+                // agent off the window before CompleteWindowEscape drops it to the ground floor, which is
+                // why floor-3 jumpers were ending up milling around outside on floor 3.
+                if (windowExitDelayByAgent.ContainsKey(agent.AgentId))
+                {
+                    agent.Tick(deltaTime, ComputeFireExposure(agent));
+                    if (agent.Health <= 0f)
+                    {
+                        ResolveCasualty(agent);
+                        DespawnAgentAt(i);
+                        continue;
+                    }
+
+                    TryAdvanceWindowExitDelay(agent, deltaTime, i);
+                    continue;
+                }
+
                 var retreating = UpdateRecovery(agent, deltaTime);
 
                 if (!retreating && (NeedsHazardForcedRepath(agent, deltaTime) || agent.NeedsRepath()))
@@ -1131,6 +1149,14 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private bool NeedsHazardForcedRepath(SandboxEvacueeAgent agent, float deltaTime)
         {
             if (agent == null || fireSimulationService == null || !fireSimulationService.SimulationActive)
+            {
+                return false;
+            }
+
+            // Never reroute an agent off an escape window: a window IS the fire-escape route and is
+            // expected to sit in/near the burning area. Blacklisting it (as the generic hazard reroute
+            // does) abandons the jump and strands upper-floor agents on the burning floor.
+            if (agentTargets.TryGetValue(agent.AgentId, out var currentTarget) && currentTarget != null && currentTarget.isEscapeWindow)
             {
                 return false;
             }
