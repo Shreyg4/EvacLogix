@@ -90,6 +90,8 @@ namespace EvacLogix.Sandbox.Core
             EnsureComponent<SandboxPreviewAuthoringService>(gameObject);
             EnsureComponent<SandboxScenarioManagementService>(gameObject);
             EnsureComponent<SandboxAgentSimulationService>(gameObject);
+            EnsureComponent<SandboxRecoverySnapshotService>(gameObject);
+            EnsureComponent<SandboxMemoryGuardService>(gameObject);
 
             var overlayRoot = FindRequiredRoot(OverlayRootName);
             var wallRoot = FindOrCreateNestedRoot(WorldRootName, WallRootName);

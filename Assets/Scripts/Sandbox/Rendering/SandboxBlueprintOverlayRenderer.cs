@@ -53,6 +53,13 @@ namespace EvacLogix.Sandbox.Rendering
             PruneTextureCache(null);
         }
 
+        // Destroys all cached decoded textures (used by the memory guard to reclaim memory under pressure).
+        // They are lazily re-decoded from the live project's payloads on the next Refresh.
+        public void FlushTextureCache()
+        {
+            PruneTextureCache(null);
+        }
+
         public void Refresh()
         {
             ClearOverlays();

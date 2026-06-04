@@ -179,5 +179,114 @@ mergeInto(LibraryManager.library, {
           payload: null
         }));
       });
+  },
+
+  // Current wasm heap size in bytes (the value the OOM abort watches). Returned as a double because it
+  // can exceed Int32 (the cap is 2 GB). Used by the memory guard to relieve pressure before the abort.
+  EvacLogixSandboxBridge_GetHeapBytes: function () {
+    try {
+      if (typeof HEAP8 !== "undefined" && HEAP8 && HEAP8.buffer) {
+        return HEAP8.buffer.byteLength;
+      }
+      if (typeof Module !== "undefined" && Module.HEAP8 && Module.HEAP8.buffer) {
+        return Module.HEAP8.buffer.byteLength;
+      }
+    } catch (e) {}
+    return 0;
+  },
+
+  // Persists the recovery snapshot to localStorage. Falls back to a file download if storage is full or
+  // unavailable, so work is never lost. Returns 1 = stored, 2 = downloaded fallback, 0 = failed.
+  EvacLogixSandboxBridge_WriteRecovery: function (keyPtr, jsonPtr) {
+    var key = UTF8ToString(keyPtr);
+    var json = UTF8ToString(jsonPtr);
+    try {
+      window.localStorage.setItem(key, json);
+      return 1;
+    } catch (e) {
+      try {
+        var blob = new Blob([json], { type: "application/json" });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url;
+        a.download = "evaclogix-recovery.json";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        return 2;
+      } catch (e2) {
+        return 0;
+      }
+    }
+  },
+
+  // Reads a recovery snapshot back out of localStorage. The returned buffer is allocated with _malloc;
+  // it is read once on load so the small one-time leak is acceptable.
+  EvacLogixSandboxBridge_ReadRecovery: function (keyPtr) {
+    var key = UTF8ToString(keyPtr);
+    var value = "";
+    try { value = window.localStorage.getItem(key) || ""; } catch (e) { value = ""; }
+    var size = lengthBytesUTF8(value) + 1;
+    var buffer = _malloc(size);
+    stringToUTF8(value, buffer, size);
+    return buffer;
+  },
+
+  EvacLogixSandboxBridge_ClearRecovery: function (keyPtr) {
+    var key = UTF8ToString(keyPtr);
+    try { window.localStorage.removeItem(key); } catch (e) {}
+  },
+
+  // Always triggers a browser download of the given JSON (used by the "Download backup now" action).
+  EvacLogixSandboxBridge_DownloadJson: function (fileNamePtr, jsonPtr) {
+    var fileName = UTF8ToString(fileNamePtr);
+    var json = UTF8ToString(jsonPtr);
+    try {
+      var blob = new Blob([json], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = fileName || "evaclogix-recovery.json";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {}
+  },
+
+  // Installs an onAbort hook so that if the wasm heap aborts (OOM) anyway, the last recovery snapshot is
+  // downloaded and a banner is shown — the safety net for crashes the proactive guard can't prevent.
+  EvacLogixSandboxBridge_InstallAbortHandler: function (keyPtr) {
+    var key = UTF8ToString(keyPtr);
+    try {
+      if (typeof Module === "undefined" || Module.__evacLogixAbortHooked) {
+        return;
+      }
+      Module.__evacLogixAbortHooked = true;
+      var previousOnAbort = Module.onAbort;
+      Module.onAbort = function (what) {
+        try {
+          var json = window.localStorage.getItem(key) || "";
+          if (json) {
+            var blob = new Blob([json], { type: "application/json" });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement("a");
+            a.href = url;
+            a.download = "evaclogix-recovery.json";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          }
+          var banner = document.createElement("div");
+          banner.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#7a1c1c;color:#fff;font:14px sans-serif;padding:12px;text-align:center;";
+          banner.textContent = "EvacLogix ran out of memory. Your latest work was downloaded as evaclogix-recovery.json — reload the page and use Recover to restore it.";
+          document.body.appendChild(banner);
+        } catch (e) {}
+        if (typeof previousOnAbort === "function") {
+          try { previousOnAbort(what); } catch (e) {}
+        }
+      };
+    } catch (e) {}
   }
 });
