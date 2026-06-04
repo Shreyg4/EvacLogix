@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using EvacLogix.Sandbox.Authoring.Commands;
 using EvacLogix.Sandbox.Authoring.Selection;
+using EvacLogix.Sandbox.Authoring.Tools;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Data.Serialization;
 using EvacLogix.Sandbox.Infrastructure;
@@ -66,8 +67,15 @@ namespace EvacLogix.Sandbox.Authoring
         private SandboxVisualOrganizationService visualOrganizationService;
         private SandboxPreviewService previewService;
         private SandboxWorkspaceStateService workspaceStateService;
+        private SandboxToolStateService toolStateService;
+        private bool toolStateSubscribed;
         private float lastDoorPlacementWidth = -1f;
         private float lastWindowPlacementWidth = -1f;
+
+        // Defaults applied to newly placed openings while the matching tool is active. They reset when you
+        // leave the tool, so "Escape on" / "Locked" only stick for the current Door/Window placement run.
+        public DoorState DefaultDoorState { get; set; } = DoorState.Normal;
+        public bool DefaultWindowEscape { get; set; }
 
         public event Action SemanticObjectsChanged;
 
@@ -89,6 +97,35 @@ namespace EvacLogix.Sandbox.Authoring
             visualOrganizationService = GetComponent<SandboxVisualOrganizationService>();
             previewService = GetComponent<SandboxPreviewService>();
             workspaceStateService = GetComponent<SandboxWorkspaceStateService>();
+            toolStateService = GetComponent<SandboxToolStateService>();
+            if (toolStateService != null)
+            {
+                toolStateService.ToolModeChanged += HandlePlacementToolChanged;
+                toolStateSubscribed = true;
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (toolStateSubscribed && toolStateService != null)
+            {
+                toolStateService.ToolModeChanged -= HandlePlacementToolChanged;
+            }
+        }
+
+        // Placement defaults are scoped to the tool: leaving the Door tool clears the locked default and
+        // leaving the Window tool clears the escape default, so re-entering a tool starts from baseline.
+        private void HandlePlacementToolChanged(SandboxToolMode mode)
+        {
+            if (mode != SandboxToolMode.Door)
+            {
+                DefaultDoorState = DoorState.Normal;
+            }
+
+            if (mode != SandboxToolMode.Window)
+            {
+                DefaultWindowEscape = false;
+            }
         }
 
         public bool TryGetOpeningPlacementPreview(
