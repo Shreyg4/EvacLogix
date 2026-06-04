@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using System.Linq;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
+using EvacLogix.Sandbox.Rendering;
 using UnityEngine;
 
 namespace EvacLogix.Sandbox.Runtime.Simulation
@@ -40,6 +40,12 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private readonly List<GameObject> spawned = new();
         private readonly List<GameObject> fireSprites = new();
         private GameObject fireRoot;
+        // Fire visuals only change when the hazard field steps (~every 0.35s). We cache the last drawn
+        // revision/count and skip the rebuild on frames where nothing changed, instead of re-touching every
+        // sprite (and allocating a filtered list) 60x/sec — the cost that scaled with multi-floor fire.
+        private int lastRenderedHazardRevision = -1;
+        private int lastRenderedFireCount = -1;
+        private readonly List<SandboxFireCellData> visibleFireCells = new();
         private Sprite squareSprite;
 
         public void Build(BuildingProjectData project, SandboxFloorLayoutService layoutService, IReadOnlyList<SandboxGeneratedColliderData> generatedColliders)
@@ -103,7 +109,9 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
 
                 foreach (var teleportPortal in floor.teleportPortals)
                 {
-                    DrawQuad("Teleport", placement.ToWorld(teleportPortal.localPosition), teleportPortal.size, teleportPortal.rotationDegrees, ResolvePairColor(teleportPortal.pairColorIndex), FillOrder);
+                    var teleportColor = SandboxTeleportPairColor.Resolve(teleportPortal.teleportPortalId, teleportPortal.targetTeleportPortalId);
+                    teleportColor.a = 0.85f;
+                    DrawQuad("Teleport", placement.ToWorld(teleportPortal.localPosition), teleportPortal.size, teleportPortal.rotationDegrees, teleportColor, FillOrder);
                 }
 
                 DrawOpenings(floor, placement);
@@ -119,13 +127,33 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 return;
             }
 
-            EnsureFireRoot();
             var fireService = GetComponent<SandboxFireSimulationService>();
-            var visibleCells = cells == null
-                ? new List<SandboxFireCellData>()
-                : fireService == null
-                    ? new List<SandboxFireCellData>(cells)
-                    : cells.Where(fireService.IsVisuallyBurning).ToList();
+            var revision = fireService != null ? fireService.HazardRevision : 0;
+            var rawCount = cells?.Count ?? 0;
+            // Nothing changed since the last draw — skip the whole per-frame rebuild.
+            if (revision == lastRenderedHazardRevision && rawCount == lastRenderedFireCount)
+            {
+                return;
+            }
+
+            lastRenderedHazardRevision = revision;
+            lastRenderedFireCount = rawCount;
+
+            EnsureFireRoot();
+            // Filter into a reused member list (no per-frame LINQ allocation).
+            visibleFireCells.Clear();
+            if (cells != null)
+            {
+                for (var i = 0; i < cells.Count; i += 1)
+                {
+                    if (fireService == null || fireService.IsVisuallyBurning(cells[i]))
+                    {
+                        visibleFireCells.Add(cells[i]);
+                    }
+                }
+            }
+
+            var visibleCells = visibleFireCells;
             var count = visibleCells.Count;
             while (fireSprites.Count < count)
             {
@@ -194,6 +222,8 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
 
             fireSprites.Clear();
+            lastRenderedHazardRevision = -1;
+            lastRenderedFireCount = -1;
         }
 
         private void EnsureFireRoot()
@@ -269,15 +299,6 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             return false;
         }
 
-        private static Color ResolvePairColor(int pairColorIndex)
-        {
-            if (pairColorIndex < 0)
-            {
-                pairColorIndex = 0;
-            }
-
-            return PairColors[pairColorIndex % PairColors.Length];
-        }
 
         private Sprite GetSquareSprite()
         {

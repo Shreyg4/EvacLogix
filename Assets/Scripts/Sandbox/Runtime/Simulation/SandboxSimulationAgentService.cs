@@ -133,6 +133,13 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private Texture2D agentTexture;
         private int cachedHazardRevision = -1;
 
+        // The hazard-forced repath check samples the fire field; running it every frame for every agent
+        // is what made fire spreading drag the whole sim down. We instead evaluate it on a fixed cadence
+        // per agent (fire only steps every ~0.35s, so a 0.25s cadence stays responsive) and only while a
+        // fire is actually burning.
+        private const float HazardForcedRepathInterval = 0.25f;
+        private readonly Dictionary<string, float> hazardCheckAccumulatorByAgent = new(StringComparer.Ordinal);
+
         public IReadOnlyList<SandboxEvacueeAgent> Agents => agents;
         public int TotalAgents { get; private set; }
         public int EvacuatedCount { get; private set; }
@@ -224,7 +231,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
 
                 var retreating = UpdateRecovery(agent, deltaTime);
 
-                if (!retreating && (ShouldForceHazardRepath(agent) || agent.NeedsRepath()))
+                if (!retreating && (NeedsHazardForcedRepath(agent, deltaTime) || agent.NeedsRepath()))
                 {
                     RouteAgent(agent);
                 }
@@ -344,6 +351,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             resolvedAgentIds.Clear();
             agentTargets.Clear();
             frustrationByAgent.Clear();
+            hazardCheckAccumulatorByAgent.Clear();
             lastGoalDistanceByAgent.Clear();
             frustrationThresholdByAgent.Clear();
             basePriorityByAgent.Clear();
@@ -1113,6 +1121,27 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
 
             return 0.5f;
+        }
+
+        // Throttles the per-frame hazard check to a fixed cadence per agent. Returns false immediately when
+        // no fire is active (the common case), so it costs nothing until a fire is burning.
+        private bool NeedsHazardForcedRepath(SandboxEvacueeAgent agent, float deltaTime)
+        {
+            if (agent == null || fireSimulationService == null || !fireSimulationService.SimulationActive)
+            {
+                return false;
+            }
+
+            hazardCheckAccumulatorByAgent.TryGetValue(agent.AgentId, out var accumulated);
+            accumulated += deltaTime;
+            if (accumulated < HazardForcedRepathInterval)
+            {
+                hazardCheckAccumulatorByAgent[agent.AgentId] = accumulated;
+                return false;
+            }
+
+            hazardCheckAccumulatorByAgent[agent.AgentId] = 0f;
+            return ShouldForceHazardRepath(agent);
         }
 
         private bool ShouldForceHazardRepath(SandboxEvacueeAgent agent)
