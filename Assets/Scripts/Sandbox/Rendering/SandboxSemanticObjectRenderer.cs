@@ -48,7 +48,14 @@ namespace EvacLogix.Sandbox.Rendering
         [SerializeField] private float hatchInset = 0.08f;
         [SerializeField] private float dragGhostAlpha = 0.45f;
 
+        // Persistent POOL of GameObject+LineRenderer reused across rebuilds (see AcquireLine). Replaces
+        // the previous destroy-everything-then-recreate-all per Refresh, which — run several times per
+        // edit with deferred Destroy — kept multiple full copies of the floor live and grew the one-way
+        // WebGL heap toward OOM as the project grew.
         private readonly List<GameObject> renderedObjects = new();
+        private int activePooledCount;
+        // Coalesces the several change notifications fired per edit into one rebuild in LateUpdate.
+        private bool refreshRequested;
         private readonly List<GuideLabel> guideLabels = new();
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxWorkspaceStateService workspaceStateService;
@@ -196,7 +203,18 @@ namespace EvacLogix.Sandbox.Rendering
                 (!hadPreviewAuthoringService && previewAuthoringService != null) ||
                 (!hadPreviewService && previewService != null))
             {
+                refreshRequested = false;
                 Refresh();
+                return;
+            }
+
+            // Coalesced rebuild: all per-edit change notifications set refreshRequested; we rebuild once
+            // here instead of once per notification.
+            if (refreshRequested)
+            {
+                refreshRequested = false;
+                Refresh();
+                return;
             }
 
             targetCamera ??= Camera.main;
@@ -375,13 +393,14 @@ namespace EvacLogix.Sandbox.Rendering
         public void Refresh()
         {
             ResolveDependencies();
-            Clear();
+            BeginPooledFrame();
             targetCamera ??= Camera.main;
 
             var floor = workspaceService?.ActiveFloor;
             var project = workspaceService?.ActiveProject;
             if (floor == null || project == null)
             {
+                EndPooledFrame();
                 return;
             }
 
@@ -593,6 +612,7 @@ namespace EvacLogix.Sandbox.Rendering
             }
 
             RenderSelectionDragGhosts(floor);
+            EndPooledFrame();
         }
 
         private void RenderSelectionDragGhosts(FloorData floor)
@@ -804,42 +824,42 @@ namespace EvacLogix.Sandbox.Rendering
 
         private void HandleProjectChanged(BuildingProjectData project)
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandleFloorChanged(FloorData floor)
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandleSelectionChanged(IReadOnlyList<string> selection)
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandleSemanticObjectsChanged()
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandlePreviewAuthoringChanged()
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandlePreviewModeChanged(bool isPreviewModeActive)
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandlePreviewStateChanged()
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandleVisualStateChanged()
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void RenderDoorOrWindow(
@@ -1043,18 +1063,13 @@ namespace EvacLogix.Sandbox.Rendering
 
         private void RenderLine(string name, Vector2 start, Vector2 end, Color color, float width, float zOffset)
         {
-            var lineObject = new GameObject(name);
-            lineObject.transform.SetParent(transform, false);
-            var lineRenderer = lineObject.AddComponent<LineRenderer>();
-            lineRenderer.useWorldSpace = false;
+            var lineRenderer = AcquireLine(name);
             lineRenderer.positionCount = 2;
             lineRenderer.SetPosition(0, new Vector3(start.x, start.y, zOffset));
             lineRenderer.SetPosition(1, new Vector3(end.x, end.y, zOffset));
-            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = width;
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
-            renderedObjects.Add(lineObject);
         }
 
         private void RenderAlignmentGuides(FloorData floor, BuildingProjectData project)
@@ -1229,13 +1244,9 @@ namespace EvacLogix.Sandbox.Rendering
 
         private void RenderPolyline(string name, IReadOnlyList<Vector2> points, Color color, bool loop)
         {
-            var lineObject = new GameObject(name);
-            lineObject.transform.SetParent(transform, false);
-            var lineRenderer = lineObject.AddComponent<LineRenderer>();
-            lineRenderer.useWorldSpace = false;
+            var lineRenderer = AcquireLine(name);
             lineRenderer.positionCount = points.Count;
             lineRenderer.loop = loop;
-            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = lineWidth;
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
@@ -1243,8 +1254,6 @@ namespace EvacLogix.Sandbox.Rendering
             {
                 lineRenderer.SetPosition(i, new Vector3(points[i].x, points[i].y, 0f));
             }
-
-            renderedObjects.Add(lineObject);
         }
 
         private (Vector2 center, Vector2 size, float rotationDegrees) ResolveRectanglePresentation(
@@ -1407,25 +1416,75 @@ namespace EvacLogix.Sandbox.Rendering
                    (editorQoLService != null && !editorQoLService.IsObjectVisibleForIsolation(objectId, objectType));
         }
 
-        private void Clear()
+        // Reset the pool cursor so AcquireLine reuses existing pooled objects from the top this pass.
+        private void BeginPooledFrame()
         {
             guideLabels.Clear();
-            for (var i = 0; i < renderedObjects.Count; i += 1)
+            activePooledCount = 0;
+        }
+
+        // Deactivate any pooled objects not reused this pass; they stay allocated for the next rebuild.
+        private void EndPooledFrame()
+        {
+            for (var i = activePooledCount; i < renderedObjects.Count; i += 1)
             {
-                if (renderedObjects[i] != null)
+                if (renderedObjects[i] != null && renderedObjects[i].activeSelf)
                 {
-                    if (Application.isPlaying)
+                    renderedObjects[i].SetActive(false);
+                }
+            }
+        }
+
+        // Hands out a reused (or, only when the pool runs dry, newly created) GameObject+LineRenderer,
+        // resetting the state a reused object could carry over. Every rendered element is a LineRenderer.
+        private LineRenderer AcquireLine(string objectName)
+        {
+            GameObject pooledObject;
+            LineRenderer lineRenderer;
+            if (activePooledCount < renderedObjects.Count)
+            {
+                pooledObject = renderedObjects[activePooledCount];
+                if (pooledObject == null)
+                {
+                    pooledObject = CreatePooledLineObject(out lineRenderer);
+                    pooledObject.transform.SetParent(transform, false);
+                    renderedObjects[activePooledCount] = pooledObject;
+                }
+                else
+                {
+                    lineRenderer = pooledObject.GetComponent<LineRenderer>();
+                    if (lineRenderer == null)
                     {
-                        Destroy(renderedObjects[i]);
+                        lineRenderer = pooledObject.AddComponent<LineRenderer>();
                     }
-                    else
+
+                    if (!pooledObject.activeSelf)
                     {
-                        DestroyImmediate(renderedObjects[i]);
+                        pooledObject.SetActive(true);
                     }
                 }
             }
+            else
+            {
+                pooledObject = CreatePooledLineObject(out lineRenderer);
+                pooledObject.transform.SetParent(transform, false);
+                renderedObjects.Add(pooledObject);
+            }
 
-            renderedObjects.Clear();
+            activePooledCount += 1;
+            pooledObject.name = objectName;
+
+            lineRenderer.useWorldSpace = false;
+            lineRenderer.loop = false;
+            lineRenderer.sharedMaterial = GetLineMaterial();
+            return lineRenderer;
+        }
+
+        private static GameObject CreatePooledLineObject(out LineRenderer lineRenderer)
+        {
+            var pooledObject = new GameObject("PooledSemanticLine");
+            lineRenderer = pooledObject.AddComponent<LineRenderer>();
+            return pooledObject;
         }
 
         private void RegisterGuideLabel(Vector2 worldAnchor, string text, Color color)

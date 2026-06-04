@@ -42,7 +42,16 @@ namespace EvacLogix.Sandbox.Rendering
         [SerializeField] private float maxZoomWidthScale = 4f;
         [SerializeField] private float dragGhostAlpha = 0.45f;
 
+        // renderedObjects is a persistent POOL of GameObject+LineRenderer, not a per-frame allocation.
+        // Each Refresh acquires the first activePooledCount entries (reconfiguring them in place) and
+        // deactivates the rest. Previously Refresh destroyed every object and created new ones, which —
+        // because Refresh runs several times per edit and Destroy is deferred to end-of-frame — left 3-4
+        // full copies of the floor's geometry live at the peak, growing the one-way WebGL heap until OOM.
         private readonly List<GameObject> renderedObjects = new();
+        private int activePooledCount;
+        // Coalesces the multiple change notifications fired per edit (ActiveProjectChanged +
+        // ActiveFloorChanged + TopologyChanged, etc.) into a single rebuild in LateUpdate.
+        private bool refreshRequested;
         private readonly List<GuideLabel> guideLabels = new();
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxWorkspaceStateService workspaceStateService;
@@ -117,8 +126,9 @@ namespace EvacLogix.Sandbox.Rendering
             wallAuthoringService ??= FindAnyObjectByType<SandboxWallAuthoringService>();
             objectInteractionOverlay ??= FindAnyObjectByType<SandboxObjectInteractionOverlay>();
 
-            if (HasPreviewStateChanged())
+            if (refreshRequested || HasPreviewStateChanged())
             {
+                refreshRequested = false;
                 Refresh();
                 return;
             }
@@ -191,13 +201,14 @@ namespace EvacLogix.Sandbox.Rendering
 
         public void Refresh()
         {
-            Clear();
+            BeginPooledFrame();
             wallAuthoringOverlay ??= FindAnyObjectByType<SandboxWallAuthoringOverlay>();
             targetCamera ??= Camera.main;
 
             var floor = workspaceService?.ActiveFloor;
             if (floor == null)
             {
+                EndPooledFrame();
                 RecordCameraState();
                 return;
             }
@@ -233,6 +244,7 @@ namespace EvacLogix.Sandbox.Rendering
             RenderPreviewState();
             // Alignment guides are now drawn by the centralized SandboxAlignmentGuideOverlay,
             // which covers every interaction (move/resize/place) for all entity types, not just walls.
+            EndPooledFrame();
             RecordCameraState();
         }
 
@@ -292,69 +304,57 @@ namespace EvacLogix.Sandbox.Rendering
 
         private void RenderGhostWallLine(WallSegmentData wall, Vector2 delta, Color color)
         {
-            var lineObject = new GameObject($"WallGhost_{wall.wallSegmentId}");
-            lineObject.transform.SetParent(transform, false);
-
-            var lineRenderer = lineObject.AddComponent<LineRenderer>();
-            lineRenderer.useWorldSpace = false;
+            var lineRenderer = AcquireLine($"WallGhost_{wall.wallSegmentId}", transform);
             lineRenderer.positionCount = 2;
             lineRenderer.SetPosition(0, new Vector3(wall.startPoint.x + delta.x, wall.startPoint.y + delta.y, 0f));
             lineRenderer.SetPosition(1, new Vector3(wall.endPoint.x + delta.x, wall.endPoint.y + delta.y, 0f));
-            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(Mathf.Max(minimumLineWidth, wall.thickness * 0.18f));
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
-            renderedObjects.Add(lineObject);
         }
 
         private void HandleProjectChanged(BuildingProjectData project)
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandleFloorChanged(FloorData floor)
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandleSelectionChanged(IReadOnlyList<string> selection)
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandleTopologyChanged()
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandlePreviewStateChanged()
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void HandleVisualStateChanged()
         {
-            Refresh();
+            refreshRequested = true;
         }
 
         private void RenderWallLine(WallSegmentData wall)
         {
-            var lineObject = new GameObject($"Wall_{wall.wallSegmentId}");
-            lineObject.transform.SetParent(transform, false);
-
-            var lineRenderer = lineObject.AddComponent<LineRenderer>();
-            lineRenderer.useWorldSpace = false;
+            var lineRenderer = AcquireLine($"Wall_{wall.wallSegmentId}", transform);
             lineRenderer.positionCount = 2;
             lineRenderer.SetPosition(0, new Vector3(wall.startPoint.x, wall.startPoint.y, 0f));
             lineRenderer.SetPosition(1, new Vector3(wall.endPoint.x, wall.endPoint.y, 0f));
-            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(Mathf.Max(minimumLineWidth, wall.thickness * 0.18f));
             var baseColor = visualOrganizationService == null
                 ? wallColor
                 : visualOrganizationService.GetColor(SandboxVisualObjectType.Wall);
             lineRenderer.startColor = IsSelected(wall.wallSegmentId) ? selectedWallColor : baseColor;
             lineRenderer.endColor = IsSelected(wall.wallSegmentId) ? selectedWallColor : baseColor;
-            renderedObjects.Add(lineObject);
         }
 
         private void RenderHandle(string junctionId, Vector2 position, bool isSelectedHandle)
@@ -364,14 +364,8 @@ namespace EvacLogix.Sandbox.Rendering
                 return;
             }
 
-            var handleObject = new GameObject($"WallHandle_{junctionId}");
-            handleObject.transform.SetParent(handleRoot, false);
-
-            var lineRenderer = handleObject.AddComponent<LineRenderer>();
-            lineRenderer.useWorldSpace = false;
+            var lineRenderer = AcquireLine($"WallHandle_{junctionId}", handleRoot);
             lineRenderer.positionCount = 4;
-            lineRenderer.loop = false;
-            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(minimumLineWidth);
             lineRenderer.startColor = isSelectedHandle ? selectedHandleColor : handleColor;
             lineRenderer.endColor = isSelectedHandle ? selectedHandleColor : handleColor;
@@ -382,7 +376,6 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.SetPosition(1, basePosition + new Vector3(halfSize, 0f, 0f));
             lineRenderer.SetPosition(2, basePosition + new Vector3(0f, -halfSize, 0f));
             lineRenderer.SetPosition(3, basePosition + new Vector3(0f, halfSize, 0f));
-            renderedObjects.Add(handleObject);
         }
 
         // When a single wall is selected, mark its two ends distinctly (Start = green square,
@@ -408,14 +401,9 @@ namespace EvacLogix.Sandbox.Rendering
 
         private void RenderEndpointMarker(string name, Vector2 position, bool diamond, Color color)
         {
-            var markerObject = new GameObject(name);
-            markerObject.transform.SetParent(handleRoot, false);
-
-            var lineRenderer = markerObject.AddComponent<LineRenderer>();
-            lineRenderer.useWorldSpace = false;
+            var lineRenderer = AcquireLine(name, handleRoot);
             lineRenderer.positionCount = 4;
             lineRenderer.loop = true;
-            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(minimumLineWidth);
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
@@ -436,8 +424,6 @@ namespace EvacLogix.Sandbox.Rendering
                 lineRenderer.SetPosition(2, basePosition + new Vector3(halfSize, halfSize, 0f));
                 lineRenderer.SetPosition(3, basePosition + new Vector3(-halfSize, halfSize, 0f));
             }
-
-            renderedObjects.Add(markerObject);
         }
 
         private WallSegmentData ResolvePreviewWall(WallSegmentData wall)
@@ -565,13 +551,8 @@ namespace EvacLogix.Sandbox.Rendering
                 return;
             }
 
-            var lineObject = new GameObject(name);
-            lineObject.transform.SetParent(transform, false);
-
-            var lineRenderer = lineObject.AddComponent<LineRenderer>();
-            lineRenderer.useWorldSpace = false;
+            var lineRenderer = AcquireLine(name, transform);
             lineRenderer.positionCount = points.Count;
-            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(width);
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
@@ -579,8 +560,6 @@ namespace EvacLogix.Sandbox.Rendering
             {
                 lineRenderer.SetPosition(i, new Vector3(points[i].x, points[i].y, 0f));
             }
-
-            renderedObjects.Add(lineObject);
         }
 
         private void RenderCross(string name, Vector2 center, Color color, float size)
@@ -592,36 +571,24 @@ namespace EvacLogix.Sandbox.Rendering
 
         private void RenderLine(string name, Vector2 start, Vector2 end, Color color)
         {
-            var lineObject = new GameObject(name);
-            lineObject.transform.SetParent(transform, false);
-
-            var lineRenderer = lineObject.AddComponent<LineRenderer>();
-            lineRenderer.useWorldSpace = false;
+            var lineRenderer = AcquireLine(name, transform);
             lineRenderer.positionCount = 2;
             lineRenderer.SetPosition(0, new Vector3(start.x, start.y, 0f));
             lineRenderer.SetPosition(1, new Vector3(end.x, end.y, 0f));
-            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(minimumLineWidth);
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
-            renderedObjects.Add(lineObject);
         }
 
         private void RenderLine(string name, Vector2 start, Vector2 end, Color color, float widthMultiplier)
         {
-            var lineObject = new GameObject(name);
-            lineObject.transform.SetParent(transform, false);
-
-            var lineRenderer = lineObject.AddComponent<LineRenderer>();
-            lineRenderer.useWorldSpace = false;
+            var lineRenderer = AcquireLine(name, transform);
             lineRenderer.positionCount = 2;
             lineRenderer.SetPosition(0, new Vector3(start.x, start.y, 0.01f));
             lineRenderer.SetPosition(1, new Vector3(end.x, end.y, 0.01f));
-            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(widthMultiplier);
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
-            renderedObjects.Add(lineObject);
         }
 
         private void RenderAxisGuides(FloorData floor, Vector2 anchor, Vector2 target, string ignoredObjectId, Color color)
@@ -820,25 +787,85 @@ namespace EvacLogix.Sandbox.Rendering
                    (editorQoLService == null || editorQoLService.IsObjectVisibleForIsolation(wallSegmentId, SandboxVisualObjectType.Wall));
         }
 
-        private void Clear()
+        // Start a pooled render pass: reset the active cursor so AcquireLine hands out (and reconfigures)
+        // existing pooled objects from the top, reusing them instead of allocating fresh ones.
+        private void BeginPooledFrame()
         {
             guideLabels.Clear();
-            for (var i = 0; i < renderedObjects.Count; i += 1)
+            activePooledCount = 0;
+        }
+
+        // Finish a pooled render pass: deactivate any pooled objects that weren't reused this frame. They
+        // stay allocated for the next pass (no destroy/recreate churn) but don't render while idle.
+        private void EndPooledFrame()
+        {
+            for (var i = activePooledCount; i < renderedObjects.Count; i += 1)
             {
-                if (renderedObjects[i] != null)
+                if (renderedObjects[i] != null && renderedObjects[i].activeSelf)
                 {
-                    if (Application.isPlaying)
+                    renderedObjects[i].SetActive(false);
+                }
+            }
+        }
+
+        // Hands out a pooled GameObject+LineRenderer, reconfiguring its common state, instead of creating
+        // a new one each call. Every rendered element here is a LineRenderer, so one pool serves them all.
+        private LineRenderer AcquireLine(string objectName, Transform parent)
+        {
+            GameObject pooledObject;
+            LineRenderer lineRenderer;
+            if (activePooledCount < renderedObjects.Count)
+            {
+                pooledObject = renderedObjects[activePooledCount];
+                if (pooledObject == null)
+                {
+                    pooledObject = CreatePooledLineObject(out lineRenderer);
+                    renderedObjects[activePooledCount] = pooledObject;
+                }
+                else
+                {
+                    lineRenderer = pooledObject.GetComponent<LineRenderer>();
+                    if (lineRenderer == null)
                     {
-                        Destroy(renderedObjects[i]);
+                        lineRenderer = pooledObject.AddComponent<LineRenderer>();
                     }
-                    else
+
+                    if (!pooledObject.activeSelf)
                     {
-                        DestroyImmediate(renderedObjects[i]);
+                        pooledObject.SetActive(true);
                     }
                 }
             }
+            else
+            {
+                pooledObject = CreatePooledLineObject(out lineRenderer);
+                renderedObjects.Add(pooledObject);
+            }
 
-            renderedObjects.Clear();
+            activePooledCount += 1;
+
+            pooledObject.name = objectName;
+            if (parent != null && pooledObject.transform.parent != parent)
+            {
+                pooledObject.transform.SetParent(parent, false);
+            }
+
+            pooledObject.transform.localPosition = Vector3.zero;
+            pooledObject.transform.localRotation = Quaternion.identity;
+            pooledObject.transform.localScale = Vector3.one;
+
+            // Reset the state a reused object might carry over from a different element type.
+            lineRenderer.useWorldSpace = false;
+            lineRenderer.loop = false;
+            lineRenderer.sharedMaterial = GetLineMaterial();
+            return lineRenderer;
+        }
+
+        private static GameObject CreatePooledLineObject(out LineRenderer lineRenderer)
+        {
+            var pooledObject = new GameObject("PooledWallLine");
+            lineRenderer = pooledObject.AddComponent<LineRenderer>();
+            return pooledObject;
         }
 
         private void RegisterGuideLabel(Vector2 worldAnchor, string text, Color color)

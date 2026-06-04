@@ -76,6 +76,54 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private const int YieldAvoidancePriority = 90;
         private const float RerouteAvoidCooldown = 5f;
 
+        // Congestion is sampled by RouteAgent for every candidate node, for every agent, every repath.
+        // Iterating all agents per query is O(agents) and made the whole routing pass O(agents^2). Instead
+        // we bucket active agents into a coarse spatial grid once per frame (cell size == avoidance
+        // radius) so each congestion query only scans the 3x3 neighborhood around a sample point. This is
+        // exact (same kernel) but turns the dominant routing term from agents^2 into agents.
+        private readonly struct CongestionCellKey : IEquatable<CongestionCellKey>
+        {
+            public readonly int Floor;
+            public readonly int X;
+            public readonly int Y;
+
+            public CongestionCellKey(int floor, int x, int y)
+            {
+                Floor = floor;
+                X = x;
+                Y = y;
+            }
+
+            public bool Equals(CongestionCellKey other) => Floor == other.Floor && X == other.X && Y == other.Y;
+            public override bool Equals(object obj) => obj is CongestionCellKey other && Equals(other);
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    var hash = Floor;
+                    hash = (hash * 397) ^ X;
+                    hash = (hash * 397) ^ Y;
+                    return hash;
+                }
+            }
+        }
+
+        private struct CongestionAgent
+        {
+            public Vector2 Position;
+            public SandboxEvacueeAgent Agent;
+        }
+
+        private readonly Dictionary<CongestionCellKey, List<CongestionAgent>> congestionCells = new();
+        private readonly Stack<List<CongestionAgent>> congestionListPool = new();
+        private readonly Dictionary<string, int> congestionFloorIndex = new(StringComparer.Ordinal);
+        private float congestionCellSize;
+
+        // Avoidance quality is chosen by agent count at spawn: high-quality RVO for every one of 500
+        // agents is the single biggest per-frame cost, so large runs step down to cheaper avoidance.
+        private UnityEngine.AI.ObstacleAvoidanceType resolvedAvoidanceQuality = UnityEngine.AI.ObstacleAvoidanceType.HighQualityObstacleAvoidance;
+
         private BuildingProjectData project;
         private SandboxFloorLayoutService layoutService;
         private SandboxFireSimulationService fireSimulationService;
@@ -117,6 +165,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
 
             EnsureAgentRoot();
             var cap = Mathf.Max(1, agentCap);
+            resolvedAvoidanceQuality = ResolveAvoidanceQuality(cap);
 
             // Seed the priority RNG so the spawn order -> priority assignment (and thus the run) repeats.
             UnityEngine.Random.InitState(AvoidanceSeed);
@@ -156,6 +205,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         // is the NavMeshAgent's job; here we handle repath, exit arrival, and casualty resolution.
         public void UpdateAgents(float deltaTime)
         {
+            RebuildCongestionGrid();
             for (var i = agents.Count - 1; i >= 0; i -= 1)
             {
                 var agent = agents[i];
@@ -307,6 +357,14 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             exitUsage.Clear();
             evacuatedByFloor.Clear();
             casualtiesByFloor.Clear();
+            foreach (var pair in congestionCells)
+            {
+                pair.Value.Clear();
+                congestionListPool.Push(pair.Value);
+            }
+
+            congestionCells.Clear();
+            congestionFloorIndex.Clear();
             TotalAgents = 0;
             EvacuatedCount = 0;
             CasualtyCount = 0;
@@ -332,6 +390,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             var profileForPriority = GetProfile();
             var basePriority = UnityEngine.Random.Range(profileForPriority.AvoidancePriorityMin, profileForPriority.AvoidancePriorityMax + 1);
             agent.SetAvoidancePriority(basePriority);
+            agent.SetObstacleAvoidanceQuality(resolvedAvoidanceQuality);
             basePriorityByAgent[agent.AgentId] = basePriority;
             frustrationThresholdByAgent[agent.AgentId] = UnityEngine.Random.Range(FrustrationThresholdMin, FrustrationThresholdMax);
             agents.Add(agent);
@@ -1104,41 +1163,97 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             return peak;
         }
 
+        // Buckets every active agent into a coarse spatial grid (cell size == avoidance radius), keyed by
+        // floor. Rebuilt once per frame so congestion queries can scan a local neighborhood instead of
+        // the whole agent list. Lists are pooled to avoid per-frame GC churn.
+        private void RebuildCongestionGrid()
+        {
+            foreach (var pair in congestionCells)
+            {
+                pair.Value.Clear();
+                congestionListPool.Push(pair.Value);
+            }
+
+            congestionCells.Clear();
+            congestionFloorIndex.Clear();
+            congestionCellSize = Mathf.Max(0.1f, CongestionAvoidanceRadius);
+
+            for (var i = 0; i < agents.Count; i += 1)
+            {
+                var agent = agents[i];
+                if (agent == null || agent.HasExited || resolvedAgentIds.Contains(agent.AgentId))
+                {
+                    continue;
+                }
+
+                if (!congestionFloorIndex.TryGetValue(agent.FloorId, out var floorIndex))
+                {
+                    floorIndex = congestionFloorIndex.Count;
+                    congestionFloorIndex[agent.FloorId] = floorIndex;
+                }
+
+                var position = agent.CurrentWorldPosition;
+                var key = new CongestionCellKey(
+                    floorIndex,
+                    Mathf.FloorToInt(position.x / congestionCellSize),
+                    Mathf.FloorToInt(position.y / congestionCellSize));
+                if (!congestionCells.TryGetValue(key, out var list))
+                {
+                    list = congestionListPool.Count > 0 ? congestionListPool.Pop() : new List<CongestionAgent>();
+                    congestionCells[key] = list;
+                }
+
+                list.Add(new CongestionAgent { Position = position, Agent = agent });
+            }
+        }
+
         private float GetCongestionRoutePenalty(SandboxEvacueeAgent routedAgent, Vector2 from, Vector2 to)
         {
-            if (routedAgent == null)
+            if (routedAgent == null || !congestionFloorIndex.TryGetValue(routedAgent.FloorId, out var floorIndex))
             {
                 return 0f;
             }
 
             var radius = Mathf.Max(0.1f, CongestionAvoidanceRadius);
+            var cellSize = congestionCellSize > 0f ? congestionCellSize : radius;
             const int samples = 5;
             var penalty = 0f;
             for (var sampleIndex = 0; sampleIndex < samples; sampleIndex += 1)
             {
                 var t = samples == 1 ? 0.5f : sampleIndex / (float)(samples - 1);
                 var samplePoint = Vector2.Lerp(from, to, t);
+                var cellX = Mathf.FloorToInt(samplePoint.x / cellSize);
+                var cellY = Mathf.FloorToInt(samplePoint.y / cellSize);
                 var crowdDensity = 0f;
-                for (var i = 0; i < agents.Count; i += 1)
+
+                // cellSize == radius, so any agent within radius lives in the 3x3 neighborhood.
+                for (var ox = -1; ox <= 1; ox += 1)
                 {
-                    var other = agents[i];
-                    if (other == null ||
-                        other.HasExited ||
-                        resolvedAgentIds.Contains(other.AgentId) ||
-                        string.Equals(other.AgentId, routedAgent.AgentId, StringComparison.Ordinal) ||
-                        !string.Equals(other.FloorId, routedAgent.FloorId, StringComparison.Ordinal))
+                    for (var oy = -1; oy <= 1; oy += 1)
                     {
-                        continue;
-                    }
+                        if (!congestionCells.TryGetValue(new CongestionCellKey(floorIndex, cellX + ox, cellY + oy), out var bucket))
+                        {
+                            continue;
+                        }
 
-                    var distance = Vector2.Distance(samplePoint, other.CurrentWorldPosition);
-                    if (distance >= radius)
-                    {
-                        continue;
-                    }
+                        for (var i = 0; i < bucket.Count; i += 1)
+                        {
+                            var other = bucket[i];
+                            if (ReferenceEquals(other.Agent, routedAgent))
+                            {
+                                continue;
+                            }
 
-                    var proximity = 1f - Mathf.Clamp01(distance / radius);
-                    crowdDensity += Mathf.Pow(proximity, CongestionRouteDensityExponent);
+                            var distance = Vector2.Distance(samplePoint, other.Position);
+                            if (distance >= radius)
+                            {
+                                continue;
+                            }
+
+                            var proximity = 1f - Mathf.Clamp01(distance / radius);
+                            crowdDensity += Mathf.Pow(proximity, CongestionRouteDensityExponent);
+                        }
+                    }
                 }
 
                 if (crowdDensity > 0f)
@@ -1336,6 +1451,29 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
 
             agentRoot = GameObject.Find(agentRootName) ?? new GameObject(agentRootName);
+        }
+
+        // High-quality RVO for hundreds of agents is the dominant per-frame cost; step it down as the
+        // crowd grows so large runs stay interactive. Avoidance is never disabled (agents must still not
+        // overlap), just made cheaper.
+        private static UnityEngine.AI.ObstacleAvoidanceType ResolveAvoidanceQuality(int agentCount)
+        {
+            if (agentCount <= 60)
+            {
+                return UnityEngine.AI.ObstacleAvoidanceType.HighQualityObstacleAvoidance;
+            }
+
+            if (agentCount <= 150)
+            {
+                return UnityEngine.AI.ObstacleAvoidanceType.GoodQualityObstacleAvoidance;
+            }
+
+            if (agentCount <= 300)
+            {
+                return UnityEngine.AI.ObstacleAvoidanceType.MedQualityObstacleAvoidance;
+            }
+
+            return UnityEngine.AI.ObstacleAvoidanceType.LowQualityObstacleAvoidance;
         }
 
         private SandboxAgentProfile GetProfile()

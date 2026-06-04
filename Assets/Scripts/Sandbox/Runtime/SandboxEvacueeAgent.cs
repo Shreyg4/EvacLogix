@@ -27,6 +27,9 @@ namespace EvacLogix.Sandbox.Runtime
         private NavMeshAgent navMeshAgent;
         private float floorElevation;
         private float speedMultiplier = 1f;
+        // Per-agent scale on the repath interval so a whole crowd doesn't repath on the same frame
+        // (synchronized repaths spike the routing cost and stutter the framerate).
+        private float repathIntervalScale = 1f;
 
         public string AgentId => agentId;
         public string FloorId => floorId;
@@ -87,7 +90,11 @@ namespace EvacLogix.Sandbox.Runtime
             floorElevation = newFloorElevation;
             health = 1f;
             hasExited = false;
-            repathTimer = 0f;
+            // Start each agent at a random phase within its repath interval and give it a slightly
+            // off-nominal interval so the crowd's repaths stay spread across frames instead of pulsing.
+            var baseInterval = agentProfile != null ? agentProfile.RepathIntervalSeconds : 0.75f;
+            repathIntervalScale = Random.Range(0.8f, 1.2f);
+            repathTimer = Random.Range(0f, baseInterval);
             currentDestination = startPosition;
             EnsureNavAgentObject();
             UpdateVisualFootprint();
@@ -216,7 +223,7 @@ namespace EvacLogix.Sandbox.Runtime
 
         public bool NeedsRepath()
         {
-            return profile != null && repathTimer >= profile.RepathIntervalSeconds;
+            return profile != null && repathTimer >= profile.RepathIntervalSeconds * repathIntervalScale;
         }
 
         public void ResetRepathTimer()
@@ -282,6 +289,16 @@ namespace EvacLogix.Sandbox.Runtime
             if (navMeshAgent != null)
             {
                 navMeshAgent.avoidancePriority = Mathf.Clamp(priority, 0, 99);
+            }
+        }
+
+        // Overrides the profile's RVO quality (the sim service steps this down for large crowds, where
+        // high-quality avoidance on every agent is the dominant per-frame cost).
+        public void SetObstacleAvoidanceQuality(ObstacleAvoidanceType quality)
+        {
+            if (navMeshAgent != null)
+            {
+                navMeshAgent.obstacleAvoidanceType = quality;
             }
         }
 
