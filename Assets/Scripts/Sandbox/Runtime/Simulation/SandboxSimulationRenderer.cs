@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using EvacLogix.Sandbox.Data;
 using EvacLogix.Sandbox.Infrastructure;
@@ -38,15 +39,27 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         private static readonly Color FireHighColor = new(1f, 0.22f, 0.05f, 0.95f);
 
         private readonly List<GameObject> spawned = new();
-        private readonly List<GameObject> fireSprites = new();
         private GameObject fireRoot;
-        // Fire visuals only change when the hazard field steps (~every 0.35s). We cache the last drawn
-        // revision/count and skip the rebuild on frames where nothing changed, instead of re-touching every
-        // sprite (and allocating a filtered list) 60x/sec — the cost that scaled with multi-floor fire.
+        // Fire is drawn as ONE textured quad per floor (a heatmap) rather than one sprite per burning cell,
+        // so a whole-floor fire costs the same to render as a small one — O(floors), not O(burning cells).
+        // The texture only rewrites when the hazard field actually steps (~3x/sec); the cached revision +
+        // count skips frames where nothing changed.
+        private readonly Dictionary<string, FloorHeatmap> heatmapsByFloor = new(StringComparer.Ordinal);
         private int lastRenderedHazardRevision = -1;
         private int lastRenderedFireCount = -1;
-        private readonly List<SandboxFireCellData> visibleFireCells = new();
         private Sprite squareSprite;
+
+        // One per floor that has ever caught fire: a grid texture whose texels map 1:1 to fire cells.
+        private sealed class FloorHeatmap
+        {
+            public GameObject Quad;
+            public Texture2D Texture;
+            public Color32[] Pixels;
+            public int MinIx;
+            public int MinIy;
+            public int Width;
+            public int Height;
+        }
 
         public void Build(BuildingProjectData project, SandboxFloorLayoutService layoutService, IReadOnlyList<SandboxGeneratedColliderData> generatedColliders)
         {
@@ -118,8 +131,8 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
         }
 
-        // Per-frame update of fire cell sprites (the fire spreads dynamically). Pools sprites so it
-        // doesn't churn GameObjects every frame; unused ones are deactivated.
+        // Repaints the per-floor fire heatmap textures when the hazard field has changed. Each burning
+        // cell writes one texel; rendering is then one quad per floor regardless of how big the fire is.
         public void UpdateFire(IReadOnlyList<SandboxFireCellData> cells, SandboxFloorLayoutService layoutService)
         {
             if (layoutService == null)
@@ -130,7 +143,7 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             var fireService = GetComponent<SandboxFireSimulationService>();
             var revision = fireService != null ? fireService.HazardRevision : 0;
             var rawCount = cells?.Count ?? 0;
-            // Nothing changed since the last draw — skip the whole per-frame rebuild.
+            // Nothing changed since the last draw — skip the rewrite.
             if (revision == lastRenderedHazardRevision && rawCount == lastRenderedFireCount)
             {
                 return;
@@ -138,49 +151,118 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
 
             lastRenderedHazardRevision = revision;
             lastRenderedFireCount = rawCount;
+            if (fireService == null)
+            {
+                return;
+            }
 
             EnsureFireRoot();
-            // Filter into a reused member list (no per-frame LINQ allocation).
-            visibleFireCells.Clear();
+            var cellSize = fireService.CellSize;
+            var threshold = fireService.VisibleFlameThreshold;
+
+            // Wipe every floor's texture, then repaint the currently-burning cells.
+            foreach (var pair in heatmapsByFloor)
+            {
+                Array.Clear(pair.Value.Pixels, 0, pair.Value.Pixels.Length);
+            }
+
             if (cells != null)
             {
                 for (var i = 0; i < cells.Count; i += 1)
                 {
-                    if (fireService == null || fireService.IsVisuallyBurning(cells[i]))
+                    var cell = cells[i];
+                    if (cell == null)
                     {
-                        visibleFireCells.Add(cells[i]);
+                        continue;
                     }
+
+                    var intensity = Mathf.Clamp01(cell.intensity);
+                    if (intensity < threshold)
+                    {
+                        continue;
+                    }
+
+                    var heatmap = GetOrCreateHeatmap(cell.floorId, layoutService, cellSize);
+                    if (heatmap == null)
+                    {
+                        continue;
+                    }
+
+                    var px = Mathf.RoundToInt(cell.position.x / cellSize) - heatmap.MinIx;
+                    var py = Mathf.RoundToInt(cell.position.y / cellSize) - heatmap.MinIy;
+                    if (px < 0 || py < 0 || px >= heatmap.Width || py >= heatmap.Height)
+                    {
+                        continue;
+                    }
+
+                    heatmap.Pixels[(py * heatmap.Width) + px] = Color.Lerp(FireLowColor, FireHighColor, intensity);
                 }
             }
 
-            var visibleCells = visibleFireCells;
-            var count = visibleCells.Count;
-            while (fireSprites.Count < count)
+            foreach (var pair in heatmapsByFloor)
             {
-                var fireObject = new GameObject("Fire");
-                fireObject.transform.SetParent(fireRoot.transform, false);
-                var spriteRenderer = fireObject.AddComponent<SpriteRenderer>();
-                spriteRenderer.sprite = GetSquareSprite();
-                spriteRenderer.sortingOrder = FireOrder;
-                fireSprites.Add(fireObject);
+                pair.Value.Texture.SetPixels32(pair.Value.Pixels);
+                pair.Value.Texture.Apply(false);
+            }
+        }
+
+        // Lazily builds a floor's heatmap (texture + quad) the first time it catches fire. The quad is
+        // sized and positioned so each texel sits exactly on its fire cell (sprite is 1px-per-unit, scaled
+        // by cellSize; the grid is centred on the floor's local bounds).
+        private FloorHeatmap GetOrCreateHeatmap(string floorId, SandboxFloorLayoutService layoutService, float cellSize)
+        {
+            if (string.IsNullOrEmpty(floorId))
+            {
+                return null;
             }
 
-            for (var i = 0; i < fireSprites.Count; i += 1)
+            if (heatmapsByFloor.TryGetValue(floorId, out var existing))
             {
-                if (i >= count || !layoutService.TryGetPlacement(visibleCells[i].floorId, out var placement))
-                {
-                    fireSprites[i].SetActive(false);
-                    continue;
-                }
-
-                var cell = visibleCells[i];
-                var world = placement.ToWorld(cell.position);
-                var fireObject = fireSprites[i];
-                fireObject.SetActive(true);
-                fireObject.transform.position = new Vector3(world.x, world.y, 0f);
-                fireObject.transform.localScale = new Vector3(0.45f, 0.45f, 1f);
-                fireObject.GetComponent<SpriteRenderer>().color = Color.Lerp(FireLowColor, FireHighColor, Mathf.Clamp01(cell.intensity));
+                return existing;
             }
+
+            if (!layoutService.TryGetPlacement(floorId, out var placement))
+            {
+                return null;
+            }
+
+            var bounds = placement.LocalBounds;
+            var minIx = Mathf.FloorToInt(bounds.xMin / cellSize) - 1;
+            var minIy = Mathf.FloorToInt(bounds.yMin / cellSize) - 1;
+            var maxIx = Mathf.CeilToInt(bounds.xMax / cellSize) + 1;
+            var maxIy = Mathf.CeilToInt(bounds.yMax / cellSize) + 1;
+            var width = Mathf.Max(1, (maxIx - minIx) + 1);
+            var height = Mathf.Max(1, (maxIy - minIy) + 1);
+
+            var texture = new Texture2D(width, height, TextureFormat.RGBA32, false)
+            {
+                filterMode = FilterMode.Point,
+                wrapMode = TextureWrapMode.Clamp
+            };
+
+            var quad = new GameObject("FireHeatmap_" + floorId);
+            quad.transform.SetParent(fireRoot.transform, false);
+            var spriteRenderer = quad.AddComponent<SpriteRenderer>();
+            spriteRenderer.sprite = Sprite.Create(texture, new Rect(0f, 0f, width, height), new Vector2(0.5f, 0.5f), 1f);
+            spriteRenderer.sortingOrder = FireOrder;
+
+            var midLocal = new Vector2((minIx + maxIx) * 0.5f * cellSize, (minIy + maxIy) * 0.5f * cellSize);
+            var world = placement.ToWorld(midLocal);
+            quad.transform.position = new Vector3(world.x, world.y, 0f);
+            quad.transform.localScale = new Vector3(cellSize, cellSize, 1f);
+
+            var heatmap = new FloorHeatmap
+            {
+                Quad = quad,
+                Texture = texture,
+                Pixels = new Color32[width * height],
+                MinIx = minIx,
+                MinIy = minIy,
+                Width = width,
+                Height = height
+            };
+            heatmapsByFloor[floorId] = heatmap;
+            return heatmap;
         }
 
         public void Clear()
@@ -204,26 +286,32 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
 
             spawned.Clear();
 
-            for (var i = 0; i < fireSprites.Count; i += 1)
+            foreach (var pair in heatmapsByFloor)
             {
-                if (fireSprites[i] == null)
-                {
-                    continue;
-                }
-
-                if (Application.isPlaying)
-                {
-                    Destroy(fireSprites[i]);
-                }
-                else
-                {
-                    DestroyImmediate(fireSprites[i]);
-                }
+                DestroyUnityObject(pair.Value.Quad);
+                DestroyUnityObject(pair.Value.Texture);
             }
 
-            fireSprites.Clear();
+            heatmapsByFloor.Clear();
             lastRenderedHazardRevision = -1;
             lastRenderedFireCount = -1;
+        }
+
+        private static void DestroyUnityObject(UnityEngine.Object target)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                Destroy(target);
+            }
+            else
+            {
+                DestroyImmediate(target);
+            }
         }
 
         private void EnsureFireRoot()
