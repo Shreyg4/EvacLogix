@@ -1092,8 +1092,12 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             var activeFloorId = workspaceService.ActiveFloorId;
-            var beforeProject = SandboxProjectSerializer.Clone(workspaceService.ActiveProject);
-            var afterProject = SandboxProjectSerializer.Clone(workspaceService.ActiveProject);
+            // Snapshot as serialized strings WITHOUT the blueprint image payloads (re-attached from the
+            // live project on restore). Semantic mutations can touch multiple floors (e.g. linking stair
+            // portals), so a whole-project snapshot is the safe scope — and stripping the base64 keeps each
+            // undo entry from carrying megabytes of image data.
+            var beforeJson = SandboxProjectSnapshot.CaptureWithoutPayloads(workspaceService.ActiveProject);
+            var afterProject = SandboxProjectSerializer.Deserialize(beforeJson);
             var beforeSelection = selectionService != null
                 ? new List<string>(selectionService.SelectedObjectIds)
                 : new List<string>();
@@ -1104,15 +1108,16 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             SandboxProjectDataUtility.EnsureIds(afterProject);
+            var afterJson = SandboxProjectSnapshot.CaptureWithoutPayloads(afterProject);
 
             void ApplyAfter()
             {
-                ApplyProjectState(SandboxProjectSerializer.Clone(afterProject), activeFloorId, nextSelection);
+                ApplyProjectState(SandboxProjectSnapshot.RestoreWithPayloads(afterJson, workspaceService.ActiveProject), activeFloorId, nextSelection);
             }
 
             void ApplyBefore()
             {
-                ApplyProjectState(SandboxProjectSerializer.Clone(beforeProject), activeFloorId, beforeSelection);
+                ApplyProjectState(SandboxProjectSnapshot.RestoreWithPayloads(beforeJson, workspaceService.ActiveProject), activeFloorId, beforeSelection);
             }
 
             if (commandHistory == null)
@@ -1121,7 +1126,11 @@ namespace EvacLogix.Sandbox.Authoring
                 return true;
             }
 
-            commandHistory.Execute(new DelegateSandboxEditorCommand(description, ApplyAfter, ApplyBefore));
+            commandHistory.Execute(new DelegateSandboxEditorCommand(
+                description,
+                ApplyAfter,
+                ApplyBefore,
+                (long)(beforeJson.Length + afterJson.Length) * sizeof(char)));
             return true;
         }
 

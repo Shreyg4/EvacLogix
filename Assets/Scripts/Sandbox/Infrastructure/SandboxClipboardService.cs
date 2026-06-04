@@ -337,8 +337,11 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             var activeFloorId = workspaceService.ActiveFloorId;
-            var beforeProject = SandboxProjectSerializer.Clone(workspaceService.ActiveProject);
-            var afterProject = SandboxProjectSerializer.Clone(workspaceService.ActiveProject);
+            // Snapshot as serialized strings WITHOUT the blueprint image payloads (re-attached from the
+            // live project on restore). Paste/cut can span entity types and floors, so a whole-project
+            // snapshot is the safe scope; stripping the base64 keeps each undo entry compact.
+            var beforeJson = SandboxProjectSnapshot.CaptureWithoutPayloads(workspaceService.ActiveProject);
+            var afterProject = SandboxProjectSerializer.Deserialize(beforeJson);
             var beforeSelection = selectionService != null
                 ? new List<string>(selectionService.SelectedObjectIds)
                 : new List<string>();
@@ -350,6 +353,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             SandboxProjectDataUtility.EnsureIds(afterProject);
+            var afterJson = SandboxProjectSnapshot.CaptureWithoutPayloads(afterProject);
 
             void ApplyProject(BuildingProjectData project, IReadOnlyList<string> selection)
             {
@@ -368,8 +372,8 @@ namespace EvacLogix.Sandbox.Infrastructure
                 validationService?.ValidateActiveProject();
             }
 
-            void ApplyAfter() => ApplyProject(SandboxProjectSerializer.Clone(afterProject), nextSelection);
-            void ApplyBefore() => ApplyProject(SandboxProjectSerializer.Clone(beforeProject), beforeSelection);
+            void ApplyAfter() => ApplyProject(SandboxProjectSnapshot.RestoreWithPayloads(afterJson, workspaceService.ActiveProject), nextSelection);
+            void ApplyBefore() => ApplyProject(SandboxProjectSnapshot.RestoreWithPayloads(beforeJson, workspaceService.ActiveProject), beforeSelection);
 
             if (commandHistory == null)
             {
@@ -377,7 +381,11 @@ namespace EvacLogix.Sandbox.Infrastructure
                 return true;
             }
 
-            commandHistory.Execute(new DelegateSandboxEditorCommand(description, ApplyAfter, ApplyBefore));
+            commandHistory.Execute(new DelegateSandboxEditorCommand(
+                description,
+                ApplyAfter,
+                ApplyBefore,
+                (long)(beforeJson.Length + afterJson.Length) * sizeof(char)));
             return true;
         }
 

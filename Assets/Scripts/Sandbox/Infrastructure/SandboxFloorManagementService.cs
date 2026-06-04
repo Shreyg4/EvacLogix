@@ -270,14 +270,19 @@ namespace EvacLogix.Sandbox.Infrastructure
                 return;
             }
 
-            var beforeProject = SandboxProjectSerializer.Clone(workspaceService.ActiveProject);
-            var afterProject = SandboxProjectSerializer.Clone(project);
+            // Payload-stripped string snapshots (re-attach live blueprint payloads on restore) instead of
+            // whole-project object-graph clones: a floor delete with a large blueprint was otherwise the
+            // single heaviest undo entry (full graph + image). Floor ops are rare but coarse, so this keeps
+            // them off the WebGL heap.
+            var beforeJson = SandboxProjectSnapshot.CaptureWithoutPayloads(workspaceService.ActiveProject);
+            var afterJson = SandboxProjectSnapshot.CaptureWithoutPayloads(project);
             var beforeActiveFloorId = workspaceService.ActiveFloorId;
 
             commandHistory.Execute(new DelegateSandboxEditorCommand(
                 commandDescription,
-                () => Apply(SandboxProjectSerializer.Clone(afterProject), activeFloorId),
-                () => Apply(SandboxProjectSerializer.Clone(beforeProject), beforeActiveFloorId)));
+                () => Apply(SandboxProjectSnapshot.RestoreWithPayloads(afterJson, workspaceService.ActiveProject), activeFloorId),
+                () => Apply(SandboxProjectSnapshot.RestoreWithPayloads(beforeJson, workspaceService.ActiveProject), beforeActiveFloorId),
+                (long)(beforeJson.Length + afterJson.Length) * sizeof(char)));
         }
 
         private void ClearPendingDeleteConfirmation()

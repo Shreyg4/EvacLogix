@@ -6,10 +6,12 @@ namespace EvacLogix.Sandbox.Authoring.Commands
 {
     public sealed class SandboxCommandHistory : MonoBehaviour
     {
-        // Each command captures full before/after project snapshots (deep clones). An unbounded history
-        // therefore grows the heap with every edit, which OOMs the capped WebGL heap on dense drawings.
-        // Cap the depth so the oldest edits are discarded (no longer undoable) instead of leaking memory.
+        // Each command captures before/after project snapshots. An unbounded history therefore grows the
+        // heap with every edit, which OOMs the capped WebGL heap. We bound BOTH the entry count and the
+        // total retained snapshot bytes: small projects keep a deep history, while a massive project
+        // (large snapshots) automatically keeps fewer entries so memory stays within budget.
         private const int MaxUndoDepth = 50;
+        private const long MaxUndoMemoryBytes = 96L * 1024L * 1024L; // ~96 MB of retained snapshots
 
         // Undo is a list used as a stack (top = last element) so the oldest entries can be trimmed
         // from the bottom once the depth cap is exceeded.
@@ -75,14 +77,33 @@ namespace EvacLogix.Sandbox.Authoring.Commands
             redoStack.Clear();
         }
 
-        // Drops the oldest commands (and the large project snapshots they retain) once the depth cap is
-        // exceeded, bounding total memory regardless of how many edits the user makes.
+        // Drops the oldest commands (and the project snapshots they retain) once either the depth cap or
+        // the retained-bytes budget is exceeded, bounding total memory regardless of edit count or
+        // project size. Always keeps at least one entry so even a single large edit stays undoable.
         private void TrimUndoHistory()
         {
             while (undoStack.Count > MaxUndoDepth)
             {
                 undoStack.RemoveAt(0);
             }
+
+            var bytes = CurrentUndoBytes();
+            while (undoStack.Count > 1 && bytes > MaxUndoMemoryBytes)
+            {
+                bytes -= undoStack[0].EstimatedMemoryBytes;
+                undoStack.RemoveAt(0);
+            }
+        }
+
+        private long CurrentUndoBytes()
+        {
+            long total = 0;
+            for (var i = 0; i < undoStack.Count; i += 1)
+            {
+                total += undoStack[i].EstimatedMemoryBytes;
+            }
+
+            return total;
         }
     }
 }
