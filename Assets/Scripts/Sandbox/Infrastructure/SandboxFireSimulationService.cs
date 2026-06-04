@@ -41,6 +41,9 @@ namespace EvacLogix.Sandbox.Infrastructure
         // with the size of the fire, the root of the "lags worse as fire spreads" problem).
         private readonly Dictionary<string, Dictionary<long, SandboxFireCellData>> cellsByFloorIndex = new(StringComparer.Ordinal);
         private readonly Dictionary<string, FloorHazardData> floorDataById = new(StringComparer.Ordinal);
+        // Per-floor spatial index of walls so the fire's cell-to-cell blocked-by-wall test only checks
+        // walls near the transfer segment instead of every wall on the floor.
+        private readonly Dictionary<string, WallSpatialIndex> wallIndexByFloor = new(StringComparer.Ordinal);
         private readonly Dictionary<string, List<PropagationChannel>> channelsBySourceFloor = new(StringComparer.Ordinal);
         private readonly List<FireSeed> pendingSeeds = new();
         private readonly List<FireSeed> persistentSeeds = new();
@@ -129,6 +132,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             activeCellsByFloor.Clear();
             cellsByFloorIndex.Clear();
             floorDataById.Clear();
+            wallIndexByFloor.Clear();
             channelsBySourceFloor.Clear();
             pendingSeeds.Clear();
             persistentSeeds.Clear();
@@ -557,26 +561,17 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         private bool IsBlockedBySolidWall(string floorId, Vector2 start, Vector2 end, BuildingProjectData project)
         {
-            if (!floorDataById.TryGetValue(floorId, out var floorData))
-            {
-                return false;
-            }
-
-            for (var i = 0; i < floorData.walls.Count; i += 1)
-            {
-                var wall = floorData.walls[i];
-                if (SegmentsIntersect(start, end, wall.startPoint, wall.endPoint))
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            // Per cell-to-cell spread test this previously scanned EVERY wall on the floor, so a step cost
+            // O(active cells x 8 x walls) — with a big fire on a large blueprint that's tens of millions of
+            // segment tests every 0.35s, the dominant lag spike. The spatial index narrows it to the few
+            // walls near the (one-cell-long) transfer segment.
+            return wallIndexByFloor.TryGetValue(floorId, out var index) && index.Blocks(start, end);
         }
 
         private void BuildCaches(BuildingProjectData project)
         {
             floorDataById.Clear();
+            wallIndexByFloor.Clear();
             channelsBySourceFloor.Clear();
             if (project?.floors == null)
             {
@@ -589,6 +584,14 @@ namespace EvacLogix.Sandbox.Infrastructure
             {
                 var floor = orderedFloors[i];
                 floorDataById[floor.floorId] = new FloorHazardData(floor.floorId, floor.order, CalculateStructuralBounds(floor), CalculateHazardEnvelope(floor), floor.wallSegments.ToList());
+
+                var index = new WallSpatialIndex();
+                for (var w = 0; w < floor.wallSegments.Count; w += 1)
+                {
+                    index.Add(floor.wallSegments[w]);
+                }
+
+                wallIndexByFloor[floor.floorId] = index;
             }
 
             // Cross-floor spread travels ONLY through connector channels (stairs/teleports). Fire spreads
@@ -889,6 +892,71 @@ namespace EvacLogix.Sandbox.Infrastructure
             if (colliderRebuildService != null)
             {
                 colliderRebuildService.CollidersRebuilt -= HandleCollidersRebuilt;
+            }
+        }
+
+        // Buckets walls into a coarse grid so the fire's per-cell "is this short hop blocked by a wall"
+        // test only checks walls near that hop, not every wall on the floor. A wall is added to every
+        // bucket its bounding box touches; queries scan the buckets the transfer segment overlaps.
+        private sealed class WallSpatialIndex
+        {
+            private const float BucketSize = 3f;
+            private readonly Dictionary<long, List<WallSegmentData>> buckets = new();
+
+            public void Add(WallSegmentData wall)
+            {
+                if (wall == null)
+                {
+                    return;
+                }
+
+                var minX = Mathf.FloorToInt(Mathf.Min(wall.startPoint.x, wall.endPoint.x) / BucketSize);
+                var maxX = Mathf.FloorToInt(Mathf.Max(wall.startPoint.x, wall.endPoint.x) / BucketSize);
+                var minY = Mathf.FloorToInt(Mathf.Min(wall.startPoint.y, wall.endPoint.y) / BucketSize);
+                var maxY = Mathf.FloorToInt(Mathf.Max(wall.startPoint.y, wall.endPoint.y) / BucketSize);
+                for (var x = minX; x <= maxX; x += 1)
+                {
+                    for (var y = minY; y <= maxY; y += 1)
+                    {
+                        var key = ((long)x << 32) | (uint)y;
+                        if (!buckets.TryGetValue(key, out var list))
+                        {
+                            list = new List<WallSegmentData>();
+                            buckets[key] = list;
+                        }
+
+                        list.Add(wall);
+                    }
+                }
+            }
+
+            public bool Blocks(Vector2 start, Vector2 end)
+            {
+                var minX = Mathf.FloorToInt(Mathf.Min(start.x, end.x) / BucketSize);
+                var maxX = Mathf.FloorToInt(Mathf.Max(start.x, end.x) / BucketSize);
+                var minY = Mathf.FloorToInt(Mathf.Min(start.y, end.y) / BucketSize);
+                var maxY = Mathf.FloorToInt(Mathf.Max(start.y, end.y) / BucketSize);
+                for (var x = minX; x <= maxX; x += 1)
+                {
+                    for (var y = minY; y <= maxY; y += 1)
+                    {
+                        if (!buckets.TryGetValue(((long)x << 32) | (uint)y, out var list))
+                        {
+                            continue;
+                        }
+
+                        for (var i = 0; i < list.Count; i += 1)
+                        {
+                            var wall = list[i];
+                            if (SegmentsIntersect(start, end, wall.startPoint, wall.endPoint))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                return false;
             }
         }
 

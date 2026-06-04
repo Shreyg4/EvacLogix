@@ -895,13 +895,10 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 return;
             }
 
-            if (!TryResolveEscapeWindowLanding(agent, node, out var landingFloorId, out var landingWorldPosition))
-            {
-                MarkWindowFailedForAgent(agent, node.nodeId);
-                RouteAgent(agent);
-                return;
-            }
-
+            // Commit to the jump the moment the agent reaches the window — it has left the burning floor.
+            // The landing (drop to the ground floor, or failing that a direct evacuation) is finalized
+            // after the brief fall delay, so a window can never bounce the agent back onto its floor to
+            // wander around (the bug where floor-3 jumpers stayed milling about on floor 3).
             if (!windowExitDelayByAgent.ContainsKey(agent.AgentId))
             {
                 windowExitDelayByAgent[agent.AgentId] = WindowExitDelaySeconds;
@@ -944,22 +941,26 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
 
             agentsThatUsedEscapeWindow.Add(agent.AgentId);
             MarkWindowFailedForAgent(agent, node.nodeId);
-            if (!TryResolveEscapeWindowLanding(agent, node, out var landingFloorId, out var landingWorldPosition))
-            {
-                RouteAgent(agent);
-                return;
-            }
 
-            agent.Relocate(landingFloorId, landingWorldPosition);
+            // The fall injury applies regardless of where they land (floors 2+ carry the cascading cost).
             agent.ApplyInjury(node.windowInjury);
             if (agent.Health <= 0f)
             {
                 ResolveCasualty(agent);
+                return;
             }
-            else
+
+            if (TryResolveEscapeWindowLanding(agent, node, out var landingFloorId, out var landingWorldPosition))
             {
+                // Survived the fall: drop onto the ground floor and keep evacuating from there.
+                agent.Relocate(landingFloorId, landingWorldPosition);
                 RouteAgent(agent);
+                return;
             }
+
+            // No reachable ground-floor spot could be resolved, but the agent jumped clear of the building
+            // — count it as an evacuation rather than stranding it on the burning floor.
+            ResolveEvacuated(agent, node.objectId);
         }
 
         private float ComputeFireExposure(SandboxEvacueeAgent agent)
@@ -1484,29 +1485,47 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
             }
 
             var landingClearance = Mathf.Max(agent.Radius + EscapeWindowExteriorClearanceBuffer, 0.5f);
-            var landingLocalPoint = node.localPosition + (node.escapeOutwardNormal * landingClearance);
+            // Project the window's plan position outward, then clamp it into the landing floor's footprint
+            // so the nav search starts on the ground floor even when the upper floor doesn't line up with
+            // floor 1's extents. The old code required the sampled point to be inside WorldBounds, which
+            // frequently failed for upper-floor windows and left the agent stranded on the burning floor.
+            var landingLocalPoint = ClampIntoRect(landingPlacement.LocalBounds, node.localPosition + (node.escapeOutwardNormal * landingClearance));
             var projectedWorld = landingPlacement.ToWorld(landingLocalPoint);
-            if (!TrySampleNavWorldPosition(projectedWorld, agent.Radius, out var sampledWorldPosition))
+            var searchRadius = Mathf.Clamp(Mathf.Max(landingPlacement.WorldBounds.width, landingPlacement.WorldBounds.height) * 0.5f, 4f, 25f);
+
+            if (TrySampleNavWorldPositionWithin(projectedWorld, searchRadius, out var sampledWorldPosition))
             {
-                return false;
+                landingFloorId = node.landingFloorId;
+                landingWorldPosition = sampledWorldPosition;
+                return true;
             }
 
-            if (!landingPlacement.WorldBounds.Contains(sampledWorldPosition))
+            // Fallback: nearest navmesh point to the landing floor's centre.
+            if (TrySampleNavWorldPositionWithin(landingPlacement.ToWorld(landingPlacement.LocalBounds.center), searchRadius, out sampledWorldPosition))
             {
-                return false;
+                landingFloorId = node.landingFloorId;
+                landingWorldPosition = sampledWorldPosition;
+                return true;
             }
 
-            landingFloorId = node.landingFloorId;
-            landingWorldPosition = sampledWorldPosition;
-            return true;
+            return false;
+        }
+
+        private static Vector2 ClampIntoRect(Rect rect, Vector2 point)
+        {
+            return new Vector2(Mathf.Clamp(point.x, rect.xMin, rect.xMax), Mathf.Clamp(point.y, rect.yMin, rect.yMax));
         }
 
         private static bool TrySampleNavWorldPosition(Vector2 worldPosition, float agentRadius, out Vector2 sampledWorldPosition)
         {
+            return TrySampleNavWorldPositionWithin(worldPosition, Mathf.Max(agentRadius + 2f, 2.5f), out sampledWorldPosition);
+        }
+
+        private static bool TrySampleNavWorldPositionWithin(Vector2 worldPosition, float searchRadius, out Vector2 sampledWorldPosition)
+        {
             sampledWorldPosition = worldPosition;
             var navPosition = new Vector3(worldPosition.x, 0f, worldPosition.y);
-            var searchRadius = Mathf.Max(agentRadius + 2f, 2.5f);
-            if (!UnityEngine.AI.NavMesh.SamplePosition(navPosition, out var hit, searchRadius, UnityEngine.AI.NavMesh.AllAreas))
+            if (!UnityEngine.AI.NavMesh.SamplePosition(navPosition, out var hit, Mathf.Max(0.5f, searchRadius), UnityEngine.AI.NavMesh.AllAreas))
             {
                 return false;
             }

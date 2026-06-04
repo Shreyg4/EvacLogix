@@ -3,6 +3,27 @@
   command = "npm run build"
   publish = "dist"
 
+# Pin the wasm MIME type so the browser can stream-compile it (the loader warns and falls back to a
+# slower path if this is wrong).
+[[headers]]
+  for = "/unity-build/evac-logix/EvacLogixBuild.wasm"
+  [headers.values]
+    Content-Type = "application/wasm"
+
+# Heavy Unity build files (wasm/data/framework/loader). Filenames are stable across rebakes, so we use
+# revalidation rather than `immutable`: browsers get a cheap 304 when unchanged (and the wasm/data are
+# served from Unity's IndexedDB cache), but a new build still propagates instead of serving stale assets.
+[[headers]]
+  for = "/unity-build/evac-logix/*"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# Build config points at those binaries; keep it short-lived so config changes propagate quickly.
+[[headers]]
+  for = "/unity-build/*/unity-build-config.json"
+  [headers.values]
+    Cache-Control = "public, max-age=60"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
