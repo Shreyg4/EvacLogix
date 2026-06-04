@@ -81,7 +81,7 @@ export async function createUnityInstanceBridge(
   // productVersion bump to avoid serving stale binaries). A JSON-provided value still wins via the spread.
   const mergedConfig: UnityBuildConfig = {
     cacheControl: () => "must-revalidate",
-    ...config,
+    ...config
   }
 
   return unityWindow.createUnityInstance(canvas, mergedConfig)

@@ -1,9 +1,4 @@
-import type {
-  AudienceItem,
-  GuideStep,
-  HeroContent,
-  StatementContent
-} from "../types/content"
+import type { AudienceItem, GuideStep, HeroContent, StatementContent } from "../types/content"
 import { appRoutes } from "../utils/routes"
 
 export const userGuidePageContent: HeroContent = {
@@ -33,8 +28,7 @@ export const userGuideAudiences: AudienceItem[] = [
   {
     id: "rso",
     audience: "Event & RSO organizers",
-    useCase:
-      "Sketch a room or venue and sanity-check exit flow before hosting a large gathering."
+    useCase: "Sketch a room or venue and sanity-check exit flow before hosting a large gathering."
   },
   {
     id: "facilities",
