@@ -14,7 +14,6 @@ namespace EvacLogix.Sandbox.Infrastructure
         [SerializeField] private float diagonalPropagationMultiplier = 0.45f;
         [SerializeField] private float hazardRetention = 0.86f;
         [SerializeField] private float persistentSourceInjection = 0.62f;
-        [SerializeField] private float verticalLeakageRate = 0.08f;
         [SerializeField] private float normalDoorTransmission = 0.48f;
         [SerializeField] private float closedDoorTransmission = 0.18f;
         [SerializeField] private float blockedDoorTransmission = 0.08f;
@@ -36,11 +35,17 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         private readonly Dictionary<string, SandboxFireCellData> activeCellsById = new(StringComparer.Ordinal);
         private readonly Dictionary<string, List<SandboxFireCellData>> activeCellsByFloor = new(StringComparer.Ordinal);
+        // Per-floor spatial index: packed (ix,iy) cell coordinate -> cell. Lets SampleHazard look up only
+        // the handful of cells inside the query radius by grid coordinate instead of scanning every fire
+        // cell on the floor (which made hazard sampling — called many times per agent per frame — scale
+        // with the size of the fire, the root of the "lags worse as fire spreads" problem).
+        private readonly Dictionary<string, Dictionary<long, SandboxFireCellData>> cellsByFloorIndex = new(StringComparer.Ordinal);
         private readonly Dictionary<string, FloorHazardData> floorDataById = new(StringComparer.Ordinal);
         private readonly Dictionary<string, List<PropagationChannel>> channelsBySourceFloor = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, List<VerticalLeakageLink>> leakageBySourceFloor = new(StringComparer.Ordinal);
         private readonly List<FireSeed> pendingSeeds = new();
         private readonly List<FireSeed> persistentSeeds = new();
+        // Reused each fire step instead of allocating a fresh dictionary (cuts GC on large multi-floor fires).
+        private readonly Dictionary<string, WorkingCell> stepWorkingCells = new(StringComparer.Ordinal);
 
         private SandboxProjectWorkspaceService workspaceService;
         private SandboxPreviewService previewService;
@@ -122,9 +127,9 @@ namespace EvacLogix.Sandbox.Infrastructure
             activeFireCells.Clear();
             activeCellsById.Clear();
             activeCellsByFloor.Clear();
+            cellsByFloorIndex.Clear();
             floorDataById.Clear();
             channelsBySourceFloor.Clear();
-            leakageBySourceFloor.Clear();
             pendingSeeds.Clear();
             persistentSeeds.Clear();
             FireStateChanged?.Invoke(activeFireCells);
@@ -156,6 +161,7 @@ namespace EvacLogix.Sandbox.Infrastructure
             activeFireCells.Clear();
             activeCellsById.Clear();
             activeCellsByFloor.Clear();
+            cellsByFloorIndex.Clear();
             pendingSeeds.Clear();
             persistentSeeds.Clear();
             simulationClock = 0f;
@@ -219,23 +225,39 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         public float SampleHazard(string floorId, Vector2 localPosition, float radius = 0f)
         {
-            if (string.IsNullOrWhiteSpace(floorId) || !activeCellsByFloor.TryGetValue(floorId, out var floorCells) || floorCells.Count == 0)
+            if (string.IsNullOrWhiteSpace(floorId) ||
+                !cellsByFloorIndex.TryGetValue(floorId, out var indexed) ||
+                indexed.Count == 0)
             {
                 return 0f;
             }
 
             var sampleRadius = Mathf.Max(radius, cellSize * 0.75f);
+            var safeCellSize = Mathf.Max(0.01f, cellSize);
+            // Only the cells whose grid coordinate falls within the radius window can contribute, so we
+            // probe that small (ix,iy) box directly instead of scanning the whole floor's fire field.
+            var centerX = Mathf.RoundToInt(localPosition.x / safeCellSize);
+            var centerY = Mathf.RoundToInt(localPosition.y / safeCellSize);
+            var cellRange = Mathf.CeilToInt(sampleRadius / safeCellSize);
             var peak = 0f;
-            for (var i = 0; i < floorCells.Count; i += 1)
+            for (var ix = centerX - cellRange; ix <= centerX + cellRange; ix += 1)
             {
-                var distance = Vector2.Distance(localPosition, floorCells[i].position);
-                if (distance > sampleRadius)
+                for (var iy = centerY - cellRange; iy <= centerY + cellRange; iy += 1)
                 {
-                    continue;
-                }
+                    if (!indexed.TryGetValue(PackCellIndex(ix, iy), out var cell))
+                    {
+                        continue;
+                    }
 
-                var falloff = 1f - (distance / sampleRadius);
-                peak = Mathf.Max(peak, Mathf.Clamp01(floorCells[i].intensity) * falloff);
+                    var distance = Vector2.Distance(localPosition, cell.position);
+                    if (distance > sampleRadius)
+                    {
+                        continue;
+                    }
+
+                    var falloff = 1f - (distance / sampleRadius);
+                    peak = Mathf.Max(peak, Mathf.Clamp01(cell.intensity) * falloff);
+                }
             }
 
             return Mathf.Clamp01(peak);
@@ -290,7 +312,8 @@ namespace EvacLogix.Sandbox.Infrastructure
 
         private void StepSimulation(BuildingProjectData project)
         {
-            var next = new Dictionary<string, WorkingCell>(StringComparer.Ordinal);
+            var next = stepWorkingCells;
+            next.Clear();
             foreach (var activeCell in activeCellsById.Values)
             {
                 var retained = Mathf.Clamp01(activeCell.intensity) * Mathf.Clamp01(hazardRetention);
@@ -318,7 +341,6 @@ namespace EvacLogix.Sandbox.Infrastructure
             }
 
             ApplyPropagationChannels(next);
-            ApplyVerticalLeakage(next);
             ApplyPersistentSources(next);
             ReplaceActiveField(next);
             hazardRevision += 1;
@@ -350,39 +372,6 @@ namespace EvacLogix.Sandbox.Infrastructure
                     }
 
                     AccumulateCell(next, channel.targetFloorId, channel.targetLocalPosition, transfer, channel.sourceObjectId, 1f, 0f);
-                }
-            }
-        }
-
-        private void ApplyVerticalLeakage(Dictionary<string, WorkingCell> next)
-        {
-            foreach (var pair in leakageBySourceFloor)
-            {
-                if (!activeCellsByFloor.TryGetValue(pair.Key, out var floorCells) || floorCells.Count == 0)
-                {
-                    continue;
-                }
-
-                var links = pair.Value;
-                for (var i = 0; i < floorCells.Count; i += 1)
-                {
-                    var cell = floorCells[i];
-                    for (var linkIndex = 0; linkIndex < links.Count; linkIndex += 1)
-                    {
-                        var link = links[linkIndex];
-                        if (!link.overlap.Contains(cell.position))
-                        {
-                            continue;
-                        }
-
-                        var transfer = Mathf.Clamp01(cell.intensity) * Mathf.Clamp01(link.transmission);
-                        if (transfer < minimumTrackedHazard * 0.5f)
-                        {
-                            continue;
-                        }
-
-                        AccumulateCell(next, link.targetFloorId, cell.position, transfer, cell.sourceFireOriginId, cell.sourceSpreadIntensity, 0f);
-                    }
                 }
             }
         }
@@ -480,18 +469,38 @@ namespace EvacLogix.Sandbox.Infrastructure
         {
             activeFireCells.Clear();
             activeCellsByFloor.Clear();
+            foreach (var indexed in cellsByFloorIndex.Values)
+            {
+                indexed.Clear();
+            }
+
             foreach (var pair in activeCellsById)
             {
-                activeFireCells.Add(pair.Value);
-                if (!activeCellsByFloor.TryGetValue(pair.Value.floorId, out var floorCells))
+                var cell = pair.Value;
+                activeFireCells.Add(cell);
+                if (!activeCellsByFloor.TryGetValue(cell.floorId, out var floorCells))
                 {
                     floorCells = new List<SandboxFireCellData>();
-                    activeCellsByFloor[pair.Value.floorId] = floorCells;
+                    activeCellsByFloor[cell.floorId] = floorCells;
                 }
 
-                floorCells.Add(pair.Value);
+                floorCells.Add(cell);
+
+                if (!cellsByFloorIndex.TryGetValue(cell.floorId, out var indexed))
+                {
+                    indexed = new Dictionary<long, SandboxFireCellData>();
+                    cellsByFloorIndex[cell.floorId] = indexed;
+                }
+
+                indexed[PackCellIndex(CellIndexX(cell.position), CellIndexY(cell.position))] = cell;
             }
         }
+
+        private int CellIndexX(Vector2 position) => Mathf.RoundToInt(position.x / Mathf.Max(0.01f, cellSize));
+
+        private int CellIndexY(Vector2 position) => Mathf.RoundToInt(position.y / Mathf.Max(0.01f, cellSize));
+
+        private static long PackCellIndex(int ix, int iy) => ((long)ix << 32) | (uint)iy;
 
         private void AccumulateCell(Dictionary<string, WorkingCell> cells, string floorId, Vector2 rawPosition, float contribution, string sourceFireOriginId, float sourceSpreadIntensity, float ageSeconds)
         {
@@ -553,7 +562,6 @@ namespace EvacLogix.Sandbox.Infrastructure
         {
             floorDataById.Clear();
             channelsBySourceFloor.Clear();
-            leakageBySourceFloor.Clear();
             if (project?.floors == null)
             {
                 return;
@@ -567,29 +575,13 @@ namespace EvacLogix.Sandbox.Infrastructure
                 floorDataById[floor.floorId] = new FloorHazardData(floor.floorId, floor.order, CalculateStructuralBounds(floor), CalculateHazardEnvelope(floor), floor.wallSegments.ToList());
             }
 
+            // Cross-floor spread travels ONLY through connector channels (stairs/teleports). Fire spreads
+            // laterally within a floor and moves between floors at portal points — no ambient leakage
+            // through the slab, so a single origin no longer bleeds onto every stacked floor.
             for (var i = 0; i < orderedFloors.Count; i += 1)
             {
                 BuildOpeningChannels(project, orderedFloors[i]);
                 BuildConnectorChannels(project, orderedFloors[i]);
-            }
-
-            for (var i = 0; i < orderedFloors.Count - 1; i += 1)
-            {
-                var a = orderedFloors[i];
-                var b = orderedFloors[i + 1];
-                if (!floorDataById.TryGetValue(a.floorId, out var source) || !floorDataById.TryGetValue(b.floorId, out var target))
-                {
-                    continue;
-                }
-
-                var overlap = Intersect(source.structuralBounds, target.structuralBounds);
-                if (overlap.width <= 0.01f || overlap.height <= 0.01f)
-                {
-                    continue;
-                }
-
-                AddLeakageLink(a.floorId, b.floorId, overlap, verticalLeakageRate);
-                AddLeakageLink(b.floorId, a.floorId, overlap, verticalLeakageRate);
             }
         }
 
@@ -717,17 +709,6 @@ namespace EvacLogix.Sandbox.Infrastructure
             channels.Add(new PropagationChannel(sourceFloorId, sourceLocalPosition, targetFloorId, targetLocalPosition, Mathf.Clamp01(transmission), sourceObjectId));
         }
 
-        private void AddLeakageLink(string sourceFloorId, string targetFloorId, Rect overlap, float transmission)
-        {
-            if (!leakageBySourceFloor.TryGetValue(sourceFloorId, out var links))
-            {
-                links = new List<VerticalLeakageLink>();
-                leakageBySourceFloor[sourceFloorId] = links;
-            }
-
-            links.Add(new VerticalLeakageLink(sourceFloorId, targetFloorId, overlap, Mathf.Clamp01(transmission)));
-        }
-
         private Rect CalculateHazardEnvelope(FloorData floor)
         {
             var structural = CalculateStructuralBounds(floor);
@@ -824,17 +805,6 @@ namespace EvacLogix.Sandbox.Infrastructure
         private string BuildCellId(string floorId, Vector2 position)
         {
             return $"{floorId}:{Mathf.RoundToInt(position.x / Mathf.Max(0.01f, cellSize))}:{Mathf.RoundToInt(position.y / Mathf.Max(0.01f, cellSize))}";
-        }
-
-        private static Rect Intersect(Rect a, Rect b)
-        {
-            var xMin = Mathf.Max(a.xMin, b.xMin);
-            var yMin = Mathf.Max(a.yMin, b.yMin);
-            var xMax = Mathf.Min(a.xMax, b.xMax);
-            var yMax = Mathf.Min(a.yMax, b.yMax);
-            return xMax <= xMin || yMax <= yMin
-                ? new Rect(0f, 0f, 0f, 0f)
-                : Rect.MinMaxRect(xMin, yMin, xMax, yMax);
         }
 
         private static bool SegmentsIntersect(Vector2 a1, Vector2 a2, Vector2 b1, Vector2 b2)
@@ -977,22 +947,6 @@ namespace EvacLogix.Sandbox.Infrastructure
             public readonly Vector2 targetLocalPosition;
             public readonly float transmission;
             public readonly string sourceObjectId;
-        }
-
-        private readonly struct VerticalLeakageLink
-        {
-            public VerticalLeakageLink(string sourceFloorId, string targetFloorId, Rect overlap, float transmission)
-            {
-                this.sourceFloorId = sourceFloorId;
-                this.targetFloorId = targetFloorId;
-                this.overlap = overlap;
-                this.transmission = transmission;
-            }
-
-            public readonly string sourceFloorId;
-            public readonly string targetFloorId;
-            public readonly Rect overlap;
-            public readonly float transmission;
         }
 
         private struct WorkingCell

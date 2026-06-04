@@ -1330,13 +1330,9 @@ namespace EvacLogix.Sandbox.Rendering
                 return ResolveBaseColor(SandboxVisualObjectType.Teleport);
             }
 
-            if (semanticObjectAuthoringService != null &&
-                semanticObjectAuthoringService.TryGetTeleportPairColor(teleportPortal.pairColorIndex, out var color))
-            {
-                return color;
-            }
-
-            return ResolveBaseColor(SandboxVisualObjectType.Teleport);
+            // Color is derived from the pair's identity (shared by both endpoints, effectively unique per
+            // pair) rather than a cycling palette index, so colors no longer repeat after a handful of pairs.
+            return SandboxTeleportPairColor.Resolve(teleportPortal.teleportPortalId, teleportPortal.targetTeleportPortalId);
         }
 
         private bool IsTeleportBroken(TeleportPortalData teleportPortal)
