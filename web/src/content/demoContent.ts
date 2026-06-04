@@ -3,20 +3,21 @@ import { getDefaultUnityAppProfile } from "./unityAppProfiles"
 
 export const demoPageContent: HeroContent = {
   eyebrow: "Demo",
-  title: "View the EvacLogix simulation inside the presentation site.",
-  body: "This page is designed to host the embedded Unity experience directly. The site frames the simulation, but interaction stays inside the game itself."
+  title: "Run the EvacLogix building and evacuation simulation.",
+  body: "Launch the embedded tool below to model a building and simulate an evacuation directly in your browser. The site frames the experience, but all editing and simulation controls live inside the embedded app."
 }
 
 export const demoGuidanceContent: StatementContent = {
   eyebrow: "Notes",
   title: "Demo Route Guidance",
-  body: "The website provides context, expectations, and fallback behavior. The simulation itself remains one embedded game, and all operational controls stay inside Unity."
+  body: "The website provides context, launch controls, and fallback behavior if the build cannot load. The full editor and simulation run inside the embedded experience. For a step-by-step walkthrough, see the User Guide."
 }
 
 export const demoInstructions: string[] = [
   "Press play to attempt launching the embedded simulation.",
-  "Use the controls provided inside Unity once the build is connected.",
-  "Focus on how evacuation movement, congestion, and exits are presented."
+  "Click inside the frame so it receives your mouse and keyboard.",
+  "Build a layout (or import a blueprint), then switch to simulation mode to run the evacuation.",
+  "New here? See the User Guide for a step-by-step walkthrough."
 ]
 
 export const defaultDemoProfile = getDefaultUnityAppProfile()

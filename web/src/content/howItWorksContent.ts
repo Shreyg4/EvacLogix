@@ -10,17 +10,22 @@ export const howItWorksPanels: ExplanatoryPanel[] = [
   {
     id: "building-modeling",
     title: "Building Modeling",
-    body: "The simulation treats a building as a navigable environment with rooms, exits, barriers, and movement constraints so viewers can reason about how space affects evacuation."
+    body: "You build the space yourself: draw walls and place doors, stairs, and exits across multiple floors, or import a blueprint image and calibrate it so the model matches real-world dimensions. The tool detects rooms and treats the result as a navigable environment."
   },
   {
     id: "evacuation-behavior",
     title: "Evacuation Behavior",
-    body: "Instead of focusing on one person at a time, EvacLogix is meant to show how groups move, slow down, and respond differently when many people are trying to leave at once."
+    body: "When you run a simulation, a crowd of evacuee agents pathfinds toward the nearest exits over a navigation mesh built from your layout. Rather than one person at a time, you see how groups move, queue at doors, and slow down when many people leave at once."
   },
   {
     id: "hazard-context",
     title: "Hazard and Congestion Context",
-    body: "The project frames evacuation in the presence of changing conditions such as crowding and fire spread, helping viewers see how safe routes can become more complex under pressure."
+    body: "An optional fire spreads cell by cell through the building during a run. Watching crowding and fire evolve together makes it clear how safe routes can become blocked or congested under pressure."
+  },
+  {
+    id: "iterate",
+    title: "Validate and Iterate",
+    body: "Built-in validation flags gaps, unreachable areas, and missing exits before you simulate. You can save and reload projects, adjust the layout, and re-run to compare how design changes affect the evacuation."
   }
 ]
 

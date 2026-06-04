@@ -19,7 +19,7 @@ describe("content shape", () => {
   it("defines the shared mission statement and brand consistently", () => {
     expect(siteContent.brandName).toBe("EvacLogix")
     expect(siteContent.mission.short.length).toBeGreaterThan(0)
-    expect(siteContent.navigation).toHaveLength(3)
+    expect(siteContent.navigation).toHaveLength(5)
   })
 
   it("provides route-level content objects", () => {
@@ -36,7 +36,9 @@ describe("content shape", () => {
     expect(siteContent.navigation).toEqual([
       { label: "Home", to: appRoutes.home, end: true },
       { label: "Demo", to: appRoutes.demo },
-      { label: "How It Works", to: appRoutes.howItWorks }
+      { label: "How It Works", to: appRoutes.howItWorks },
+      { label: "Architecture", to: appRoutes.architecture },
+      { label: "User Guide", to: appRoutes.userGuide }
     ])
   })
 

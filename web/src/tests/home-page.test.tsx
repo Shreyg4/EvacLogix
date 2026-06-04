@@ -6,7 +6,6 @@ import {
   homeSolutionStatement
 } from "../content/homeContent"
 import { siteContent } from "../content/siteContent"
-import { teamSectionContent } from "../content/teamContent"
 import { renderAppAt } from "./testUtils"
 
 describe("home page", () => {
@@ -16,7 +15,6 @@ describe("home page", () => {
     expect(await screen.findByRole("link", { name: "Launch Demo" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Learn How It Works" })).toBeInTheDocument()
     expect(screen.getByRole("heading", { name: "What EvacLogix Emphasizes" })).toBeInTheDocument()
-    expect(screen.getByRole("heading", { name: teamSectionContent.title })).toBeInTheDocument()
   })
 
   it("renders all configured highlights", async () => {

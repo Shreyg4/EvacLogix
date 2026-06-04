@@ -6,6 +6,7 @@ import { installUnityBrowserBridge } from "../services/unityBrowserBridge"
 import "../styles/tokens.css"
 import "../styles/globals.css"
 import "../styles/utilities.css"
+import "../styles/docs.css"
 
 installUnityBrowserBridge(window)
 

@@ -4,6 +4,8 @@ import { appRoutes } from "../utils/routes"
 import { DemoPage } from "../pages/DemoPage"
 import { HomePage } from "../pages/HomePage"
 import { HowItWorksPage } from "../pages/HowItWorksPage"
+import { TechnicalDocsPage } from "../pages/TechnicalDocsPage"
+import { UserGuidePage } from "../pages/UserGuidePage"
 import { NotFoundPage } from "../pages/NotFoundPage"
 
 export const router = createBrowserRouter([
@@ -22,6 +24,14 @@ export const router = createBrowserRouter([
       {
         path: appRoutes.howItWorks.slice(1),
         element: <HowItWorksPage />
+      },
+      {
+        path: appRoutes.architecture.slice(1),
+        element: <TechnicalDocsPage />
+      },
+      {
+        path: appRoutes.userGuide.slice(1),
+        element: <UserGuidePage />
       },
       {
         path: "*",

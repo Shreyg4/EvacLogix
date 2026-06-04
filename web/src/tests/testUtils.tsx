@@ -5,6 +5,8 @@ import { App } from "../app/App"
 import { DemoPage } from "../pages/DemoPage"
 import { HomePage } from "../pages/HomePage"
 import { HowItWorksPage } from "../pages/HowItWorksPage"
+import { TechnicalDocsPage } from "../pages/TechnicalDocsPage"
+import { UserGuidePage } from "../pages/UserGuidePage"
 import { NotFoundPage } from "../pages/NotFoundPage"
 
 const routes = [
@@ -15,6 +17,8 @@ const routes = [
       { index: true, element: <HomePage /> },
       { path: "demo", element: <DemoPage /> },
       { path: "how-it-works", element: <HowItWorksPage /> },
+      { path: "architecture", element: <TechnicalDocsPage /> },
+      { path: "user-guide", element: <UserGuidePage /> },
       { path: "*", element: <NotFoundPage /> }
     ]
   }

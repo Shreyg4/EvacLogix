@@ -3,6 +3,8 @@ import { demoPageContent } from "../content/demoContent"
 import { howItWorksPageContent } from "../content/howItWorksContent"
 import { homeContent } from "../content/homeContent"
 import { siteContent } from "../content/siteContent"
+import { technicalPageContent } from "../content/technicalContent"
+import { userGuidePageContent } from "../content/userGuideContent"
 import { renderAppAt } from "./testUtils"
 
 describe("routing", () => {
@@ -20,6 +22,20 @@ describe("routing", () => {
     renderAppAt("/how-it-works")
     expect(
       await screen.findByRole("heading", { name: howItWorksPageContent.title })
+    ).toBeInTheDocument()
+  })
+
+  it("resolves the architecture route", async () => {
+    renderAppAt("/architecture")
+    expect(
+      await screen.findByRole("heading", { name: technicalPageContent.title })
+    ).toBeInTheDocument()
+  })
+
+  it("resolves the user guide route", async () => {
+    renderAppAt("/user-guide")
+    expect(
+      await screen.findByRole("heading", { name: userGuidePageContent.title })
     ).toBeInTheDocument()
   })
 

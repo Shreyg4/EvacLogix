@@ -14,9 +14,9 @@ export const homeSecondaryCta: Cta = {
 }
 
 export const homeContent: HeroContent = {
-  eyebrow: "Evacuation Simulation",
+  eyebrow: "Project Overview",
   title: "EvacLogix helps viewers explore how people evacuate buildings under pressure.",
-  body: "EvacLogix is a presentation-focused simulation project that frames evacuation safety as a human problem first, then demonstrates how interactive simulation can help people understand movement, congestion, and response behavior inside buildings.",
+  body: "EvacLogix is a browser-based tool for modeling buildings and simulating how people leave them in an emergency. Draw a floor plan or import a blueprint, lay out walls, doors, stairs, and exits across multiple floors, then run agent-based evacuation and fire-spread simulations to see exactly where congestion and bottlenecks form — all without installing anything.",
   primaryCta: homePrimaryCta,
   secondaryCta: homeSecondaryCta
 }
@@ -25,17 +25,20 @@ export const homeHighlights: HighlightItem[] = [
   {
     id: "agents",
     label: "Agent-Based Simulation",
-    value: "Designed to explore how groups move through buildings during evacuation scenarios."
+    value:
+      "NavMesh-driven evacuee agents route to the nearest exits, so you can watch crowds move and slow down in real time."
   },
   {
     id: "building-context",
     label: "Building-Focused Scenarios",
-    value: "Structured around indoor spaces, exits, movement constraints, and route choice."
+    value:
+      "Author multi-floor buildings with walls, doors, stairs, exits, and teleporters — or import a blueprint and trace it to scale."
   },
   {
     id: "hazard-context",
     label: "Hazard and Congestion Context",
-    value: "Intended to visualize how fire spread and crowding can influence evacuation behavior."
+    value:
+      "Add a spreading fire and watch how evolving hazards and crowding reshape which routes stay safe."
   }
 ]
 
@@ -47,20 +50,20 @@ export const homeProblemStatement: StatementContent = {
 
 export const homeSolutionStatement: StatementContent = {
   eyebrow: "Solution",
-  title: "EvacLogix turns evacuation behavior into something visible and discussable.",
-  body: "By presenting evacuation scenarios as an interactive simulation, the project gives viewers a clearer way to examine building response, movement patterns, and the tradeoffs that appear when many people must leave at once."
+  title: "EvacLogix turns evacuation behavior into something you can build, run, and see.",
+  body: "Instead of guessing, users model a real space and run an interactive simulation of it. Evacuee agents pathfind to exits while an optional fire spreads, making building response, movement patterns, and the tradeoffs of getting many people out at once visible and discussable."
 }
 
 export const homeImpactStatement: StatementContent = {
   eyebrow: "Community Impact",
-  title: "Built with a University of Washington and public-safety context in mind.",
-  body: "The project is grounded in a campus and community safety framing: helping viewers think more concretely about evacuation routes, building layouts, and the design decisions that shape safe exits."
+  title: "Built for the University of Washington community.",
+  body: "Because it runs in any browser, anyone at UW — students, instructors, event organizers, and facilities and safety staff — can model a classroom, venue, or building and reason concretely about evacuation routes, exit capacity, and the design decisions that shape safe exits."
 }
 
 export const homeDemoPreview = {
   eyebrow: "Demo",
-  title: "The simulation is the centerpiece of the presentation.",
-  body: "The website introduces the mission, but the demo route is where viewers engage the embedded simulation directly. In the finished experience, controls remain inside Unity while the site frames what the audience should look for.",
+  title: "The simulation is the centerpiece of the experience.",
+  body: "The site introduces the project, but the Demo page is where you launch the embedded tool directly: build a layout, then run the evacuation. All editing and simulation controls live inside the Unity experience.",
   placeholderLabel: "Homepage simulation placeholder"
 }
 

@@ -1,11 +1,8 @@
-import { DemoPreviewSection } from "../components/sections/DemoPreviewSection"
 import { HeroSection } from "../components/sections/HeroSection"
 import { HighlightsSection } from "../components/sections/HighlightsSection"
 import { StatementSection } from "../components/sections/StatementSection"
-import { TeamSection } from "../components/sections/TeamSection"
 import {
   homeContent,
-  homeDemoPreview,
   homeHighlights,
   homeHighlightsSection,
   homeImpactStatement,
@@ -14,7 +11,6 @@ import {
   homeScopeStatement,
   homeSolutionStatement
 } from "../content/homeContent"
-import { teamContent, teamSectionContent } from "../content/teamContent"
 
 export function HomePage() {
   return (
@@ -40,12 +36,6 @@ export function HomePage() {
         title={homeHighlightsSection.title}
         items={homeHighlights}
       />
-      <DemoPreviewSection
-        eyebrow={homeDemoPreview.eyebrow}
-        title={homeDemoPreview.title}
-        body={homeDemoPreview.body}
-        placeholderLabel={homeDemoPreview.placeholderLabel}
-      />
       <StatementSection
         eyebrow={homeMissionStatementSection.eyebrow}
         title={homeMissionStatementSection.title}
@@ -55,12 +45,6 @@ export function HomePage() {
         eyebrow={homeScopeStatement.eyebrow}
         title={homeScopeStatement.title}
         body={homeScopeStatement.body}
-      />
-      <TeamSection
-        eyebrow={teamSectionContent.eyebrow}
-        title={teamSectionContent.title}
-        body={teamSectionContent.body}
-        members={teamContent}
       />
     </div>
   )

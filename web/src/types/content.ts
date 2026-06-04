@@ -48,6 +48,38 @@ export type StatementContent = {
   body: string
 }
 
+export type TechStackItem = {
+  id: string
+  name: string
+  role: string
+}
+
+export type ArchitectureLayer = {
+  id: string
+  name: string
+  summary: string
+  items: string[]
+}
+
+export type FlowStep = {
+  id: string
+  title: string
+  detail: string
+}
+
+export type GuideStep = {
+  id: string
+  step: string
+  title: string
+  detail: string
+}
+
+export type AudienceItem = {
+  id: string
+  audience: string
+  useCase: string
+}
+
 export type FooterContent = {
   attribution: string
   context: string
