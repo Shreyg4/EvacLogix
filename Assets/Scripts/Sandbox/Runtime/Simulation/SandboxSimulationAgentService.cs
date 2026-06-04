@@ -139,6 +139,8 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
         // fire is actually burning.
         private const float HazardForcedRepathInterval = 0.25f;
         private readonly Dictionary<string, float> hazardCheckAccumulatorByAgent = new(StringComparer.Ordinal);
+        // Reused buffer for reading an agent's actual navmesh path corners (no per-call allocation).
+        private readonly Vector3[] pathCornerBuffer = new Vector3[32];
 
         public IReadOnlyList<SandboxEvacueeAgent> Agents => agents;
         public int TotalAgents { get; private set; }
@@ -1166,10 +1168,75 @@ namespace EvacLogix.Sandbox.Runtime.Simulation
                 return false;
             }
 
-            var localPosition = agent.CurrentWorldPosition - placement.OriginOffset;
-            var localTarget = target.floorId == agent.FloorId ? target.localPosition : localPosition;
-            var peak = GetPathHazardPeak(agent.FloorId, localPosition, localTarget);
-            return peak >= SevereHazardRepathThreshold;
+            // Sample fire along the route the agent will ACTUALLY walk (its navmesh path corners), which
+            // bends around walls — a straight line to the goal can miss a fire the real path cuts through.
+            // This is what stops agents strolling into flames toward an exit that "looked" clear.
+            var peak = GetActualPathHazardPeak(agent, placement);
+            if (peak < SevereHazardRepathThreshold)
+            {
+                // Fall back to the straight-line estimate for the just-spawned/no-path-yet case.
+                var localPosition = agent.CurrentWorldPosition - placement.OriginOffset;
+                var localTarget = target.floorId == agent.FloorId ? target.localPosition : localPosition;
+                peak = Mathf.Max(peak, GetPathHazardPeak(agent.FloorId, localPosition, localTarget));
+            }
+
+            if (peak >= SevereHazardRepathThreshold)
+            {
+                // Blacklist the current target for a cooldown so the forced reroute picks a DIFFERENT node
+                // instead of re-selecting the same one (whose path crosses fire) and looping. If every
+                // option is blocked, RouteAgent's fallback still keeps the agent moving.
+                if (!string.IsNullOrWhiteSpace(target.nodeId))
+                {
+                    avoidedNodeByAgent[agent.AgentId] = target.nodeId;
+                    avoidTimerByAgent[agent.AgentId] = RerouteAvoidCooldown;
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        // Peak fire hazard sampled along the agent's actual navmesh path (corners + a few interpolations
+        // between them), in the agent's floor space. Returns 0 when no fire is active or no path exists.
+        private float GetActualPathHazardPeak(SandboxEvacueeAgent agent, SandboxFloorPlacement placement)
+        {
+            if (agent == null || fireSimulationService == null || !fireSimulationService.SimulationActive)
+            {
+                return 0f;
+            }
+
+            var cornerCount = agent.CopyPathCorners(pathCornerBuffer);
+            if (cornerCount < 1)
+            {
+                return 0f;
+            }
+
+            var radius = Mathf.Max(0.1f, GetProfile().FireDangerRadius);
+            var peak = 0f;
+            for (var i = 0; i < cornerCount; i += 1)
+            {
+                // Nav corner (x,0,z) maps back to world (x,z); subtract the floor offset to get floor-local.
+                var cornerWorld = new Vector2(pathCornerBuffer[i].x, pathCornerBuffer[i].z);
+                peak = Mathf.Max(peak, fireSimulationService.SampleHazard(agent.FloorId, cornerWorld - placement.OriginOffset, radius));
+                if (peak >= 1f)
+                {
+                    return peak;
+                }
+
+                if (i + 1 < cornerCount)
+                {
+                    var nextWorld = new Vector2(pathCornerBuffer[i + 1].x, pathCornerBuffer[i + 1].z);
+                    const int segmentSamples = 3;
+                    for (var s = 1; s < segmentSamples; s += 1)
+                    {
+                        var midWorld = Vector2.Lerp(cornerWorld, nextWorld, s / (float)segmentSamples);
+                        peak = Mathf.Max(peak, fireSimulationService.SampleHazard(agent.FloorId, midWorld - placement.OriginOffset, radius));
+                    }
+                }
+            }
+
+            return peak;
         }
 
         private float GetPathHazardPeak(string floorId, Vector2 localFrom, Vector2 localTo)

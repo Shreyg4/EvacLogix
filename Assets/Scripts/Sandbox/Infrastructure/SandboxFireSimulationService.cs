@@ -206,13 +206,20 @@ namespace EvacLogix.Sandbox.Infrastructure
 
             simulationClock += Mathf.Max(0f, deltaTime);
             spreadAccumulator += Mathf.Max(0f, deltaTime);
-            ActivateReadySeeds();
+
+            // The fire field only changes when a seed activates or a spread step runs — most frames neither
+            // happens. Re-synchronizing the collections and firing FireStateChanged every frame was O(fire
+            // cells) per frame (rebuilding the cell lists/index AND re-running every subscriber's overlay
+            // Refresh), so it scaled with the fire and made big fires unplayable. We now do that work only
+            // on frames where the field actually changed.
+            var changed = ActivateReadySeeds();
 
             while (spreadAccumulator >= spreadIntervalSeconds)
             {
                 spreadAccumulator -= spreadIntervalSeconds;
                 StepSimulation(project);
                 ActivateReadySeeds();
+                changed = true;
             }
 
             if (pendingSeeds.Count == 0 && activeCellsById.Count == 0)
@@ -220,7 +227,10 @@ namespace EvacLogix.Sandbox.Infrastructure
                 simulationActive = false;
             }
 
-            FireStateChanged?.Invoke(activeFireCells);
+            if (changed)
+            {
+                FireStateChanged?.Invoke(activeFireCells);
+            }
         }
 
         public float SampleHazard(string floorId, Vector2 localPosition, float radius = 0f)
@@ -289,8 +299,12 @@ namespace EvacLogix.Sandbox.Infrastructure
             BuildCaches(project);
         }
 
-        private void ActivateReadySeeds()
+        // Activates any pending seeds whose start delay has elapsed. Returns whether anything activated, so
+        // callers know if the field changed. Injecting a seed already re-synchronizes the collections (via
+        // ReplaceActiveField), so we no longer pay an unconditional SynchronizeCollections every call.
+        private bool ActivateReadySeeds()
         {
+            var activatedAny = false;
             for (var i = pendingSeeds.Count - 1; i >= 0; i -= 1)
             {
                 if (pendingSeeds[i].activateAtSeconds > simulationClock)
@@ -305,9 +319,11 @@ namespace EvacLogix.Sandbox.Infrastructure
                 {
                     persistentSeeds.Add(seed);
                 }
+
+                activatedAny = true;
             }
 
-            SynchronizeCollections();
+            return activatedAny;
         }
 
         private void StepSimulation(BuildingProjectData project)
