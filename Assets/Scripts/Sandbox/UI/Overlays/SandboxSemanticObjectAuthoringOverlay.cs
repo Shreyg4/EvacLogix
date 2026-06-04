@@ -195,7 +195,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private void HandleDoorPlacement(Vector2 worldPoint)
         {
             var width = semanticObjectAuthoringService.GetPlacementOpeningWidth(SandboxVisualObjectType.Door);
-            if (semanticObjectAuthoringService.PlaceDoor(worldPoint, out _, width))
+            if (semanticObjectAuthoringService.PlaceDoor(worldPoint, out _, width, semanticObjectAuthoringService.DefaultDoorState))
             {
                 UpdateStatus("Placed door on the nearest wall.");
                 return;
@@ -207,7 +207,7 @@ namespace EvacLogix.Sandbox.UI.Overlays
         private void HandleWindowPlacement(Vector2 worldPoint)
         {
             var width = semanticObjectAuthoringService.GetPlacementOpeningWidth(SandboxVisualObjectType.Window);
-            if (semanticObjectAuthoringService.PlaceWindow(worldPoint, out _, width))
+            if (semanticObjectAuthoringService.PlaceWindow(worldPoint, out _, width, semanticObjectAuthoringService.DefaultWindowEscape))
             {
                 UpdateStatus("Placed window on the nearest wall.");
                 return;

@@ -675,6 +675,8 @@ namespace EvacLogix.Sandbox.UI.Panels
                 }
             }
 
+            DrawPlacementDefaults();
+
             DrawSelectionEditor();
 
             DrawInspectorSection("Blueprint");
@@ -1330,6 +1332,39 @@ namespace EvacLogix.Sandbox.UI.Panels
             }
 
             GUILayout.EndHorizontal();
+        }
+
+        // Shows the placement defaults for whichever opening tool is active, so you can set "escape on" /
+        // "locked" once and have every opening you place inherit it until you leave the tool.
+        private void DrawPlacementDefaults()
+        {
+            if (inspectorPanelShell == null || toolPaletteShell == null)
+            {
+                return;
+            }
+
+            if (toolPaletteShell.IsToolActive(SandboxToolMode.Door))
+            {
+                DrawInspectorSection("Door Defaults");
+                var locked = GUILayout.Toggle(inspectorPanelShell.DefaultDoorLocked, "Place doors locked");
+                if (locked != inspectorPanelShell.DefaultDoorLocked)
+                {
+                    inspectorPanelShell.DefaultDoorLocked = locked;
+                }
+
+                GUILayout.Label("Applies to doors you place now. Resets when you leave the Door tool.", bodyStyle);
+            }
+            else if (toolPaletteShell.IsToolActive(SandboxToolMode.Window))
+            {
+                DrawInspectorSection("Window Defaults");
+                var escape = GUILayout.Toggle(inspectorPanelShell.DefaultWindowEscape, "Place escape windows");
+                if (escape != inspectorPanelShell.DefaultWindowEscape)
+                {
+                    inspectorPanelShell.DefaultWindowEscape = escape;
+                }
+
+                GUILayout.Label("Applies to windows you place now. Resets when you leave the Window tool.", bodyStyle);
+            }
         }
 
         private void DrawDoorFields(DoorData door)

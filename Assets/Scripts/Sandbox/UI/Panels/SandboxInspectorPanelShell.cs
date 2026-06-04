@@ -470,6 +470,32 @@ namespace EvacLogix.Sandbox.UI.Panels
                 "Erased wall segment.");
         }
 
+        // Placement defaults for the active Door/Window tool (shown in the inspector). They scope to the
+        // tool and reset when it's deselected (handled in the authoring service).
+        public bool DefaultDoorLocked
+        {
+            get => semanticObjectAuthoringService != null && semanticObjectAuthoringService.DefaultDoorState == DoorState.Locked;
+            set
+            {
+                if (semanticObjectAuthoringService != null)
+                {
+                    semanticObjectAuthoringService.DefaultDoorState = value ? DoorState.Locked : DoorState.Normal;
+                }
+            }
+        }
+
+        public bool DefaultWindowEscape
+        {
+            get => semanticObjectAuthoringService != null && semanticObjectAuthoringService.DefaultWindowEscape;
+            set
+            {
+                if (semanticObjectAuthoringService != null)
+                {
+                    semanticObjectAuthoringService.DefaultWindowEscape = value;
+                }
+            }
+        }
+
         public bool PlaceDoor(Vector2 worldPoint, float width = 1f, DoorState state = DoorState.Normal)
         {
             return UpdateSemanticActionStatus(
