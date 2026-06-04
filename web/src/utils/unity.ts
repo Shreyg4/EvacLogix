@@ -75,5 +75,14 @@ export async function createUnityInstanceBridge(
     throw new Error("Unity runtime bridge was not found after loader execution.")
   }
 
-  return unityWindow.createUnityInstance(canvas, config)
+  // The loader defaults the wasm to "no-store", so a repeat visitor re-downloads ~28 MB every load.
+  // Routing every file through "must-revalidate" stores the wasm + data in Unity's IndexedDB cache and
+  // serves them on a cheap 304, while still picking up rebakes (unlike "immutable", which would need a
+  // productVersion bump to avoid serving stale binaries). A JSON-provided value still wins via the spread.
+  const mergedConfig: UnityBuildConfig = {
+    cacheControl: () => "must-revalidate",
+    ...config,
+  }
+
+  return unityWindow.createUnityInstance(canvas, mergedConfig)
 }

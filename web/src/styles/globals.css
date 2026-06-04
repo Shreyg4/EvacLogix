@@ -75,6 +75,13 @@ a {
   border-radius: 0 0 var(--radius-card) var(--radius-card);
 }
 
+/* Drop the sticky header's backdrop blur on the demo route: a continuously-rendering Unity canvas sits
+   under it, so the blur forces a per-frame compositor re-blur of the overlap for no visual benefit.
+   The opaque-ish gradient background keeps the header legible without it. */
+body:has(.page-demo) .app-header {
+  backdrop-filter: none;
+}
+
 .brand-block {
   display: flex;
   align-items: center;
