@@ -272,6 +272,7 @@ namespace EvacLogix.Sandbox.Infrastructure
                 KeyCode.LeftCommand => Key.LeftMeta,
                 KeyCode.RightCommand => Key.RightMeta,
                 KeyCode.Home => Key.Home,
+                KeyCode.Tab => Key.Tab,
                 KeyCode.Backspace => Key.Backspace,
                 KeyCode.Delete => Key.Delete,
                 KeyCode.Escape => Key.Escape,
