@@ -131,8 +131,36 @@ namespace EvacLogix.Sandbox.Rendering
             }
         }
 
+        // One shared line material reused by every rendered line. Previously each line allocated its own
+        // `new Material(Shader.Find(...))` on every Refresh — and Refresh rebuilds ALL geometry on every
+        // edit, so a large project churned thousands of native Material objects per door/window placement,
+        // which fed the WebGL OOM. Color is per-LineRenderer (startColor/endColor), so sharing is safe.
+        private Material sharedLineMaterial;
+
+        private Material GetLineMaterial()
+        {
+            if (sharedLineMaterial == null)
+            {
+                sharedLineMaterial = new Material(Shader.Find("Sprites/Default"));
+            }
+
+            return sharedLineMaterial;
+        }
+
         private void OnDestroy()
         {
+            if (sharedLineMaterial != null)
+            {
+                if (Application.isPlaying)
+                {
+                    Destroy(sharedLineMaterial);
+                }
+                else
+                {
+                    DestroyImmediate(sharedLineMaterial);
+                }
+            }
+
             if (workspaceService != null)
             {
                 workspaceService.ActiveProjectChanged -= HandleProjectChanged;
@@ -272,7 +300,7 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.positionCount = 2;
             lineRenderer.SetPosition(0, new Vector3(wall.startPoint.x + delta.x, wall.startPoint.y + delta.y, 0f));
             lineRenderer.SetPosition(1, new Vector3(wall.endPoint.x + delta.x, wall.endPoint.y + delta.y, 0f));
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(Mathf.Max(minimumLineWidth, wall.thickness * 0.18f));
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
@@ -319,7 +347,7 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.positionCount = 2;
             lineRenderer.SetPosition(0, new Vector3(wall.startPoint.x, wall.startPoint.y, 0f));
             lineRenderer.SetPosition(1, new Vector3(wall.endPoint.x, wall.endPoint.y, 0f));
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(Mathf.Max(minimumLineWidth, wall.thickness * 0.18f));
             var baseColor = visualOrganizationService == null
                 ? wallColor
@@ -343,7 +371,7 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.useWorldSpace = false;
             lineRenderer.positionCount = 4;
             lineRenderer.loop = false;
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(minimumLineWidth);
             lineRenderer.startColor = isSelectedHandle ? selectedHandleColor : handleColor;
             lineRenderer.endColor = isSelectedHandle ? selectedHandleColor : handleColor;
@@ -387,7 +415,7 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.useWorldSpace = false;
             lineRenderer.positionCount = 4;
             lineRenderer.loop = true;
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(minimumLineWidth);
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
@@ -543,7 +571,7 @@ namespace EvacLogix.Sandbox.Rendering
             var lineRenderer = lineObject.AddComponent<LineRenderer>();
             lineRenderer.useWorldSpace = false;
             lineRenderer.positionCount = points.Count;
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(width);
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
@@ -572,7 +600,7 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.positionCount = 2;
             lineRenderer.SetPosition(0, new Vector3(start.x, start.y, 0f));
             lineRenderer.SetPosition(1, new Vector3(end.x, end.y, 0f));
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(minimumLineWidth);
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
@@ -589,7 +617,7 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.positionCount = 2;
             lineRenderer.SetPosition(0, new Vector3(start.x, start.y, 0.01f));
             lineRenderer.SetPosition(1, new Vector3(end.x, end.y, 0.01f));
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = ResolveLineWidth(widthMultiplier);
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;

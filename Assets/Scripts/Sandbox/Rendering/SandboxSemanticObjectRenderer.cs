@@ -119,8 +119,35 @@ namespace EvacLogix.Sandbox.Rendering
             Refresh();
         }
 
+        // One shared line material reused by every rendered line, instead of allocating a new Material
+        // (with a Shader.Find) per line on every full rebuild. Line color is per-LineRenderer, so sharing
+        // is safe. This removes a major per-edit native-object churn on large projects.
+        private Material sharedLineMaterial;
+
+        private Material GetLineMaterial()
+        {
+            if (sharedLineMaterial == null)
+            {
+                sharedLineMaterial = new Material(Shader.Find("Sprites/Default"));
+            }
+
+            return sharedLineMaterial;
+        }
+
         private void OnDestroy()
         {
+            if (sharedLineMaterial != null)
+            {
+                if (Application.isPlaying)
+                {
+                    Destroy(sharedLineMaterial);
+                }
+                else
+                {
+                    DestroyImmediate(sharedLineMaterial);
+                }
+            }
+
             if (workspaceService != null && workspaceEventsSubscribed)
             {
                 workspaceService.ActiveProjectChanged -= HandleProjectChanged;
@@ -1023,7 +1050,7 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.positionCount = 2;
             lineRenderer.SetPosition(0, new Vector3(start.x, start.y, zOffset));
             lineRenderer.SetPosition(1, new Vector3(end.x, end.y, zOffset));
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = width;
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
@@ -1208,7 +1235,7 @@ namespace EvacLogix.Sandbox.Rendering
             lineRenderer.useWorldSpace = false;
             lineRenderer.positionCount = points.Count;
             lineRenderer.loop = loop;
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+            lineRenderer.sharedMaterial = GetLineMaterial();
             lineRenderer.widthMultiplier = lineWidth;
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;

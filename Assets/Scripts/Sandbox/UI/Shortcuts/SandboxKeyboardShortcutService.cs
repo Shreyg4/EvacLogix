@@ -77,13 +77,14 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
                 return;
             }
 
-            // Inject default bindings for any shortcut ids added after this list was
-            // serialized, so new shortcuts (for example Escape -> Cancel) appear without
-            // forcing users to reset their existing customized bindings.
-            var boundShortcutIds = new HashSet<SandboxShortcutId>(bindings.Select(binding => binding.shortcutId));
+            // Inject default bindings (by action+key) added after this list was serialized, so new
+            // shortcuts — including an extra key for an already-bound action, e.g. Tab -> Select Tool —
+            // appear without forcing users to reset their existing customized bindings.
+            var boundBindings = new HashSet<(SandboxShortcutId, KeyCode)>(
+                bindings.Select(binding => (binding.shortcutId, binding.keyCode)));
             foreach (var defaultBinding in CreateDefaultBindings())
             {
-                if (boundShortcutIds.Add(defaultBinding.shortcutId))
+                if (boundBindings.Add((defaultBinding.shortcutId, defaultBinding.keyCode)))
                 {
                     bindings.Add(defaultBinding);
                 }
@@ -323,6 +324,7 @@ namespace EvacLogix.Sandbox.UI.Shortcuts
             return new List<SandboxShortcutBinding>
             {
                 CreateBinding(SandboxShortcutId.SelectTool, KeyCode.Q),
+                CreateBinding(SandboxShortcutId.SelectTool, KeyCode.Tab),
                 CreateBinding(SandboxShortcutId.PanTool, KeyCode.P),
                 CreateBinding(SandboxShortcutId.MeasureTool, KeyCode.M),
                 CreateBinding(SandboxShortcutId.WallLineTool, KeyCode.L),
