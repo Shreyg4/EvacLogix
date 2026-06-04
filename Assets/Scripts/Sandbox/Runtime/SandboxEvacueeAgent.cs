@@ -302,6 +302,21 @@ namespace EvacLogix.Sandbox.Runtime
             }
         }
 
+        // Copies the agent's current navmesh path corners (world space) into the buffer and returns the
+        // count. Lets the sim service sample fire hazard along the route the agent will ACTUALLY walk
+        // (which bends around walls) instead of a straight line to the goal that can miss the fire.
+        public int CopyPathCorners(Vector3[] buffer)
+        {
+            if (buffer == null || buffer.Length == 0 ||
+                navMeshAgent == null || !navMeshAgent.enabled || !navMeshAgent.isOnNavMesh)
+            {
+                return 0;
+            }
+
+            var path = navMeshAgent.path;
+            return path == null ? 0 : path.GetCornersNonAlloc(buffer);
+        }
+
         private void SyncNavAgentPosition(Vector2 worldPosition)
         {
             if (navAgentObject == null)
