@@ -73,6 +73,14 @@ namespace EvacLogix.Sandbox.UI.Overlays
 
         private void HandleToolModeChanged(SandboxToolMode toolMode)
         {
+            // Node (junction) dragging is a Select-only affordance. Never let an in-progress drag carry
+            // into another tool — otherwise switching to the wall line tool mid-drag would keep moving the
+            // node instead of letting you draw from it.
+            if (toolMode != SandboxToolMode.Select && isJunctionDragActive)
+            {
+                CancelJunctionDrag();
+            }
+
             if (toolMode == SandboxToolMode.WallLine || toolMode == SandboxToolMode.WallBrush || wallAuthoringService == null)
             {
                 return;

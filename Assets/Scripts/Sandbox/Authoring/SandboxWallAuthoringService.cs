@@ -879,44 +879,111 @@ namespace EvacLogix.Sandbox.Authoring
             }
 
             var activeFloorId = workspaceService.ActiveFloor.floorId;
-            var beforeProject = CloneProject(workspaceService.ActiveProject);
-            var afterProject = CloneProject(workspaceService.ActiveProject);
-            var beforeSelection = selectionService != null
-                ? new List<string>(selectionService.SelectedObjectIds)
-                : new List<string>();
 
-            var targetFloor = afterProject.floors.FirstOrDefault(floor =>
+            // Capture the affected floor once: it's both the undo "before" diff and the basis for the
+            // working copy the mutation runs on.
+            var beforeFloorJson = JsonUtility.ToJson(workspaceService.ActiveFloor);
+
+            // Run the mutation on a LIGHTWEIGHT working project (just this floor + payload-free blueprint
+            // refs the opening-width math reads) rather than cloning the whole project. This drops the
+            // per-edit cost from O(whole project + blueprint image) to O(floor), so placing a wall on a
+            // blueprint-traced floor no longer re-serializes megabytes of image data every time.
+            var workingProject = BuildLightweightWorkingProject(beforeFloorJson);
+            var targetFloor = workingProject.floors.FirstOrDefault(floor =>
                 string.Equals(floor.floorId, activeFloorId, StringComparison.Ordinal));
-            if (targetFloor == null || !mutation(afterProject, targetFloor))
+            if (targetFloor == null || !mutation(workingProject, targetFloor))
             {
                 return false;
             }
 
-            SandboxProjectDataUtility.EnsureIds(afterProject);
+            SandboxProjectDataUtility.EnsureIds(workingProject);
 
-            void ApplyAfter()
-            {
-                ApplyProjectState(CloneProject(afterProject), activeFloorId, nextSelection);
-            }
+            // Diff-based undo (floor granularity): retain only the affected floor's before/after JSON,
+            // not a whole-project snapshot. This excludes blueprint image payloads, sibling floors and
+            // spawn layouts from every undo entry — the heavy parts that pushed the WebGL heap to OOM on
+            // large blueprints. The command applies the diff to the live project in place.
+            var afterFloorJson = JsonUtility.ToJson(targetFloor);
+            var beforeSelection = selectionService != null
+                ? new List<string>(selectionService.SelectedObjectIds)
+                : new List<string>();
 
-            void ApplyBefore()
-            {
-                ApplyProjectState(CloneProject(beforeProject), activeFloorId, beforeSelection);
-            }
+            var change = new SandboxFloorSnapshotChange(activeFloorId, beforeFloorJson, afterFloorJson);
+            var command = new SandboxChangeCommand(
+                description,
+                change,
+                () => workspaceService.ActiveProject,
+                () => RefreshAfterFloorChange(activeFloorId, nextSelection),
+                () => RefreshAfterFloorChange(activeFloorId, beforeSelection));
 
             if (commandHistory == null)
             {
-                ApplyAfter();
+                command.Execute();
                 return true;
             }
 
-            commandHistory.Execute(new DelegateSandboxEditorCommand(description, ApplyAfter, ApplyBefore));
+            commandHistory.Execute(command);
             return true;
         }
 
-        private void ApplyProjectState(BuildingProjectData project, string activeFloorId, IReadOnlyList<string> selection)
+        // Minimal project for running a single-floor wall mutation: just the target floor plus the
+        // blueprint references (with image payloads stripped) that the opening-width math reads via
+        // IsFloorCalibrated. Audited to be the complete set of project-level data wall mutations touch;
+        // sibling floors, spawn layouts, fire origins and the heavy base64 payloads are all omitted.
+        private BuildingProjectData BuildLightweightWorkingProject(string floorJson)
         {
-            workspaceService.SetActiveProject(project);
+            var live = workspaceService.ActiveProject;
+            var working = new BuildingProjectData
+            {
+                projectId = live.projectId,
+                schemaVersion = live.schemaVersion,
+                metadata = live.metadata != null
+                    ? JsonUtility.FromJson<ProjectMetadataData>(JsonUtility.ToJson(live.metadata))
+                    : null,
+                blueprintReferences = new List<BlueprintReferenceData>(),
+                floors = new List<FloorData> { JsonUtility.FromJson<FloorData>(floorJson) }
+            };
+
+            if (live.blueprintReferences != null)
+            {
+                for (var i = 0; i < live.blueprintReferences.Count; i += 1)
+                {
+                    var source = live.blueprintReferences[i];
+                    if (source == null)
+                    {
+                        continue;
+                    }
+
+                    // Copy field-by-field rather than via JSON so the heavy base64 payload is never
+                    // serialized — that re-serialization per edit was the performance/memory cost.
+                    working.blueprintReferences.Add(new BlueprintReferenceData
+                    {
+                        blueprintReferenceId = source.blueprintReferenceId,
+                        assetGuid = source.assetGuid,
+                        assetPath = source.assetPath,
+                        sourceFileName = source.sourceFileName,
+                        sourceMimeType = source.sourceMimeType,
+                        importedPayloadBase64 = string.Empty,
+                        opacity = source.opacity,
+                        displayScale = source.displayScale,
+                        isVisible = source.isVisible,
+                        isCalibrated = source.isCalibrated,
+                        calibrationPointA = source.calibrationPointA,
+                        calibrationPointB = source.calibrationPointB,
+                        realWorldDistance = source.realWorldDistance,
+                        worldUnitsPerPixel = source.worldUnitsPerPixel
+                    });
+                }
+            }
+
+            return working;
+        }
+
+        // Refresh after an in-place floor diff: re-fire the workspace notifications (without replacing the
+        // live project instance) so every listener updates exactly as a whole-project apply would, then
+        // restore selection and rebuild colliders for the affected floor.
+        private void RefreshAfterFloorChange(string activeFloorId, IReadOnlyList<string> selection)
+        {
+            workspaceService.SetActiveProject(workspaceService.ActiveProject);
             if (!string.IsNullOrWhiteSpace(activeFloorId))
             {
                 workspaceService.SetActiveFloor(activeFloorId);
@@ -2426,12 +2493,6 @@ namespace EvacLogix.Sandbox.Authoring
         private static bool IsPointNear(Vector2 first, Vector2 second, float tolerance)
         {
             return Vector2.Distance(first, second) <= Mathf.Max(0.0001f, tolerance);
-        }
-
-        private static BuildingProjectData CloneProject(BuildingProjectData project)
-        {
-            var serialized = SandboxProjectSerializer.Serialize(project, false);
-            return SandboxProjectSerializer.Deserialize(serialized);
         }
 
         private bool IsWallTypeLocked()
